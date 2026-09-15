@@ -1,0 +1,132 @@
+# GitHub Action
+
+repo2graph is published on the GitHub Marketplace, so it is one step in any
+workflow.
+
+```yaml
+- uses: actions/checkout@v4
+  with: { fetch-depth: 0 }   # full history, so CO_CHANGE edges are meaningful
+- uses: Srinivasan-78/repo2graph@v1
+  with:
+    path: .              # or: repo: some-org/other-repo
+    git-history: "500"
+    artifact-name: repo-graph
+```
+
+`@v1` follows every 1.x release. Pin an exact version (`@v1.4.0`) if you would
+rather upgrade by hand.
+
+The action never calls an LLM: `--answer` is deliberately not exposed. It packs
+the context and leaves the answering to whatever reads the pack afterwards.
+
+It also writes the first 40 lines of `overview.md` into the job summary page, so
+the map shows up in the run without downloading anything.
+
+## Inputs
+
+| Input | Default | What it does |
+| --- | --- | --- |
+| `repo` | `""` | Map a different project: `owner/repo` or a GitHub URL. Leave blank to map the checked-out one. |
+| `path` | `.` | Folder in the workspace to map, used when `repo` is blank. |
+| `ref` | `""` | Branch or tag to map, used with `repo`. Blank means the default branch. |
+| `out` | `.r2g` | Where the map is written. |
+| `formats` | `jsonl,graphml,cypher,overview,html` | Which files to write. Drop the ones you do not need to save time. |
+| `git-history` | `0` | Commits to read for `CO_CHANGE` arrows. `0` skips it. Needs `fetch-depth: 0`. |
+| `include` | `""` | Space-separated globs to keep, e.g. `"src/**"`. |
+| `exclude` | `""` | Space-separated globs to skip, e.g. `"**/test/** vendor/**"`. |
+| `query` | `""` | Also pack a cited GraphRAG context for this question. Blank skips it. |
+| `query-k` | `8` | Pieces the text search starts with. |
+| `query-hops` | `1` | Steps to walk along the arrows. |
+| `query-budget` | `24000` | Character budget for the whole pack, map and cite headers included. |
+| `query-budget-tokens` | `""` | Token budget for the whole pack. Set it and it replaces `query-budget` as the unit. Blank keeps the character budget. |
+| `query-min-conf` | `1.0` | Drop `CALLS` arrows below this confidence. |
+| `query-format` | `markdown` | `markdown` or `json`. |
+| `query-out` | `""` | File to write the pack to. Blank means `<out>/agent/pack.md` (or `pack.json`). |
+| `embed` | `false` | Also embed the chunks for meaning-based search. Installs the `rag` extra and downloads a model, so it is off by default. When `true` the pack is packed with `--vectors`. |
+| `embed-model` | `""` | sentence-transformers model for `embed`. Blank uses the built-in default. Both the embed step and the pack step get this model, so the two always agree. |
+| `artifact-name` | `repo-graph` | Upload the map under this name. Blank uploads nothing. |
+| `commit-branch` | `""` | Also force-push the map to this orphan branch. Blank pushes nothing. |
+| `token` | `""` | Token that can read `repo` when the target is private. |
+| `version` | `git+…@v1` | Version spec passed to pip. Only used if the action folder has no source next to it. |
+
+## Outputs
+
+| Output | What it holds |
+| --- | --- |
+| `out` | The output folder: `human/` (`overview.md`, `graph.html`, …) and `agent/` (`chunks.jsonl`, …). |
+| `nodes` | How many dots the map has. |
+| `edges` | How many arrows. |
+| `chunks` | How many code pieces were cut. |
+| `pack-file` | Path to the GraphRAG pack written for `query`. Empty when `query` is blank. |
+| `pack-chars` | How long that pack is, in characters. `0` when `query` is blank. |
+
+## Permissions
+
+Reading is enough for the default setup. `commit-branch` pushes a branch, so that
+one needs write:
+
+```yaml
+permissions:
+  contents: write
+```
+
+## Keep a fresh map next to your own code
+
+`.github/workflows/self-index.yml` is the copy this project runs on itself, on
+every push to `main` and once a week:
+
+```yaml
+name: Index this repository
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: Srinivasan-78/repo2graph@v1
+        with:
+          path: .
+          git-history: "500"
+          artifact-name: repo-graph
+          commit-branch: graph   # drop this line to only publish an artifact
+```
+
+With `commit-branch: graph`, an AI pipeline can always grab an up-to-date copy of
+the code pieces with one request:
+
+```bash
+curl -sL https://raw.githubusercontent.com/Srinivasan-78/repo2graph/graph/agent/chunks.jsonl -o chunks.jsonl
+```
+
+## Map any project from the Actions tab
+
+`.github/workflows/index-repo.yml` is a button you press. Type a project name, get
+a map back. It downloads the project, builds the map, prints the summary into the
+job page, and uploads `graph-<owner>__<repo>` as a file you can download. Set
+`publish_release: true` and it also attaches a zip to a GitHub Release.
+
+The download includes `graph.html`, so opening that one file gives you the picture
+with nothing installed.
+
+Inputs: `repo`, `ref`, `git_history`, `formats`, `exclude`, `publish_release`. For
+a private project, add a `TARGET_REPO_TOKEN` secret that can read it. Otherwise
+the job's own token is used.
+
+All from the terminal:
+
+```bash
+gh workflow run index-repo.yml -f repo=psf/requests
+gh run watch
+gh run download --name graph-psf__requests --dir ./graph
+```
