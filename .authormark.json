@@ -12,6 +12,7 @@
     "*.svg",
     "REUSE.toml",
     "BUILD_STATE.md",
-    "tests/golden"
+    "tests/golden",
+    "server.json"
   ]
 }

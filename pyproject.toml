@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌‌​‌​​‌​‌‌​​​​‌​‌‌​​‌​‌‌‌​​​​​‌‌‌​​‌‌​‌‌​‌‌​‌​‌‌​‌‌‌​​‌‌‌​​​‌​‌‌‌​‌​‌​​‌‌​​‌‌​‌‌​‌​​​​​‌‌​​​‌​‌‌​​‌‌​​​‌‌​‌​‌​‌​​​​‌​​‌‌‌​​​​​​‌‌​‌​‌​​‌‌​‌​‌​‌‌‌​​‌‌​‌‌​‌‌‌​​‌​​‌‌​​​‌​​​​​‌⁠
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌​‌​​‌​​‌‌​‌​‌​‌‌​‌​‌‌​‌​​‌‌​‌​​‌‌​​​‌​‌‌‌​​​‌​​‌‌​‌​​​‌‌‌‌​​‌​‌​‌​​​​​‌‌​‌‌‌‌​‌​‌​‌‌​​‌​‌​​‌​​‌​​​​‌‌​‌‌‌​‌​‌​‌​‌​‌​​​​‌‌​‌‌‌​​‌‌​‌‌‌​‌‌‌​​‌​​​‌‌​‌‌​​​‌‌​‌‌‌​‌​​‌​​‌​‌‌​​​‌‌⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.ZXYpsmnqu3h1f5Bp55snLA
+# Fingerprint: AMK1.i5kM1q4yPoVRCuT77r67Ic
 [project]
 name = "repo2graph"
 version = "1.4.0"
@@ -11,10 +11,31 @@ requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
 readme = "README.md"
+authors = [{name = "Srinivasan Vijayaraghavan", email = "srinivasan.shyam2000@gmail.com"}]
+keywords = ["mcp", "model-context-protocol", "code-graph", "graphrag", "rag",
+            "tree-sitter", "static-analysis", "codebase-search"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Documentation",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing :: Indexing",
+]
 dependencies = [
     "tree-sitter>=0.23",
     "tree-sitter-language-pack>=0.7",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Srinivasan-78/repo2graph"
+Repository = "https://github.com/Srinivasan-78/repo2graph"
+Issues = "https://github.com/Srinivasan-78/repo2graph/issues"
+"MCP server" = "https://github.com/Srinivasan-78/repo2graph/blob/main/docs/mcp.md"
 
 [project.scripts]
 repo2graph = "repo2graph.cli:main"
