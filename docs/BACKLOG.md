@@ -37,6 +37,24 @@ Ranked by the IMPROVE phase of that run. Size is rough effort, not risk.
 | 5 | **A real `sentence-transformers` smoke test, opt-in and network-gated** | S | Every embedder in the suite is `StubEmbedder`. `default_embedder()` is tested only for its *failure* message, so nothing proves the real wrapper's `model_id`/`dim` agree with what `vectors.meta.json` records — the exact pair `fuse_ok` compares. |
 | 6 | **`docs/BACKLOG.md` has no `@authormark` header** | XS | Pre-existing at baseline `ff0e3ca`; not introduced by this run, and deliberately not fixed here (the stamper is not vendored). Fold into the next watermark sweep, with issue #30. |
 | 7 | **No coverage measurement anywhere in the repo** | S | ~130 tests were added this run on judgement alone. Nobody can currently answer "which branch of `embed.py` never runs". |
+| 8 | **Auto-build cannot use the process pool** (detail below) | M | Correct but slower than it needs to be on a large repo. A hang was traded for serial parsing; only the first tool call pays. |
+| 9 | **Every MCP fixture is under `PARALLEL_MIN_FILES`** | S | The pool hang below survived a green 73-test suite because `mini_repo` is 5 files and `big_index` is ~20. No fixture crosses 64, so the parallel path in `build()` is never exercised from a test. |
+
+**Auto-build cannot use the process pool.** `mcp._build_index` pins `jobs=1`. `graph.build()`
+switches to a `ProcessPoolExecutor` above `PARALLEL_MIN_FILES` (64) files, and spawning one from
+inside the running stdio server hangs indefinitely: the workers inherit the parent's stdin and
+stdout, which are the client's JSON-RPC pipes. Reproduced on Windows against this repo at 65 files
+— handshake fine, first `tools/call` never returned. Serial is *faster* at the threshold (0.21s vs
+0.45s here, the pool costing more to start than it saves), so the pin costs nothing until a repo is
+large, where the first tool call is now noticeably slower than `repo2graph build` on the same tree.
+
+To pick this up: give the pool workers explicit handles instead of the inherited ones — a
+`preexec`/initializer that reopens `sys.stdin`/`sys.stdout` on `os.devnull`, or an executor created
+before the transport is bound — and confirm on Windows specifically, which is where spawn (not fork)
+makes the inheritance bite. Then drop the `jobs=1` pin and the test asserting it
+(`test_auto_build_never_spawns_a_process_pool`). Add a fixture above 64 files first (item 9) or the
+fix cannot be tested; note that a regression there hangs rather than fails, so any end-to-end test
+needs its own timeout.
 
 **Graph-level incremental rebuild — `build(..., previous: Graph)`.** Deliberately cut, not
 forgotten. Edge invalidation is the obvious hard part, but the real blocker is one level up:

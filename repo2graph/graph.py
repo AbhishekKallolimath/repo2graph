@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌​​‌​‌‌​​‌‌​​‌​​‌‌​​​‌​​‌‌​​‌‌​​‌‌‌​‌​‌​‌​​‌‌‌​​​‌‌​​​​​​‌‌​‌‌​​‌‌‌​‌​​​​‌‌​​​​​‌‌​​​​‌​​‌‌​‌​​​‌‌​​​‌​​‌​‌​‌‌‌​‌​​​​‌​​‌​‌‌​​​​​‌‌​​‌‌​‌‌​‌​​​​​‌‌​​​​​‌‌‌‌​‌​​‌​‌​​‌‌​‌‌‌‌​‌​⁠
+# @authormark v1 -- do not remove (authorship watermark)⁠​​‌‌​​​​​‌‌​‌​​​​‌‌‌​​​‌​‌‌​​​‌​​‌‌​​‌​‌​‌‌​​​​‌​‌​‌‌​‌​​‌‌​‌​​‌​‌​​‌​‌‌​​‌‌​‌‌‌​‌‌‌​​​​​​‌‌‌​​​​‌​​​‌‌‌​‌‌‌​‌‌‌​​‌‌​‌‌​​‌‌​‌​‌‌​​‌‌‌​​‌​‌​‌​​‌​​‌​‌‌‌‌‌​‌​​​‌​​​‌​​‌​​​​‌​‌​‌‌​⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.K2bfuN06t0a4bWBX3h0zSz
+# Fingerprint: AMK1.0hqbeaZiK7p8Gw6k9R_DHV
 """Build the repository graph: nodes + edges."""
 import hashlib
 import itertools
@@ -405,10 +405,13 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
         # the CO_CHANGE edge silently vanishes. No text=True: decode the bytes
         # as UTF-8 ourselves, exactly as walker._git_files does, so a non-ASCII
         # path cannot raise UnicodeDecodeError under a cp1252 locale.
+        # stdin=DEVNULL for the same reason as parse._git_files: capture_output
+        # leaves stdin inherited, and a git that blocks on the MCP server's
+        # JSON-RPC pipe stalls until the timeout and can eat client frames.
         out = subprocess.run(
             ["git", "-c", "core.quotepath=false", "-C", str(root), "log",
              f"-n{commits}", "--name-only", "--pretty=format:%H", "--no-merges"],
-            capture_output=True, timeout=120)
+            capture_output=True, stdin=subprocess.DEVNULL, timeout=120)
         if out.returncode != 0:
             return
     except (OSError, subprocess.SubprocessError):

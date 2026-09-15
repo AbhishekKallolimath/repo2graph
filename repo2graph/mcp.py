@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌​​​​​‌​​‌‌​‌‌‌​​‌‌​‌‌​​‌​​‌‌​​​‌​‌​‌‌​​‌‌‌​‌​​​​‌‌​​​​​​‌‌​​​​​‌​‌‌​​‌​‌​‌‌​‌​​‌‌​‌​‌​​‌‌​​​​‌​‌‌‌‌​‌​​‌‌‌​‌​​​‌​​‌‌​​​‌​​​​​‌​‌‌​‌​‌‌​​‌‌​​‌​​‌‌‌​​‌​​​‌‌​‌​​​‌‌​‌​‌​​‌‌​‌​‌​⁠
+# @authormark v1 -- do not remove (authorship watermark)⁠​​‌‌​‌‌‌​‌‌‌‌​​‌​‌​​​​‌​​‌‌​‌‌‌‌​‌​‌​​‌‌​‌‌​‌‌​‌​​‌‌​‌‌‌​‌‌​​‌​‌​​‌‌​‌‌‌​​‌‌‌​​‌​​‌‌‌​​​​‌​‌​‌‌‌​​‌‌​‌​​​‌‌‌​‌‌​​‌​​​​‌‌​‌‌‌​​‌​​‌‌​‌‌​‌​‌​‌‌​‌​​‌‌‌‌​‌​​‌​​‌​‌​​‌‌‌​​‌​​‌‌‌​​​​⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.A76LVt00YZjaztLAk2r4jj
+# Fingerprint: AMK1.7yBoSm7e798W4vCrmZzJrp
 """A stdio MCP server over an existing .r2g index: three tools, one engine.
 
 This is an *additional* surface, not a replacement: every tool is a thin call
@@ -23,6 +23,13 @@ Two rules apply to every handler and are not negotiable per call:
   engine: serve() awaits every call on one asyncio loop, so a single argument
   that costs minutes wedges the whole server for every client, not just the
   caller that sent it.
+
+The index itself is built on demand. Pointed at a repo with no `.r2g` yet, the
+first tool call parses it and writes one, because "add the server, restart, ask
+a question, read an error" is an onboarding step users do not complete. That
+build is the one unbounded piece of work here and it deliberately blocks the
+loop: nothing this server does means anything without an index, so there is no
+other call worth serving first. It happens once per process, and once on disk.
 """
 import argparse
 import sys
@@ -30,6 +37,16 @@ from pathlib import Path
 
 from .export import path as artifact_path
 from .query import Index, _fit_lines, count_tokens
+
+# The formats a served index actually needs: `jsonl` carries the chunks, nodes
+# and edges every tool reads, `overview` is what repo_map hands back. The other
+# three (`html`, `graphml`, `cypher`) are for humans and other tools, and cost
+# real time on a large repo, so an index built to be served skips them. Same
+# choice `cli._rag_index_dir` makes when `rag` has to index a target on the spot.
+AUTO_BUILD_FORMATS = {"jsonl", "overview"}
+
+# The directory name that means "this index belongs to the repo above it".
+INDEX_DIRNAME = ".r2g"
 
 # The budget a call gets when it asks for nothing, and the ceiling no call can
 # raise: roughly a quarter of a small model's context, and half of it.
@@ -106,22 +123,61 @@ EMPTY_RESULT = ("no content fit in a {budget}-token budget: nothing matched, "
 _INDEXES: dict[str, Index] = {}
 
 
-def open_index(out) -> Index:
+def _has_index(out_path: Path) -> bool:
+    """True when `out_path` holds an index a tool can actually read."""
+    return out_path.exists() and artifact_path(out_path, "chunks.jsonl").is_file()
+
+
+def _build_index(repo: Path, out: Path) -> None:
+    """Index `repo` into `out`, in-process, single-process, silent on stdout.
+
+    Two constraints, both of them about the transport rather than about graphs:
+
+    * Nothing may reach stdout. It carries the JSON-RPC stream, and one stray
+      `print` ends the session. `graph.build` and `export.dump_all` write no
+      console output of their own -- the CLI's `cmd_build` is what emits the
+      JSON report -- so calling them directly is what keeps the wire clean.
+    * `jobs=1`, always. `build()` reaches for a process pool above
+      PARALLEL_MIN_FILES files, and spawning one from inside the running stdio
+      server hangs: the workers inherit the parent's stdin and stdout, which are
+      the client's pipes, and the first call never returns. It is not a
+      throughput loss worth mourning -- at the threshold the pool costs more to
+      start than it saves -- but on a large repo this build is slower than the
+      CLI's. `repo2graph build` is still the way to index one quickly.
+    """
+    from .chunks import iter_chunks
+    from .export import dump_all
+    from .graph import build
+
+    graph = build(repo, jobs=1)
+    dump_all(graph, iter_chunks(graph), out, AUTO_BUILD_FORMATS)
+
+
+def open_index(out, repo=None) -> Index:
     """One Index per output directory, reused for the life of the process.
 
     Building an Index reads and inverts every chunk; doing that per tool call
     would make the second call as expensive as the first.
+
+    `repo` is the opt-in half. Without it this is what it has always been: open
+    an index that exists, or exit naming the command that creates one. With it,
+    an absent index is built from that directory first -- so an agent that was
+    pointed at a repo gets an answer instead of an error it cannot act on. It
+    stays opt-in because inferring a repo to index from an output path alone is
+    a guess, and the cost of guessing wrong is parsing the wrong tree.
     """
     out_path = Path(out)
     key = str(out_path.resolve())
     index = _INDEXES.get(key)
     if index is not None:
         return index
-    if not out_path.exists() or not artifact_path(out_path, "chunks.jsonl").is_file():
-        raise SystemExit(
-            f"error: no repo2graph index found at '{out}'. "
-            f"Build one first with: repo2graph build <path> -o {out}"
-        )
+    if not _has_index(out_path):
+        if repo is None:
+            raise SystemExit(
+                f"error: no repo2graph index found at '{out}'. "
+                f"Build one first with: repo2graph build <path> -o {out}"
+            )
+        _build_index(Path(repo), out_path)
     index = _INDEXES[key] = Index(out_path)
     return index
 
@@ -287,15 +343,27 @@ def _require_sdk():
     return mcp
 
 
-def serve(out) -> None:
+def serve(out, repo=None) -> None:
     """Run the stdio MCP server against the index at `out`.
 
     Deliberately thin: every answer comes from dispatch(), which is tested
     without the SDK, so SDK API drift can break the wiring but nothing else.
+
+    When `repo` is given and no index exists yet, the build happens on the first
+    tool call rather than here, and that placement is the whole point. A client
+    spawns this process and waits for the `initialize` response; blocking that
+    handshake for the minute a large repo takes to parse makes the server look
+    dead and the client gives up. Building on first call instead means the
+    handshake is instant, the tools list, and the one slow call writes a real
+    index to disk -- so even if *that* call times out, the work is not lost and
+    the retry is instant. A failure that heals itself beats one that does not.
     """
     _require_sdk()
     index_dir = Path(out)
-    open_index(index_dir)
+    if repo is None:
+        # No repo to build from: the index must already exist, so say so now
+        # rather than at the first call.
+        open_index(index_dir)
     import asyncio
 
     from mcp.server import Server
@@ -312,7 +380,7 @@ def serve(out) -> None:
 
     @server.call_tool()
     async def call_tool(name, arguments):
-        text = dispatch(open_index(index_dir), name, arguments or {})
+        text = dispatch(open_index(index_dir, repo), name, arguments or {})
         return [TextContent(type="text", text=text)]
 
     async def _run():
@@ -323,14 +391,46 @@ def serve(out) -> None:
     asyncio.run(_run())
 
 
+def resolve_paths(repo=None, out=None):
+    """Work out (index_dir, repo_to_build_from) from what the user passed.
+
+    Returns a repo of None when there is nothing safe to infer, which turns
+    auto-build off and leaves the "build one first" error in place.
+
+    Only one convention is trusted: an index directory named `.r2g` belongs to
+    the directory above it, which is how every command, doc and example in this
+    project lays it out. Any other `--out` name and the repo is not guessed --
+    `--out /var/cache/indexes/myproj` must not end up parsing `/var/cache/indexes`.
+    Name the repo positionally to index something that is not laid out that way.
+    """
+    if repo is not None:
+        repo_path = Path(repo)
+        if not repo_path.is_dir():
+            raise SystemExit(
+                f"error: repository directory does not exist or is not a "
+                f"directory: {repo_path}")
+        return (Path(out) if out else repo_path / INDEX_DIRNAME), repo_path
+    out_path = Path(out) if out else Path(INDEX_DIRNAME)
+    if out_path.name == INDEX_DIRNAME and out_path.parent.is_dir():
+        return out_path, out_path.parent
+    return out_path, None
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(
         prog="repo2graph-mcp",
         description="Serve a repo2graph index over MCP on stdio")
-    p.add_argument("-o", "--out", default=".r2g",
-                   help="index directory built by `repo2graph build` (default: .r2g)")
+    p.add_argument("repo", nargs="?", default=None,
+                   help="repository to serve; its index is built on the first "
+                        "tool call if one does not exist yet "
+                        "(default: the directory holding --out)")
+    p.add_argument("-o", "--out", default=None,
+                   help="index directory (default: <repo>/.r2g)")
+    p.add_argument("--no-auto-build", action="store_true",
+                   help="never build: exit unless the index already exists")
     args = p.parse_args(argv)
-    serve(Path(args.out))
+    index_dir, repo = resolve_paths(args.repo, args.out)
+    serve(index_dir, None if args.no_auto_build else repo)
     return 0
 
 

@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​​‌‌‌​​​​‌‌‌‌​​​​‌​​​‌‌‌​‌​‌‌‌‌‌​‌‌‌​​‌​​‌‌​‌‌‌‌​‌‌​​‌​​​‌​‌​‌‌‌​‌​‌​​​​​‌​‌​​​​​‌‌‌‌​​​​‌‌‌​​‌​​‌​‌​​​‌​‌​‌‌​‌​​‌​​‌‌​‌​‌​‌​​​​​‌​​​​‌​​‌​‌​‌‌‌​‌​​​​‌‌​‌‌​​‌‌‌​‌​‌​‌​​​‌‌‌​‌‌​⁠
+# @authormark v1 -- do not remove (authorship watermark)⁠​​‌​‌‌​‌​‌​‌‌​‌​​‌​‌‌‌‌‌​‌​​‌​‌​​‌​​​‌‌‌​​‌​‌‌​‌​‌​​‌‌‌​​‌‌‌‌​​‌​‌‌‌​‌‌‌​‌‌‌​​​​​​‌‌​‌‌‌​​‌‌​‌‌‌​‌​‌‌​​​​‌​‌​​‌‌​​‌‌​​‌​​‌‌​​‌​​​‌‌‌​​‌​​‌​​‌‌​​​‌​​​‌​‌​‌‌​‌​‌‌​​‌‌​​‌​​‌​‌​‌‌​⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.8xG_rodWPPxrQZMPBWCgTv
+# Fingerprint: AMK1.-Z_JG-Nywp77XS2drLEk2V
 """Discovery, language configs, and tree-sitter based symbol/call extraction."""
 import os
 import re
@@ -159,10 +159,16 @@ MAX_BYTES = 1_500_000
 
 def _git_files(root: Path):
     try:
+        # stdin=DEVNULL: capture_output redirects the child's stdout and stderr
+        # only, so without this git inherits *our* stdin. Under the MCP server
+        # that handle is the client's JSON-RPC pipe: git blocks reading it until
+        # the timeout below fires -- a 60s stall before the silent _walk_files
+        # fallback -- and a child holding that pipe can swallow frames meant for
+        # us. Nothing here ever has anything to say to git on stdin.
         out = subprocess.run(
             ["git", "-c", "core.quotepath=false", "-C", str(root),
              "ls-files", "-z", "-co", "--exclude-standard"],
-            capture_output=True, timeout=60,
+            capture_output=True, stdin=subprocess.DEVNULL, timeout=60,
         )
         if out.returncode != 0:
             return None

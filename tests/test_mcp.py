@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌‌​​‌‌​‌‌​​‌​‌​‌​‌​‌‌​​‌​‌​​​​​‌​‌​​‌‌​​‌‌​‌‌​​‌‌​​‌‌‌​‌​‌​​‌​​‌‌​​‌‌​​​‌‌​‌​​​​‌‌​‌​‌​‌​​‌​​‌​‌​‌‌​​‌​‌‌​​‌‌‌​‌​​‌‌‌​​​‌‌‌​​​​‌‌​‌​‌​​‌‌‌​‌‌​​‌​​‌​‌‌​‌‌‌‌​​​​‌​‌​‌​​​‌​​​‌‌‌⁠
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌‌​‌​‌​‌​​‌‌​‌​‌‌​‌​​‌​‌​‌​‌​‌​‌​‌​​​​​‌​‌‌​​‌​‌‌‌​‌‌​​‌​​​​‌‌​‌​‌​​​‌​‌‌‌​‌‌​​‌‌‌​​​​​​‌‌​‌‌​​​‌‌‌​​‌​‌‌​​​​‌​‌‌​‌​​‌​‌​​​‌​​​‌​​​‌‌‌​‌​‌​​‌​​‌​​‌‌​​​‌​‌‌​​‌​‌‌‌​‌​‌​‌​‌‌​​​⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.seVPS6gRf45IYgN8jvKxTG
+# Fingerprint: AMK1.uMiUPYvCQvp69aiDGRLYuX
 """Change 2 -- the stdio MCP server. AC-26 .. AC-33.
 
 The `mcp` SDK is an optional extra and is deliberately never imported here:
@@ -744,3 +744,262 @@ def test_neighbours_no_truncation_when_within_limit(mini_index):
     out = mcp.tool_repo_neighbours(idx, SYM_ROUTE, limit=50)
     assert "truncated" not in out
 
+
+
+# ==========================================================================
+# Auto-build: a server pointed at a repo indexes it rather than erroring out
+# ==========================================================================
+
+def test_auto_build_indexes_a_repo_that_has_no_index_yet(mini_repo, tmp_path):
+    """The onboarding fix: point it at a repo, get a working Index, no error."""
+    mcp = mcp_module()
+    out = tmp_path / "built_idx"
+    assert not out.exists()
+
+    index = mcp.open_index(out, repo=mini_repo)
+
+    assert (out / "agent" / "chunks.jsonl").is_file()
+    assert index.nodes, "the built index should carry nodes"
+    assert mcp.tool_repo_map(index).strip(), "repo_map should answer off it"
+
+
+def test_auto_build_only_writes_the_formats_a_server_reads(mini_repo, tmp_path):
+    """html/graphml/cypher cost real time and no tool reads them."""
+    mcp = mcp_module()
+    out = tmp_path / "lean_idx"
+    mcp.open_index(out, repo=mini_repo)
+
+    written = {p.name for p in out.rglob("*") if p.is_file()}
+    assert "chunks.jsonl" in written
+    assert "overview.md" in written
+    assert not {"graph.html", "graph.graphml", "graph.cypher"} & written, written
+
+
+def test_auto_build_writes_nothing_to_stdout(mini_repo, tmp_path, capsys):
+    """stdout is the JSON-RPC transport: one stray print drops the connection."""
+    mcp = mcp_module()
+    mcp._build_index(mini_repo, tmp_path / "quiet_idx")
+    captured = capsys.readouterr()
+    assert captured.out == "", repr(captured.out)
+
+
+def test_auto_build_is_opt_in_so_a_bare_open_index_still_refuses(tmp_path):
+    """Without a repo to build from, the old error is still the behaviour."""
+    mcp = mcp_module()
+    missing = tmp_path / "nope"
+    with pytest.raises(SystemExit) as exc:
+        mcp.open_index(missing)
+    assert f"error: no repo2graph index found at '{missing}'" in str(exc.value)
+
+
+def test_an_existing_index_is_never_rebuilt(mini_index, mini_repo, monkeypatch):
+    """Passing a repo must not cost a rebuild when the index is already there."""
+    mcp = mcp_module()
+    mcp._INDEXES.clear()
+
+    def _boom(*a, **k):
+        raise AssertionError("rebuilt an index that already existed")
+
+    monkeypatch.setattr(mcp, "_build_index", _boom)
+    assert mcp.open_index(mini_index, repo=mini_repo).nodes
+
+
+def test_serve_does_not_build_during_the_handshake(mini_repo, tmp_path,
+                                                   monkeypatch):
+    """The build belongs on the first tool call, not before `initialize`.
+
+    Blocking the handshake for the minute a large repo takes to parse is what
+    makes a client declare the server dead, so serve() must return to its event
+    loop without having touched the repo.
+    """
+    import asyncio
+
+    mcp = mcp_module()
+    mcp._INDEXES.clear()
+    _fake_sdk(monkeypatch, decorators=True, version="1.9.0")
+    monkeypatch.setattr(mcp, "_build_index",
+                        lambda *a, **k: pytest.fail("built during the handshake"))
+    monkeypatch.setattr(asyncio, "run", lambda coro: coro.close())
+
+    out = tmp_path / "deferred_idx"
+    mcp.serve(out, repo=mini_repo)      # must not raise, must not build
+    assert not out.exists()
+
+
+def test_serve_without_a_repo_still_preflights(monkeypatch, tmp_path):
+    """--no-auto-build territory: nothing to build from, so fail fast."""
+    mcp = mcp_module()
+    _fake_sdk(monkeypatch, decorators=True, version="1.9.0")
+    missing = tmp_path / "missing_idx"
+    with pytest.raises(SystemExit) as exc:
+        mcp.serve(missing)
+    assert f"error: no repo2graph index found at '{missing}'" in str(exc.value)
+
+
+# ----------------------------------------------------------- resolve_paths --
+
+def test_resolve_paths_positional_repo_defaults_the_index_inside_it(tmp_path):
+    mcp = mcp_module()
+    out, repo = mcp.resolve_paths(repo=tmp_path)
+    assert out == tmp_path / ".r2g"
+    assert repo == tmp_path
+
+
+def test_resolve_paths_infers_the_repo_from_a_conventional_out(tmp_path):
+    """`<repo>/.r2g` is the convention every doc and example uses."""
+    mcp = mcp_module()
+    out, repo = mcp.resolve_paths(out=tmp_path / ".r2g")
+    assert out == tmp_path / ".r2g"
+    assert repo == tmp_path
+
+
+def test_resolve_paths_refuses_to_guess_from_an_unconventional_out(tmp_path):
+    """--out /var/cache/indexes/myproj must not end up parsing the cache dir."""
+    mcp = mcp_module()
+    elsewhere = tmp_path / "indexes" / "myproj"
+    elsewhere.mkdir(parents=True)
+    out, repo = mcp.resolve_paths(out=elsewhere)
+    assert out == elsewhere
+    assert repo is None, "an out path that is not named .r2g is not a repo hint"
+
+
+def test_resolve_paths_an_explicit_repo_that_is_not_a_directory_is_an_error(
+        tmp_path):
+    mcp = mcp_module()
+    with pytest.raises(SystemExit) as exc:
+        mcp.resolve_paths(repo=tmp_path / "not-there")
+    assert "not a directory" in str(exc.value)
+
+
+def test_resolve_paths_an_explicit_out_wins_over_the_default(tmp_path):
+    mcp = mcp_module()
+    out, repo = mcp.resolve_paths(repo=tmp_path, out=tmp_path / "custom")
+    assert out == tmp_path / "custom"
+    assert repo == tmp_path
+
+
+def test_no_auto_build_flag_turns_the_repo_off(mini_repo, monkeypatch):
+    """--no-auto-build must reach serve() as repo=None."""
+    mcp = mcp_module()
+    seen = {}
+    monkeypatch.setattr(mcp, "serve",
+                        lambda out, repo=None: seen.update(out=out, repo=repo))
+
+    mcp.main([str(mini_repo), "--no-auto-build"])
+    assert seen["repo"] is None
+
+    seen.clear()
+    mcp.main([str(mini_repo)])
+    assert seen["repo"] == Path(mini_repo)
+
+
+@pytest.mark.skipif(not HAS_REAL_MCP, reason="needs repo2graph[mcp] with 1.x Server API")
+def test_stdio_roundtrip_against_a_repo_with_no_index(mini_repo):
+    """The onboarding journey, end to end: add the server, ask, get an answer.
+
+    Before auto-build this sequence ended at `error: no repo2graph index found`.
+    It also proves the build does not corrupt the transport -- the handshake and
+    every later frame have to parse as JSON-RPC with a build interleaved.
+    """
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "repo2graph.mcp", str(mini_repo)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf8",
+    )
+
+    def send(req):
+        proc.stdin.write(json.dumps(req) + "\n")
+        proc.stdin.flush()
+        return json.loads(proc.stdout.readline())
+
+    try:
+        init_resp = send({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2024-11-05",
+                       "clientInfo": {"name": "test", "version": "1.0"},
+                       "capabilities": {}},
+        })
+        assert "result" in init_resp, init_resp
+        assert not (mini_repo / ".r2g").exists(), \
+            "the handshake must not have waited on a build"
+
+        proc.stdin.write(json.dumps(
+            {"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
+        proc.stdin.flush()
+
+        search_resp = send({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": "repo_search", "arguments": {"query": MINI_QUERY}},
+        })
+        assert "result" in search_resp, search_resp
+        assert "[cite:" in search_resp["result"]["content"][0]["text"]
+
+        # The build landed on disk, so the next process starts instantly.
+        assert (mini_repo / ".r2g" / "agent" / "chunks.jsonl").is_file()
+    finally:
+        proc.stdin.close()
+        proc.terminate()
+        proc.wait()
+
+
+# ==========================================================================
+# The git subprocesses must never inherit this process's stdin
+# ==========================================================================
+#
+# `capture_output=True` redirects the child's stdout and stderr and leaves
+# stdin inherited. Under the MCP server that handle is the client's JSON-RPC
+# pipe, so git blocked on it until its own timeout expired: auto-build took
+# 60.7s instead of 0.6s and then fell back to _walk_files as if git were
+# absent. A child holding that pipe can also consume frames addressed to us.
+# These assert the redirect at both call sites, because the symptom is a
+# silent stall on one platform rather than a failure anywhere.
+
+@pytest.mark.parametrize("call", ["ls_files", "log"])
+def test_git_subprocesses_never_inherit_stdin(monkeypatch, tmp_path, call):
+    import subprocess as sp
+
+    seen = {}
+
+    def spy(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["kwargs"] = kwargs
+        raise OSError("not actually running git")
+
+    if call == "ls_files":
+        from repo2graph import parse as mod
+        target, run = mod, lambda: mod._git_files(tmp_path)
+    else:
+        from repo2graph import graph as mod
+        target, run = mod, lambda: mod.add_cochange(mod.Graph(tmp_path, "t"),
+                                                    tmp_path, 10, set())
+    monkeypatch.setattr(target.subprocess, "run", spy)
+    run()   # the OSError is caught by the caller; we only want the kwargs
+
+    assert seen["kwargs"].get("stdin") is sp.DEVNULL, (
+        f"{call} would inherit the MCP transport on stdin: {seen['kwargs']}")
+
+
+def test_auto_build_never_spawns_a_process_pool(monkeypatch, tmp_path):
+    """`build()` reaches for a ProcessPoolExecutor above PARALLEL_MIN_FILES
+    files, and spawning one from inside the running stdio server hangs: the
+    workers inherit the parent's stdin/stdout, which are the client's pipes,
+    and the tool call never returns.
+
+    Asserted on the argument rather than end to end on purpose -- the failure
+    mode is an indefinite hang, and a test that reproduces it would wedge CI
+    rather than fail it. The fixtures elsewhere in this file are all under the
+    threshold, which is exactly why this went unnoticed until a 65-file repo.
+    """
+    mcp = mcp_module()
+    seen = {}
+
+    def spy(repo, **kwargs):
+        seen.update(kwargs)
+        raise RuntimeError("stop here; the kwargs are the whole assertion")
+
+    monkeypatch.setattr("repo2graph.graph.build", spy)
+    with pytest.raises(RuntimeError):
+        mcp._build_index(tmp_path, tmp_path / "idx")
+
+    assert seen.get("jobs") == 1, (
+        f"auto-build must stay single-process inside the server: {seen}")
