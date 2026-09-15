@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌‌​​​​​‌​‌‌​‌​‌​​​‌​‌​‌​​​‌​​​‌‌‌​​‌​​‌‌‌​​‌​​‌‌​‌​‌​​‌‌​‌​​‌​​‌​‌‌​‌​‌​‌​‌​​​‌​‌​​‌​​‌‌​‌​‌‌​​‌‌​​​‌​‌‌‌​‌‌​​​‌‌‌​​‌​‌‌​‌​​​​‌‌‌​​‌​​​‌‌​​​​​‌​​‌‌​​​‌‌​​‌‌‌​‌‌​​‌‌‌​‌​​‌​​​⁠
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌​​‌‌‌​‌‌‌​‌‌​​‌​​‌​‌‌​‌‌​‌‌​​​‌‌‌​‌​‌​‌‌​‌‌‌‌​‌​‌​‌​​​‌‌​​‌‌‌​‌​‌​‌​​​‌​​‌​‌​​‌​​‌‌‌‌​‌‌‌​‌​‌​‌​‌​​​​​‌​​​‌​‌​‌​​‌​​​​‌​‌​‌​​​‌​​​‌​‌​​‌‌​‌‌​​‌​​​‌​​​‌​‌​‌‌​​‌​​‌​‌​​‌‌‌​‌‌​⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.X-EDrrji-TRk1v9hr0LggH
+# Fingerprint: AMK1.gvKluoTgTJOuPEHTE6DVJv
 """The backward-compatibility contract: AC-1 .. AC-9, plus AC-34 / AC-35.
 
 These are characterization tests. The golden files under `tests/golden/` were
@@ -433,6 +433,12 @@ def test_ac35_editing_one_file_changes_exactly_one_hash(mini_repo, tmp_path):
 # that agrees only on exit status would not have caught it.
 
 BASH = shutil.which("bash")
+if sys.platform == "win32":
+    git_bash = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git" / "bin" / "bash.exe"
+    if git_bash.is_file():
+        BASH = str(git_bash)
+    elif BASH and "system32" in BASH.lower():
+        BASH = None
 
 # Every casing a workflow author can plausibly write, on both sides of the gate.
 EMBED_CASINGS = ["true", "True", "TRUE", "tRuE", "false", "False", "FALSE", ""]
@@ -546,7 +552,10 @@ def test_r9_the_fallback_version_agrees_with_pyproject():
     """R-9: every `__version__` literal in the package equals the packaged
     version. There is no metadata to read in a source checkout, so the literal
     is the only thing that answers `repo2graph.__version__` there."""
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:                      # pragma: no cover - py3.10
+        pytest.skip("tomllib needs Python 3.11+")
     with open(REPO_ROOT / "pyproject.toml", "rb") as fh:
         declared = tomllib.load(fh)["project"]["version"]
     source = (REPO_ROOT / "repo2graph" / "__init__.py").read_text(encoding="utf8")

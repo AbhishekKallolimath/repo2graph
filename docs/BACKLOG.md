@@ -30,7 +30,7 @@ Ranked by the IMPROVE phase of that run. Size is rough effort, not risk.
 
 | # | Item | Size | Why this rank |
 |---|------|------|---------------|
-| 1 | **CI job that installs the `[mcp]` extra and does one stdio round trip** | S | `serve()` is the only code in the package no test touches, and it is where the run's single real blocker lived (`mcp>=1.0` → 2.2.0 → `AttributeError`). A green suite proved nothing about it; only a real install did. The `<2` pin is a fence, not a detector — the next SDK break is silent again without this. |
+| 1 | **CI job that installs the `[mcp]` extra and does one stdio round trip** *(Shipped)* | S | **Shipped in PR #54:** CI installs `[dev,mcp]` and runs `test_ac34_stdio_server_roundtrip`, exercising `serve()` end-to-end over stdio JSON-RPC. (Previously `serve()` had no automated test coverage). |
 | 2 | **Say so when fusion silently switches itself off** (detail below) | S | Same failure class the whole run was built to avoid: a feature reporting success while doing nothing. |
 | 3 | **Port the MCP server to the 2.x SDK API** (detail below) | M | Deliberate deferral, not debt — but the `<2` pin ages, and 1.x will stop getting fixes. |
 | 4 | **Graph-level incremental rebuild** (detail below) | L | Cut at PLAN with reasoning; a run of its own. Nothing depends on it — `index.state.json` already ships the substrate. |

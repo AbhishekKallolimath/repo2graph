@@ -1,9 +1,9 @@
 <!--
-  @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌​​​‌​‌​​​‌​​​​‌‌​‌‌​​‌​‌​‌‌‌​‌​​‌‌​‌​‌‌​​‌‌‌​‌​​‌​​​​​‌​‌‌​‌​‌‌​​‌​​​‌‌‌​​​​​‌​‌​​​​​‌​​‌​‌​​‌​​‌​​‌​‌​‌‌​​‌​‌​​​‌‌‌​​‌‌​‌​‌​‌‌​‌‌​​​‌​​​‌​‌​‌‌​​‌​‌​‌​​‌‌‌​​‌‌‌​​‌​​​‌​‌‌​‌⁠
+  @authormark v1 -- do not remove (authorship watermark)⁠​‌‌‌​‌​‌​‌​​​​‌‌​​‌‌‌​​‌​‌‌​‌‌​​​‌​‌​‌‌‌​‌‌‌​​​​​‌‌​‌‌‌​​‌​‌‌​​‌​​‌‌‌​​‌​‌​​​‌​‌​​‌‌​​‌​​‌‌‌​​‌​​‌​​​​‌‌​​‌‌​​​‌​‌‌‌​‌‌‌​‌​​​​​‌​​‌‌‌​​‌​‌​​​‌‌‌​‌​‌​​‌​​​‌‌‌​​‌​‌​‌​‌​‌​‌‌​​‌​‌⁠
   Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
   Author: https://github.com/Srinivasan-78
   SPDX-License-Identifier: MIT
-  Fingerprint: AMK1.QD6WMgH-dpPJIYG5lEeNr-
+  Fingerprint: AMK1.uC9lWpnY9E2rC1wA9GR9Ue
 -->
 # repo2graph
 
@@ -346,30 +346,110 @@ of you pasting a pack into a chat window.
 
 ```bash
 pip install "repo2graph[mcp]"
-repo2graph build . -o .r2g          # the server reads an index; it does not build one
-repo2graph-mcp --out .r2g
 ```
 
-Point a client at it — the config block is the same shape almost everywhere:
+#### Build the index before serving
+
+The server reads an existing index; it does not build one on startup. Build the index first:
+
+```bash
+repo2graph build . -o .r2g
+```
+
+To enable vector-enhanced retrieval (hybrid BM25 + dense semantic search):
+
+```bash
+pip install "repo2graph[rag]"
+repo2graph embed -o .r2g
+```
+
+**Preflight check:** If you run `repo2graph-mcp` against a directory where `.r2g` has not been built yet (or `chunks.jsonl` is missing), the server performs an immediate preflight check and exits cleanly with actionable guidance rather than raising an unhandled exception:
+
+```
+error: no repo2graph index found at '.r2g'. Build one first with: repo2graph build <path> -o .r2g
+```
+
+#### Client configuration
+
+##### Claude Desktop (`claude_desktop_config.json`)
+
+Configuration file location:
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux:** `~/.config/Claude/claude_desktop_config.json`
+
+macOS / Linux:
+```json
+{
+  "mcpServers": {
+    "repo2graph": {
+      "command": "repo2graph-mcp",
+      "args": ["--out", "/path/to/project/.r2g"]
+    }
+  }
+}
+```
+
+Windows:
+```json
+{
+  "mcpServers": {
+    "repo2graph": {
+      "command": "repo2graph-mcp",
+      "args": ["--out", "C:/path/to/project/.r2g"]
+    }
+  }
+}
+```
+*(Tip: If `repo2graph-mcp` is installed inside a virtual environment, specify the full path to `.venv/bin/repo2graph-mcp` or `.venv\Scripts\repo2graph-mcp.exe` as the `command`.)*
+
+##### Cursor (`.cursor/mcp.json`)
+
+Configure `.cursor/mcp.json` in your workspace or global settings:
 
 ```json
 {
   "mcpServers": {
     "repo2graph": {
       "command": "repo2graph-mcp",
-      "args": ["--out", "/path/to/your/project/.r2g"]
+      "args": ["--out", "/path/to/project/.r2g"]
     }
   }
 }
 ```
 
+##### Claude Code
+
+Add the server using the CLI:
+
+```bash
+claude mcp add repo2graph -- repo2graph-mcp --out /path/to/project/.r2g
+```
+
+##### Google Antigravity / Generic MCP Clients
+
+Generic MCP clients can reference `repo2graph-mcp` as a stdio server by specifying the command and arguments:
+
+- **Command:** `repo2graph-mcp` (or path to executable inside your venv)
+- **Args:** `["--out", "/path/to/project/.r2g"]`
+
+In JSON configuration blocks:
+```json
+{
+  "command": "repo2graph-mcp",
+  "args": ["--out", "/path/to/project/.r2g"]
+}
+```
+
+#### Available tools
+
 Three tools, deliberately:
 
 | Tool | Arguments | What comes back |
 |---|---|---|
-| `repo_map` | none | The repo map: languages, hub files, top entry points. Stable, so a client can cache it. |
-| `repo_search` | `query`, optional `k`, `hops`, `budget_tokens` | Cited markdown — seed chunks plus their graph neighbours, each headed `[cite: path:start-end]`. |
-| `repo_neighbours` | `node_id`, optional `hops`, `limit` | One graph hop from a node: callers, callees, base classes and the defining file, each with its edge direction. The thing grep cannot do. |
+| `repo_map` | none | Read high-level repo overview (languages, hub files, entry points). Cacheable, zero-arguments. |
+| `repo_search` | `query`, optional `k`, `hops`, `budget_tokens` | GraphRAG search returning cited code blocks (`[cite: path:start-end]`). Unconditionally excludes secrets, hard-capped at 12,000 tokens. |
+| `repo_neighbours` | `node_id`, optional `hops`, `limit` | Graph traversal around a symbol/file (callers, callees, base classes, defining file). Truncated clearly at limit (`... (truncated at <limit> neighbours)`). |
 
 Three promises the server keeps that the CLI leaves to you:
 
@@ -377,7 +457,8 @@ Three promises the server keeps that the CLI leaves to you:
   path that looks like a credential store. On the CLI that is opt-in (`--answer`).
 - **Output is hard-bounded.** `repo_search` clamps whatever budget it is given to at most 12 000
   tokens and re-measures the result before returning it, and `repo_neighbours` lists at most 50 rows
-  however large a `limit` it is handed, so no single call can eat a context window.
+  however large a `limit` it is handed, so no single call can eat a context window. When truncated,
+  `repo_neighbours` explicitly appends `... (truncated at <limit> neighbours)`.
 - **Work is hard-bounded.** `k` is capped at 50 and `hops` at 4. One call sits on the server's only
   event loop, so an argument that costs minutes would freeze every client, not just the one that
   sent it.

@@ -2827,5 +2827,16 @@ this run's five iterations; none of them would have made the work any smaller.
   (D-1..D-6) written into ## Improve, skill NOT edited. Quick win: repo_search no longer returns ""
   at a floor-clamped budget (EMPTY_RESULT note in the handler so dispatch inherits it) + 6 R-10
   tests, falsified against the pre-fix code on a real 208-chunk index. 382 passed / 2 skipped /
-  0 failed, ruff clean. Nothing committed; no watermark added, edited, moved or removed
-  -> Status: DONE
+  0 failed, ruff clean. Nothing committed; no watermark added, edited, moved or removed.
+- 2026-09-15 PR #54 CI HARDENING & CODE AUDIT OPTIMIZATIONS. Resolution of CI issues and audit optimizations:
+  1. CI issues resolved:
+     - Python 3.10 `tomllib` skip: `tomllib` is standard library in Python 3.11+; in Python 3.10 test runs (`tests/test_compat.py::test_r9_the_fallback_version_agrees_with_pyproject` and `tests/test_mcp.py::load_pyproject`), handled `ModuleNotFoundError` by skipping via `pytest.skip("tomllib needs Python 3.11+")` rather than raising, matching the pattern in `tests/test_rag.py`.
+     - Windows bash detection: In `tests/test_compat.py`, when running on Windows (`sys.platform == "win32"`), prioritize Git Bash (`C:\Program Files\Git\bin\bash.exe`) and disregard `C:\Windows\System32\bash.exe` (WSL / invalid shell) to ensure shell scripts run under a valid bash interpreter.
+     - Claude review tool permissions: Addressed tool permission denials in `.github/workflows/claude-code-review.yml` for PR reviews.
+  2. Code audit optimizations:
+     - `expand` early break: In `repo2graph/query.py::Index.expand()`, added an early break (`if not frontier: break`) to avoid looping through remaining hops when the frontier is empty.
+     - Preflight check: In `repo2graph/mcp.py::open_index()` and `serve()`, verify that `out_path` exists and `artifact_path(out_path, "chunks.jsonl").is_file()` before proceeding, raising a clean, actionable `SystemExit` instructing the user to build the index first (`repo2graph build <path> -o {out}`) if `.r2g` has not been built yet.
+     - Neighbour truncation indication: In `repo2graph/mcp.py::tool_repo_neighbours()`, when neighbour count reaches `limit`, explicitly append `... (truncated at {limit} neighbours)` so clients clearly understand that truncation occurred.
+  3. Stdio roundtrip tests & CI job:
+     - CI matrix updated to install `[dev,mcp]` and run `test_ac34_stdio_server_roundtrip`, exercising `serve()` end-to-end over stdio JSON-RPC.
+  All tests passing (389 passed, 2 skipped), ruff clean -> Status: DONE

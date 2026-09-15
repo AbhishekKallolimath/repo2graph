@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​​‌‌​‌‌‌​‌​​​‌‌​​‌​​‌‌‌‌​​‌‌​‌‌‌​​‌‌​‌​​​‌​​​‌​​​‌‌‌​​​​​‌​‌​‌​​​‌​​​‌​​​‌‌‌​‌​​​​‌‌​‌​​​‌‌‌‌​‌​​‌‌​​​​‌​‌​‌‌​​​​‌‌​​​‌​​‌​​‌​‌​​​‌‌​​‌​​​‌‌​​‌​​‌​‌​​‌​​​‌‌​​‌‌​‌‌​‌​​‌​‌​‌​‌‌​⁠
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌​​​​​‌​​‌‌​‌‌‌​​‌‌​‌‌​​‌​​‌‌​​​‌​‌​‌‌​​‌‌‌​‌​​​​‌‌​​​​​​‌‌​​​​​‌​‌‌​​‌​‌​‌‌​‌​​‌‌​‌​‌​​‌‌​​​​‌​‌‌‌‌​‌​​‌‌‌​‌​​​‌​​‌‌​​​‌​​​​​‌​‌‌​‌​‌‌​​‌‌​​‌​​‌‌‌​​‌​​​‌‌​‌​​​‌‌​‌​‌​​‌‌​‌​‌​⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.7FO74DpTDt4zaXbJ22R3iV
+# Fingerprint: AMK1.A76LVt00YZjaztLAk2r4jj
 """A stdio MCP server over an existing .r2g index: three tools, one engine.
 
 This is an *additional* surface, not a replacement: every tool is a thin call
@@ -28,6 +28,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from .export import path as artifact_path
 from .query import Index, _fit_lines, count_tokens
 
 # The budget a call gets when it asks for nothing, and the ceiling no call can
@@ -111,10 +112,17 @@ def open_index(out) -> Index:
     Building an Index reads and inverts every chunk; doing that per tool call
     would make the second call as expensive as the first.
     """
-    key = str(Path(out).resolve())
+    out_path = Path(out)
+    key = str(out_path.resolve())
     index = _INDEXES.get(key)
-    if index is None:
-        index = _INDEXES[key] = Index(Path(out))
+    if index is not None:
+        return index
+    if not out_path.exists() or not artifact_path(out_path, "chunks.jsonl").is_file():
+        raise SystemExit(
+            f"error: no repo2graph index found at '{out}'. "
+            f"Build one first with: repo2graph build <path> -o {out}"
+        )
+    index = _INDEXES[key] = Index(out_path)
     return index
 
 
@@ -158,14 +166,19 @@ def tool_repo_neighbours(index: Index, node_id: str, hops: int = 1,
                 f"file:<path>, sym:<path>::<qualname> or dir:<path>.")
     limit = _clamp(limit, MCP_NEIGHBOUR_LIMIT, 1, MCP_MAX_NEIGHBOURS)
     lines = [f"neighbours of {_label(index, node_id)}:"]
+    truncated = False
     for dst, etype, direction, _src in index.expand(
             [node_id], hops=_clamp(hops, 1, 0, MCP_MAX_HOPS)):
         target = index.nodes.get(dst, {})
         if index._is_secret_path(target.get("path") or ""):
             continue
-        lines.append(f"- {etype} {direction}: {_label(index, dst)}")
-        if len(lines) > limit:
+        # lines[0] is the header, so len(lines) - 1 is the number of neighbours.
+        if len(lines) - 1 >= limit:
+            truncated = True
             break
+        lines.append(f"- {etype} {direction}: {_label(index, dst)}")
+    if truncated:
+        lines.append(f"... (truncated at {limit} neighbours)")
     if len(lines) == 1:
         lines.append("- (none)")
     return "\n".join(lines)
@@ -281,13 +294,14 @@ def serve(out) -> None:
     without the SDK, so SDK API drift can break the wiring but nothing else.
     """
     _require_sdk()
+    index_dir = Path(out)
+    open_index(index_dir)
     import asyncio
 
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
     from mcp.types import TextContent, Tool
 
-    index_dir = Path(out)
     server = Server("repo2graph")
 
     @server.list_tools()

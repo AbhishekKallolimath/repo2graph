@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌‌​‌​​​‌​‌​​‌​​‌‌‌​‌​‌​‌‌‌​‌​​​‌​‌​​‌‌​‌​‌‌​​‌​‌​‌​​‌​​‌‌‌‌​‌​​‌‌​‌‌​‌​‌‌​‌‌​‌​​‌‌​‌​​​​‌‌​​‌‌​‌​​‌​‌​​​‌‌‌​​‌​​‌‌​‌​​​‌‌‌​‌‌‌​​‌‌​​‌​​‌​‌​‌​​​‌‌​​​‌​​‌​‌​‌​‌​‌​​​‌‌​​‌‌‌​‌​‌⁠
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌‌​​‌‌​‌‌​​‌​‌​‌​‌​‌‌​​‌​‌​​​​​‌​‌​​‌‌​​‌‌​‌‌​​‌‌​​‌‌‌​‌​‌​​‌​​‌‌​​‌‌​​​‌‌​‌​​​​‌‌​‌​‌​‌​​‌​​‌​‌​‌‌​​‌​‌‌​​‌‌‌​‌​​‌‌‌​​​‌‌‌​​​​‌‌​‌​‌​​‌‌‌​‌‌​​‌​​‌​‌‌​‌‌‌‌​​​​‌​‌​‌​​​‌​​​‌‌‌⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.tRutSYRzmm43J94w2TbUFu
+# Fingerprint: AMK1.seVPS6gRf45IYgN8jvKxTG
 """Change 2 -- the stdio MCP server. AC-26 .. AC-33.
 
 The `mcp` SDK is an optional extra and is deliberately never imported here:
@@ -10,8 +10,9 @@ The `mcp` SDK is an optional extra and is deliberately never imported here:
 AC-26..AC-31 need no SDK at all, and AC-33 blocks the import on purpose to
 assert the error message a user without the extra actually sees.
 """
+import json
+import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,18 @@ from conftest import MINI_QUERY, REPO_ROOT, SECRET_QUERY, SYM_AUDIT, SYM_ROUTE
 from repo2graph.query import Index, _is_secret_path
 
 PYPROJECT = REPO_ROOT / "pyproject.toml"
+
+
+def _has_mcp():
+    try:
+        import mcp  # noqa: F401
+        from mcp.server import Server
+        return hasattr(Server, "list_tools") and hasattr(Server, "call_tool")
+    except Exception:
+        return False
+
+
+HAS_REAL_MCP = _has_mcp()
 
 
 def mcp_module():
@@ -210,6 +223,13 @@ def test_ac31_tool_descriptions_are_three_and_stay_under_600_chars():
 # ==========================================================================
 
 def load_pyproject() -> dict:
+    # tomllib is stdlib from 3.11; requires-python is >=3.10 and CI runs 3.10,
+    # so guard it the way tests/test_rag.py already does rather than taking a
+    # dependency on tomli just to read our own metadata.
+    try:
+        import tomllib
+    except ModuleNotFoundError:                      # pragma: no cover - py3.10
+        pytest.skip("tomllib needs Python 3.11+")
     with open(PYPROJECT, "rb") as fh:
         return tomllib.load(fh)
 
@@ -272,6 +292,103 @@ def test_ac33_open_index_caches_one_index_per_directory(mini_index):
     second = mcp.open_index(mini_index)
     assert first is second
     assert isinstance(first, Index)
+
+
+# ==========================================================================
+# AC-34 -- live stdio server round-trip
+# ==========================================================================
+
+@pytest.mark.skipif(not HAS_REAL_MCP, reason="needs repo2graph[mcp] with 1.x Server API")
+def test_ac34_stdio_server_roundtrip(mini_index):
+    """AC-34: automated round-trip against the live stdio server."""
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "repo2graph.mcp", "--out", str(mini_index)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf8",
+    )
+
+    def send(req):
+        proc.stdin.write(json.dumps(req) + "\n")
+        proc.stdin.flush()
+        return json.loads(proc.stdout.readline())
+
+    try:
+        init_resp = send({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "clientInfo": {"name": "test", "version": "1.0"},
+                "capabilities": {},
+            },
+        })
+        assert "result" in init_resp
+        assert init_resp["result"]["serverInfo"]["name"] == "repo2graph"
+
+        proc.stdin.write(
+            json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n"
+        )
+        proc.stdin.flush()
+
+        tools_resp = send({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list",
+            "params": {},
+        })
+        assert "result" in tools_resp
+        tool_names = {t["name"] for t in tools_resp["result"]["tools"]}
+        assert "repo_map" in tool_names
+        assert "repo_search" in tool_names
+        assert "repo_neighbours" in tool_names
+
+        map_resp = send({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "repo_map",
+                "arguments": {},
+            },
+        })
+        assert "result" in map_resp
+        map_text = map_resp["result"]["content"][0]["text"]
+        assert map_text.strip()
+        assert "# Repo map:" in map_text
+
+        search_resp = send({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "repo_search",
+                "arguments": {"query": MINI_QUERY},
+            },
+        })
+        assert "result" in search_resp
+        search_text = search_resp["result"]["content"][0]["text"]
+        assert "[cite:" in search_text
+
+        neigh_resp = send({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {
+                "name": "repo_neighbours",
+                "arguments": {"node_id": SYM_ROUTE},
+            },
+        })
+        assert "result" in neigh_resp
+        neigh_text = neigh_resp["result"]["content"][0]["text"]
+        assert "audit_event" in neigh_text
+    finally:
+        proc.stdin.close()
+        proc.terminate()
+        proc.wait()
 
 
 # ==========================================================================
@@ -576,3 +693,54 @@ def test_r10_dispatch_inherits_the_note(big_index):
     out = mcp.dispatch(idx, "repo_search",
                        {"query": MINI_QUERY, "budget_tokens": -5})
     assert out.strip() and "budget_tokens" in out
+
+
+# ==========================================================================
+# Index preflight and neighbours truncation
+# ==========================================================================
+
+def test_open_index_missing_directory_raises_clean_systemexit(tmp_path):
+    mcp = mcp_module()
+    missing = tmp_path / "nonexistent"
+    with pytest.raises(SystemExit) as exc:
+        mcp.open_index(missing)
+    msg = str(exc.value)
+    assert f"error: no repo2graph index found at '{missing}'" in msg
+    assert f"Build one first with: repo2graph build <path> -o {missing}" in msg
+
+
+def test_open_index_missing_chunks_jsonl_raises_clean_systemexit(tmp_path):
+    mcp = mcp_module()
+    empty = tmp_path / "empty_idx"
+    empty.mkdir()
+    with pytest.raises(SystemExit) as exc:
+        mcp.open_index(empty)
+    msg = str(exc.value)
+    assert f"error: no repo2graph index found at '{empty}'" in msg
+
+
+def test_serve_preflight_checks_index(monkeypatch, tmp_path):
+    mcp = mcp_module()
+    _fake_sdk(monkeypatch, decorators=True, version="1.9.0")
+    missing = tmp_path / "missing_idx"
+    with pytest.raises(SystemExit) as exc:
+        mcp.serve(missing)
+    assert f"error: no repo2graph index found at '{missing}'" in str(exc.value)
+
+
+def test_neighbours_truncation_indicates_limit_when_exceeded(mini_index):
+    mcp = mcp_module()
+    idx = Index(mini_index)
+    _flood(idx)
+    out = mcp.tool_repo_neighbours(idx, SYM_ROUTE, limit=5)
+    rows = _rows(out)
+    assert len(rows) == 5
+    assert "... (truncated at 5 neighbours)" in out
+
+
+def test_neighbours_no_truncation_when_within_limit(mini_index):
+    mcp = mcp_module()
+    idx = Index(mini_index)
+    out = mcp.tool_repo_neighbours(idx, SYM_ROUTE, limit=50)
+    assert "truncated" not in out
+

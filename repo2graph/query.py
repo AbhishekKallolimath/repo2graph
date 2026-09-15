@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌​​‌​​‌​‌‌‌​‌​​​‌​‌‌​‌​​‌‌‌​‌‌​​‌​‌​​‌‌​‌​​‌‌‌‌​‌‌‌‌​​‌​‌​‌​​‌‌​‌‌‌‌​​‌​‌​​‌‌‌​​​‌‌​​‌‌​‌‌​​‌‌​​‌​‌​‌​‌​‌‌‌‌​​‌​‌‌​​​‌‌​‌‌‌​​​‌​‌​​‌​​‌​‌‌‌‌​​​​‌​‌​‌‌​​‌‌​‌‌​‌​‌‌‌​‌​‌​‌‌‌‌​‌​⁠
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌​‌​‌​‌​‌​​‌​​​‌‌​​‌​​‌​​​​‌‌​‌‌‌​‌​‌​‌​‌​​​​​‌​​​​​‌​‌​‌‌​‌​​​‌​‌‌​‌​‌​​​‌‌​​‌​​‌​‌​​‌​‌‌‌‌‌​​‌​‌‌​‌​‌​‌‌​‌​​‌‌​​‌‌​​‌​‌​​‌​​​‌‌​‌​‌​‌​​‌​​​​‌​‌​​​‌​‌‌​‌‌‌​​‌​​‌‌‌‌​‌‌‌‌​​‌⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.ItZvSOySyN3fUycqIxVmuz
+# Fingerprint: AMK1.UR2CuPAZ-FJ_-ZfR5HQnOy
 """Graph-aware retrieval over a built index: lexical seeds + k-hop expansion."""
 import json
 import math
@@ -388,6 +388,8 @@ class Index:
         dirs = DEFAULT_EDGE_DIRS if edge_dirs is None else edge_dirs
         seen, frontier, order = set(seed_nodes), list(seed_nodes), []
         for _ in range(hops):
+            if not frontier:
+                break
             nxt = []
             # The cap is per hop, not per frontier node: breaking only the inner
             # loop let each later frontier node add another 60 edges after the
