@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌​​‌‌​‌​‌‌​​​‌‌​‌​‌‌​​‌​​‌‌‌​​‌​‌‌​​‌​​​​‌​‌‌​‌​‌‌​​​​‌​‌‌​​‌​‌​‌​​​​‌​​‌​‌‌​​‌​‌‌​​‌​​​‌​‌​​​‌​​‌‌​​​​​‌​‌​​‌​​‌​‌​‌‌‌​‌‌​​‌​‌​‌​‌​‌​‌​‌​​‌​‌‌​‌‌​‌‌​‌​‌‌​​‌‌​​‌​​‌​‌‌​​‌‌​‌‌‌⁠
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌​​​‌‌​​‌​‌​‌​‌​‌‌​​‌​​​‌​​‌‌‌​​‌​‌‌​‌​​‌‌‌​‌​​​‌​​‌​‌​​​‌‌​‌‌‌​‌​​‌‌​​​‌​‌​​​‌​‌‌​​​‌​​​‌‌​‌​​​‌​‌​‌‌​​‌​‌‌​​​​‌‌​‌​‌​​‌‌​‌‌​‌​‌‌‌​​​​​‌​​​​​‌​‌‌‌​​‌‌​​‌‌​‌‌​​​‌‌‌​​​​‌​​​​‌‌⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.McY9d-aeBYdQ0RWeUKmfK7
+# Fingerprint: AMK1.FUdNZtJ7LQb4VXjmpAs68C
 """End-to-end and unit coverage for graph building, chunking and retrieval."""
 import re
 import json
@@ -412,8 +412,8 @@ def test_output_is_split_into_human_and_agent_sections(tmp_path, sample_repo, ca
     assert sorted(p.name for p in (out / "human").iterdir()) == [
         "graph.graphml", "graph.html", "overview.md"]
     assert sorted(p.name for p in (out / "agent").iterdir()) == [
-        "chunks.jsonl", "edges.jsonl", "graph.cypher", "manifest.json",
-        "nodes.jsonl", "overview.md", "stats.json"]
+        "chunks.jsonl", "edges.jsonl", "graph.cypher", "index.state.json",
+        "manifest.json", "nodes.jsonl", "overview.md", "stats.json"]
     assert sorted(p.name for p in out.iterdir()) == ["agent", "human"]
     written = json.loads(capsys.readouterr().out)["written"]
     assert "agent/nodes.jsonl" in written and "human/overview.md" in written

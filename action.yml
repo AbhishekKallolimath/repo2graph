@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌​​​‌​‌​‌‌​​​​‌​‌‌‌​‌​​​‌​​‌​​‌​‌​‌‌​‌​​‌​​​‌​‌​​‌‌​‌​​​​‌‌​‌​‌​‌​​​‌‌​​‌‌​‌​​​​‌​​‌​‌‌​‌‌​​‌​‌​‌​‌​‌​​​‌‌‌‌​​​​‌‌​​​‌​​​‌‌​‌​‌​​‌‌​‌​​​‌‌​‌​​‌​‌​‌​‌‌‌​‌‌​​‌‌‌​‌‌​‌‌‌​​​‌‌​‌‌‌⁠
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌‌​​​​​‌‌​​​​‌​‌‌​‌​​​​‌​​​‌​​​‌‌​‌‌​​​‌​​​​‌​​‌‌​‌‌​​​‌​‌​​​‌​‌‌​‌​‌​​‌​​​‌‌‌​‌‌‌‌​​​​‌​​‌‌​​​‌​‌​​‌‌​‌​‌​​‌‌​‌​​​​​‌​‌​‌​‌​​​‌​‌​‌‌​​‌‌‌​​​​​‌‌​‌‌​​​‌​‌​​‌‌​‌​​​​​‌​​‌‌‌​​​⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.EatIZE45FhKeTxb54iWgn7
+# Fingerprint: AMK1.pahDlBlQjGxLSSATVplSA8
 name: repo2graph
 description: Build a code graph and graph-aware RAG chunks for a repository
 author: Srinivasan-78
@@ -60,6 +60,10 @@ inputs:
     description: "Character budget for the whole pack (map and cite headers included)"
     required: false
     default: "24000"
+  query-budget-tokens:
+    description: "Token budget for the whole pack; replaces `query-budget` when set (blank = use query-budget)"
+    required: false
+    default: ""
   query-min-conf:
     description: "Drop CALLS edges below this confidence (0.0-1.0)"
     required: false
@@ -70,6 +74,14 @@ inputs:
     default: "markdown"
   query-out:
     description: "File to write the pack to (blank = <out>/agent/pack.md or pack.json)"
+    required: false
+    default: ""
+  embed:
+    description: "Set to true to embed the chunks for dense retrieval (installs the `rag` extra)"
+    required: false
+    default: "false"
+  embed-model:
+    description: "sentence-transformers model for `embed` (blank = the built-in default)"
     required: false
     default: ""
   artifact-name:
@@ -187,6 +199,24 @@ runs:
           fi
         } >> "$GITHUB_STEP_SUMMARY"
 
+    - name: Embed the chunks
+      if: ${{ inputs.embed == 'true' }}
+      shell: bash
+      # Same env-indirection rule as every other step. Off by default: the
+      # model download is heavyweight and `build` must stay zero-dependency.
+      env:
+        R2G_OUT: ${{ inputs.out }}
+        R2G_EMBED_MODEL: ${{ inputs.embed-model }}
+      run: |
+        set -euo pipefail
+        pip install -q "sentence-transformers>=3.0" "numpy>=1.24"
+        args=(embed -o "$R2G_OUT")
+        # --embed-model, not --model: the LLM surface `rag --model` names must
+        # never appear in this file (see the note on the rag step), and the
+        # embed subcommand accepts both spellings for exactly this reason.
+        if [ -n "$R2G_EMBED_MODEL" ]; then args+=(--embed-model "$R2G_EMBED_MODEL"); fi
+        repo2graph "${args[@]}"
+
     - name: Pack a GraphRAG context
       id: rag
       if: ${{ inputs.query != '' }}
@@ -202,9 +232,12 @@ runs:
         R2G_K: ${{ inputs.query-k }}
         R2G_HOPS: ${{ inputs.query-hops }}
         R2G_BUDGET: ${{ inputs.query-budget }}
+        R2G_BUDGET_TOKENS: ${{ inputs.query-budget-tokens }}
         R2G_MIN_CONF: ${{ inputs.query-min-conf }}
         R2G_FORMAT: ${{ inputs.query-format }}
         R2G_QUERY_OUT: ${{ inputs.query-out }}
+        R2G_EMBED: ${{ inputs.embed }}
+        R2G_EMBED_MODEL: ${{ inputs.embed-model }}
       run: |
         set -euo pipefail
         pack="$R2G_QUERY_OUT"
@@ -216,15 +249,34 @@ runs:
           fi
         fi
         mkdir -p "$(dirname "$pack")"
+        args=(rag -o "$R2G_OUT" -k "$R2G_K" --hops "$R2G_HOPS"
+              --budget "$R2G_BUDGET" --min-conf "$R2G_MIN_CONF"
+              --format "$R2G_FORMAT")
+        # Only when the input is non-empty, so an existing workflow that never
+        # sets it keeps the character budget it has always had.
+        if [ -n "$R2G_BUDGET_TOKENS" ]; then
+          args+=(--budget-tokens "$R2G_BUDGET_TOKENS")
+        fi
+        # Dense fusion is opt-in on the CLI (it loads a model), so the pack only
+        # uses the vectors when the embed step actually ran -- and with the same
+        # checkpoint, or the index/query model guard would refuse and the run
+        # would have paid for vectors it then ignored. --embed-model, never
+        # --model: that spelling means `rag --answer`'s LLM, the one surface
+        # this action does not expose.
+        # Case-fold before comparing. The embed step above gates on the GitHub
+        # expression `inputs.embed == 'true'`, and `==` there is
+        # case-insensitive, so `embed: "True"` runs it; a case-sensitive test
+        # here would then drop --vectors and emit a BM25-only pack from an index
+        # the run just paid to embed.
+        embed="$(printf '%s' "$R2G_EMBED" | tr '[:upper:]' '[:lower:]')"
+        if [ "$embed" = "true" ]; then
+          args+=(--vectors)
+          if [ -n "$R2G_EMBED_MODEL" ]; then
+            args+=(--embed-model "$R2G_EMBED_MODEL")
+          fi
+        fi
         # `--` ends the option list so a query starting with '-' is still a query
-        repo2graph rag \
-          -o "$R2G_OUT" \
-          -k "$R2G_K" \
-          --hops "$R2G_HOPS" \
-          --budget "$R2G_BUDGET" \
-          --min-conf "$R2G_MIN_CONF" \
-          --format "$R2G_FORMAT" \
-          -- "$R2G_OUT" "$R2G_QUERY" > "$pack"
+        repo2graph "${args[@]}" -- "$R2G_OUT" "$R2G_QUERY" > "$pack"
         PACK_FILE="$pack" python - <<'PY' >> "$GITHUB_OUTPUT"
         import os
         p = os.environ["PACK_FILE"]

@@ -1,127 +1,148 @@
 {
   "schema": "authormark/manifest/1",
+  "algo": "hmac",
   "author": "Srinivasan Vijayaraghavan",
   "email": "srinivasan.shyam2000@gmail.com",
   "github": "https://github.com/Srinivasan-78",
-  "sealedAt": "2026-08-30T21:29:34.259Z",
-  "fileCount": 23,
-  "digest": "6629092705396f9c61b253a16f6c492489982fffba4778a2aa96221f959034b9",
-  "proof": "a25173cc1c68fd10c3cbeccd106c8a66810c1d9dc747d029ba3e73a1c41ee5a2",
+  "sealedAt": "2026-09-15T13:20:54.782Z",
+  "fileCount": 27,
+  "digest": "3f64ab4471727f86d618d265854fe9f9a5d84f4ca1226d435197a5ea6936bc1e",
+  "proof": "90272cc158632d332ec0884cb921c66ab8d90d1dcb7bcb2722dd02a19b2ac569",
   "files": [
     {
-      "path": ".github/workflows/authormark.yml",
-      "sha256": "b5cab2b0d7b18cd416758ec39f9677144704f615095f279d00e6f47ed2164e11",
-      "bytes": 1138
-    },
-    {
-      "path": ".github/workflows/ci.yml",
-      "sha256": "d100d26e149b5d7d0080500cd229f19f269355ba7bdc7b4acabd45975aa6b6ea",
-      "bytes": 2247
-    },
-    {
-      "path": ".github/workflows/index-repo.yml",
-      "sha256": "4c25f67fd7010f38784a64ddd9dc3191345b7e8fa4e69e7a969a5431930cf718",
-      "bytes": 4663
-    },
-    {
-      "path": ".github/workflows/release.yml",
-      "sha256": "1638b3084acb46ade9ae1c9546f0733036c92f0f5caf7669f4af9da79148732d",
-      "bytes": 2123
-    },
-    {
-      "path": ".github/workflows/self-index.yml",
-      "sha256": "9bd2106f39ae45598dbb524bd6256d4d7d7b55c7f7f99f60d905608c47f04518",
-      "bytes": 1432
-    },
-    {
       "path": "AGENTS.md",
-      "sha256": "6f4bb78900bf58971b266a4df35ff4137cd210494cc71089ecc7f3feb6130012",
-      "bytes": 1511
+      "sha256": "8c1ece6d1b8bb60a2ec19fb981172c3cb07afaf567d2f62907c42ce1e984b4b7",
+      "bytes": 14064
     },
     {
       "path": "CLAUDE.md",
-      "sha256": "a4f80ec424ce2382e519318c7cdbc38276dc8575a452e566c67f21c1eb0ca882",
-      "bytes": 822
+      "sha256": "75900719100103af95b31f77c0ff88bf819076b7601b72d67c6879b9b2d23750",
+      "bytes": 825
     },
     {
       "path": "README.md",
-      "sha256": "8ab36835775bae3bd87ff0062d6b2ec5878b05419e0a7b0e5d69edb6e40e012d",
-      "bytes": 18845
+      "sha256": "f04a26022346140bed30e79db91dc2945f0fd4e1433c9362be21661a6b925402",
+      "bytes": 35786
     },
     {
       "path": "action.yml",
-      "sha256": "5c755f570d02571443d6b4fd8e7083a873ac8bda19fe17dd7cb813e09b2fb5b4",
-      "bytes": 6361
+      "sha256": "c0c4cb22f8ac178a83df87643cc8dc516bba26fe47936bddb43eea95205d17b6",
+      "bytes": 12696
     },
     {
       "path": "pyproject.toml",
-      "sha256": "553141ab15cb993ec16dd6d17490767291b70450072b3ba2f523dee344f8044c",
-      "bytes": 1352
+      "sha256": "38ca870fa342ffea7846f53f4f82937fc954068c2f699457dd5d6153f53a66cd",
+      "bytes": 2228
     },
     {
-      "path": "repo2graph/__init__.py",
-      "sha256": "524bccac7951a0d63caf42c577e20d8133bb2c76961c2f0a4fc263ff5ab4c607",
-      "bytes": 963
+      "path": "repo2graph\\__init__.py",
+      "sha256": "190a94a1796fec4df1f4d47b8918130b097b223c409126c0f6fea43115634ba7",
+      "bytes": 1259
     },
     {
-      "path": "repo2graph/chunks.py",
-      "sha256": "beab228725ffd7176b7b6ff6800cf15a0be50aeb2dbd295a27c0cf78b45d9c5b",
-      "bytes": 6691
+      "path": "repo2graph\\answer.py",
+      "sha256": "532631b9878984421d4e11210436c4e1539d21cd1e595abaf20d29deb8a97035",
+      "bytes": 13687
     },
     {
-      "path": "repo2graph/cli.py",
-      "sha256": "a530734f70e8dd9ff3628064a3227d15de753a3450688b9314470b548c5aed5c",
-      "bytes": 7449
+      "path": "repo2graph\\chunks.py",
+      "sha256": "e841df3cddf41da4442646692b918041211ca51cad09dc2b21c7e7a256d197ce",
+      "bytes": 9728
     },
     {
-      "path": "repo2graph/export.py",
-      "sha256": "7ebceb17aac545dacd1d4824a2d139723c26545602478afe7add998513d37a4f",
-      "bytes": 21151
+      "path": "repo2graph\\cli.py",
+      "sha256": "ab946c7e432c9cf6fd2ec131fdc3384d686e3009b92fba6b76a751170a0c02db",
+      "bytes": 22695
     },
     {
-      "path": "repo2graph/fetch.py",
-      "sha256": "884c1f167bba6ab1ee64911a103ef1298a64a2652d23712bd8de113b5c6fdbcd",
-      "bytes": 4536
+      "path": "repo2graph\\embed.py",
+      "sha256": "0f9e0b20a0970cae35b43cb1a07f8229197092ac3b74ab02bedde6e35b60a233",
+      "bytes": 11309
     },
     {
-      "path": "repo2graph/graph.py",
-      "sha256": "7fa404d4b0d60403e1fe361288265ca37af45372737e78bb21d103de7f3e7451",
-      "bytes": 16058
+      "path": "repo2graph\\export.py",
+      "sha256": "29d4d0cfe27a94fd1d313ca48d7bef243ca1321f312ecd4c0f4cefee8d924d0f",
+      "bytes": 28970
     },
     {
-      "path": "repo2graph/langs.py",
-      "sha256": "00e12f695412c38671276865a7b68b277e9ce6e8c1b29d2a9eef5488a5b3e59f",
-      "bytes": 6169
+      "path": "repo2graph\\fetch.py",
+      "sha256": "042eae01a32f54d0c82dd89d51bb442868672a7bc4c34b72821f22f421ca15f4",
+      "bytes": 10004
     },
     {
-      "path": "repo2graph/layout.py",
-      "sha256": "f6d7c33224525c78af286373712eaf93f2855b88f494d382a2bd7b07b488c3d5",
-      "bytes": 2533
+      "path": "repo2graph\\graph.py",
+      "sha256": "51e8c708d2df9e63156a1abf404ca734d804e82fabb637f7741e45c9b3d73398",
+      "bytes": 19866
     },
     {
-      "path": "repo2graph/parse.py",
-      "sha256": "239dd818cff80fd60b377117656711ce6777818de752ea02a8513ffee5fead08",
-      "bytes": 9586
+      "path": "repo2graph\\langs.py",
+      "sha256": "1183e7b09152d3a482656581cb1c3ba8c6481f588612cffbcfa04a77be182640",
+      "bytes": 972
     },
     {
-      "path": "repo2graph/query.py",
-      "sha256": "56f4f1d31251d59c92148d8a74a72c09521af9d2c17f9c73729e6bee3f244b72",
-      "bytes": 5395
+      "path": "repo2graph\\layout.py",
+      "sha256": "3d708ba081aae30cd98b051aa78a3d8f99f570a865f04e8b1fce4a6e17bb50ba",
+      "bytes": 1201
     },
     {
-      "path": "repo2graph/viz.py",
-      "sha256": "0748dc812b1d05f6d4bb33ecbc2c31ec9e73bbd7566e742c43b2cdaa55120d91",
-      "bytes": 24442
+      "path": "repo2graph\\mcp.py",
+      "sha256": "2b656830865704d94dfd533376cabf3eb941ca6aae6e3974abf6dd5ed13a3050",
+      "bytes": 14191
     },
     {
-      "path": "repo2graph/walker.py",
-      "sha256": "cba3ebcfc4874c1727d040b9e24096ce285189e1088818eedfb64359484b9610",
-      "bytes": 4843
+      "path": "repo2graph\\parse.py",
+      "sha256": "6cc5a4dcccd85b2a26c7f82079a5a00e2aba2eab35e57cdd83068b1193c7ba71",
+      "bytes": 20331
     },
     {
-      "path": "tests/test_repo2graph.py",
-      "sha256": "41d33e441a1a1c372dcc5f09c34517c4ef72eaa7f2133143446aaa174e62e55a",
-      "bytes": 21673
+      "path": "repo2graph\\query.py",
+      "sha256": "3b541bd5b6b43ccaa680ca27b9fd84e1843cd2ad0874e7e72cddc04985041d95",
+      "bytes": 31813
+    },
+    {
+      "path": "repo2graph\\viz.py",
+      "sha256": "587376efb86984ba4300a77ca26d990dfbe099905a2f61ac91afb6f2b814ffb6",
+      "bytes": 26624
+    },
+    {
+      "path": "repo2graph\\walker.py",
+      "sha256": "1a6c02de872040d1a29c16f545e1b9015d7ae138fce43da8ad151907dc15146d",
+      "bytes": 1187
+    },
+    {
+      "path": "tests\\conftest.py",
+      "sha256": "d9293a6a071727bbe3c6db199b871ea3e29b4cedbc474b17a49a80c230243905",
+      "bytes": 10647
+    },
+    {
+      "path": "tests\\test_budget.py",
+      "sha256": "fac42d45fd4f32e83c8bb388feae73d38c30d575e2c2bafb7471183b286b5fa0",
+      "bytes": 6397
+    },
+    {
+      "path": "tests\\test_compat.py",
+      "sha256": "a8e665b7335d5606bb254ef9b018f893b84664d0250293328461735492efafe6",
+      "bytes": 24255
+    },
+    {
+      "path": "tests\\test_mcp.py",
+      "sha256": "9071c31790d7d67d2d540c99ef0d5c8d46af3ce4f74492c746fb6c83b0c3d9aa",
+      "bytes": 23788
+    },
+    {
+      "path": "tests\\test_rag.py",
+      "sha256": "6d1d9192c9bb425a21d0cd05d94f26b40640e88ca10661b8b04eae75d3b5a24b",
+      "bytes": 61283
+    },
+    {
+      "path": "tests\\test_repo2graph.py",
+      "sha256": "27e36b9f2e783d082ef60f4e177df6ed88f78d387c8567b77338b2f69f2bf976",
+      "bytes": 86503
+    },
+    {
+      "path": "tests\\test_vectors.py",
+      "sha256": "f51890df69990f901ec6548a22edf071e4e4bf9ebae0cf5bdea666a05e2209f6",
+      "bytes": 28120
     }
   ]
 }

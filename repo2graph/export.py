@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌​‌​​​‌​​‌‌​​​‌‌‌​‌​​​‌‌​‌‌​‌​‌​​‌‌‌​​‌​‌​​‌‌​‌​​‌‌​​​‌​​‌‌‌​​​‌‌​​​​​​‌‌‌​​​​‌​​‌‌‌‌​‌​‌‌​​​​‌‌‌​‌​​​‌​​​​‌​​‌‌​‌​​‌​‌‌​‌‌​‌​‌​‌‌​​​​‌​​​‌‌‌​‌​​‌​​‌​‌‌​​‌‌​​​‌‌​​‌​​‌​‌‌​​​⁠
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌​‌‌‌​‌​​​‌‌​​‌​‌​‌​​​‌​‌​​‌​​‌​‌​‌‌‌​‌​‌​​‌​​​‌​‌‌​‌​‌‌​​‌​​​​‌‌​​‌‌​‌​​‌​‌​​‌​​​​‌​​​‌‌​​​‌​‌​‌‌​​‌​‌​‌​‌​‌​‌​​​‌‌‌​‌​​‌​​​​‌​​​‌‌‌​‌​​‌​​​​‌‌​​‌​‌​​‌​‌‌​‌​‌​‌‌​‌​​​‌‌​​‌‌⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.TLtmNSLN08OXtBimXGIf2X
+# Fingerprint: AMK1.WFTRWR-d3JB1YUGHGHe-Z3
 """Serialize the graph: JSONL, GraphML, Cypher, overview, HTML map."""
 import json
 import math
@@ -53,6 +53,9 @@ SECTIONS: dict[str, tuple[str, ...]] = {
     "graph.cypher": (AGENT_DIR,),
     "stats.json": (AGENT_DIR,),
     "index.json": (AGENT_DIR,),
+    "index.state.json": (AGENT_DIR,),
+    "vectors.npy": (AGENT_DIR,),
+    "vectors.meta.json": (AGENT_DIR,),
     "manifest.json": (AGENT_DIR,),
 }
 
@@ -495,6 +498,9 @@ FILE_NOTES = {
     "stats.json": "node, edge and symbol counts, parse errors, entrypoint count",
     "overview.md": "the repo map in prose: languages, most depended-on files, most called symbols",
     "index.json": "repo slug and indexed commit; written by `repo2graph github` only",
+    "index.state.json": "per-file sha256 of the bytes that were indexed, for change detection between builds",
+    "vectors.npy": "chunk embeddings as a plain NPY v1.0 array (C-order, <f4, one row per chunk id in vectors.meta.json); written by `repo2graph embed` only",
+    "vectors.meta.json": "the embedding model id, vector width and the chunk ids and text hashes each vectors.npy row belongs to",
     "manifest.json": "this file",
     "graph.html": "the interactive map, for a person in a browser",
     "graph.graphml": "the graph with a layout and yFiles node graphics, for yEd, Gephi, NetworkX or igraph",
@@ -548,6 +554,51 @@ def write_manifest(g, path: Path, written: list[str]):
         fh.write(json.dumps(manifest, indent=2) + "\n")
 
 
+STATE_FORMAT = "repo2graph/state-1"
+
+
+def register_written(outdir, names) -> bool:
+    """Merge `names` into an existing manifest's `written` and `files`.
+
+    `embed` runs after `build` as a separate command, so it must append to the
+    manifest dump_all already wrote rather than rewrite it: every other key --
+    counts, entrypoints, how_to_read -- is left exactly as it was. Returns
+    False when there is no readable manifest to append to.
+    """
+    target = path(outdir, "manifest.json")
+    try:
+        with open(target, encoding="utf8", newline="\n") as fh:
+            manifest = json.load(fh)
+    except (OSError, UnicodeDecodeError, ValueError):
+        return False
+    if not isinstance(manifest, dict):
+        return False
+    written = [w for w in (manifest.get("written") or []) if isinstance(w, str)]
+    files = dict(manifest.get("files") or {})
+    for name in names:
+        if name not in written:
+            written.append(name)
+        base = name.split("/", 1)[-1]
+        if base in FILE_NOTES:
+            files[base] = FILE_NOTES[base]
+    manifest["written"] = written
+    manifest["files"] = files
+    with atomic_write(target, "w", encoding="utf8", newline="\n") as fh:
+        fh.write(json.dumps(manifest, indent=2) + "\n")
+    return True
+
+
+def write_state(g, path: Path, n_chunks: int):
+    """The per-file content hashes a later incremental build reads back."""
+    state = {
+        "format": STATE_FORMAT,
+        "files": dict(getattr(g, "file_hashes", {}) or {}),
+        "chunks": n_chunks,
+    }
+    with atomic_write(path, "w", encoding="utf8", newline="\n") as fh:
+        fh.write(json.dumps(state, indent=2) + "\n")
+
+
 def dump_all(g, chunks, outdir: Path, formats: set[str], viz_nodes: int = MAX_NODES):
     """Write the requested artifacts. `chunks` is an iterable of chunk dicts (a
     build_chunks generator) or None. Returns (written_paths, chunk_count)."""
@@ -583,5 +634,6 @@ def dump_all(g, chunks, outdir: Path, formats: set[str], viz_nodes: int = MAX_NO
         write_html(g, out("graph.html")[0], viz_nodes)
     with atomic_write(out("stats.json")[0], "w", encoding="utf8", newline="\n") as fh:
         fh.write(json.dumps(dict(g.stats), indent=2) + "\n")
+    write_state(g, out("index.state.json")[0], n_chunks)
     write_manifest(g, out("manifest.json")[0], written)
     return written, n_chunks

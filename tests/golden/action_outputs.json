@@ -1,0 +1,26 @@
+{
+  "chunks": {
+    "description": "Chunk count",
+    "value": "${{ steps.build.outputs.chunks }}"
+  },
+  "edges": {
+    "description": "Edge count",
+    "value": "${{ steps.build.outputs.edges }}"
+  },
+  "nodes": {
+    "description": "Node count",
+    "value": "${{ steps.build.outputs.nodes }}"
+  },
+  "out": {
+    "description": "Directory holding human/ (overview.md, graph.html, ...) and agent/ (chunks.jsonl, ...)",
+    "value": "${{ inputs.out }}"
+  },
+  "pack-chars": {
+    "description": "Character length of the GraphRAG pack (0 when `query` is blank)",
+    "value": "${{ steps.rag.outputs.pack-chars }}"
+  },
+  "pack-file": {
+    "description": "Path to the GraphRAG pack written for `query` (empty when `query` is blank)",
+    "value": "${{ steps.rag.outputs.pack-file }}"
+  }
+}
