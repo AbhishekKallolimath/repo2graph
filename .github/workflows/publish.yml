@@ -1,0 +1,160 @@
+name: Publish
+
+# Publishing a GitHub Release with tag `vX.Y.Z` ships the same version to both
+# places a user can install it from: PyPI (the artifact) and the MCP Registry
+# (the metadata that points at it). Neither step holds a long-lived credential —
+# PyPI uses Trusted Publishing and the registry uses `login github-oidc`, so both
+# mint a short-lived token from this workflow's OIDC identity.
+#
+# `release.yml` moves the floating `vX` tag on the same event; the two are
+# independent on purpose, so a failed publish never leaves the major tag behind.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish, e.g. v1.4.0"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Stop before anything is published if the three places a version is written
+  # disagree. PyPI rejects a re-upload of an existing version, so a mismatch
+  # caught here is a retry and a mismatch caught later is a burnt version number.
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Tag, pyproject.toml and server.json must agree
+        id: v
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          case "$TAG" in
+            v[0-9]*) ;;
+            *) echo "::error::Tag '$TAG' is not of the form vX.Y.Z"; exit 1 ;;
+          esac
+          version="${TAG#v}"
+          pyproject=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          server=$(python -c "import json;print(json.load(open('server.json'))['version'])")
+          pkg=$(python -c "import json;print(json.load(open('server.json'))['packages'][0]['version'])")
+          echo "tag=$version pyproject=$pyproject server.json=$server package=$pkg"
+          for got in "$pyproject" "$server" "$pkg"; do
+            if [ "$got" != "$version" ]; then
+              echo "::error::version mismatch: tag says $version, found $got"
+              exit 1
+            fi
+          done
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: server.json must carry the ownership marker the registry looks for
+        run: |
+          set -euo pipefail
+          name=$(python -c "import json;print(json.load(open('server.json'))['name'])")
+          # The registry proves you own the PyPI package by finding this exact
+          # string in the README, which setuptools ships as the package
+          # description. Without it `mcp-publisher publish` fails after PyPI has
+          # already been written to — the one ordering we cannot undo.
+          if ! grep -qF "mcp-name: $name" README.md; then
+            echo "::error::README.md is missing the line 'mcp-name: $name'"
+            exit 1
+          fi
+
+  pypi:
+    needs: check-version
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/repo2graph
+    permissions:
+      id-token: write        # mints the short-lived Trusted Publishing token
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Run the tests before shipping them to anyone
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,mcp]"
+          python -m pytest -q
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+
+      - name: Check the metadata PyPI will render
+        run: |
+          python -m pip install --upgrade twine
+          python -m twine check dist/*
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+
+  mcp-registry:
+    needs: [check-version, pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write        # `mcp-publisher login github-oidc` needs this
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Wait for PyPI to serve the new version
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # The registry fetches the package's description from PyPI to verify
+          # ownership, so publishing the instant the upload returns can race the
+          # CDN and fail a release that is otherwise fine.
+          for attempt in $(seq 1 30); do
+            if curl -sf "https://pypi.org/pypi/repo2graph/$VERSION/json" > /dev/null; then
+              echo "repo2graph $VERSION is live on PyPI"
+              exit 0
+            fi
+            echo "attempt $attempt: not visible yet, waiting 10s"
+            sleep 10
+          done
+          echo "::error::repo2graph $VERSION never appeared on PyPI"
+          exit 1
+
+      - name: Install mcp-publisher
+        run: |
+          set -euo pipefail
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
+            | tar xz mcp-publisher
+
+      - name: Validate server.json
+        run: ./mcp-publisher validate
+
+      - name: Authenticate to the MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish to the MCP Registry
+        run: ./mcp-publisher publish
+
+      - name: Summary
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          {
+            echo "### Published repo2graph $VERSION"
+            echo
+            echo "- PyPI: https://pypi.org/project/repo2graph/$VERSION/"
+            echo "- MCP Registry: \`io.github.Srinivasan-78/repo2graph\`"
+            echo
+            echo '```bash'
+            echo "uvx --from 'repo2graph[mcp]' repo2graph-mcp /path/to/project"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

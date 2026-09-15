@@ -1,0 +1,49 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Srinivasan-78/repo2graph",
+  "title": "repo2graph",
+  "description": "Ask a codebase questions and get cited code back, from a tree-sitter graph of the repo.",
+  "version": "1.4.0",
+  "websiteUrl": "https://github.com/Srinivasan-78/repo2graph/blob/main/docs/mcp.md",
+  "repository": {
+    "url": "https://github.com/Srinivasan-78/repo2graph",
+    "source": "github",
+    "id": "1343530225"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "repo2graph",
+      "version": "1.4.0",
+      "runtimeHint": "uvx",
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "--from",
+          "value": "repo2graph[mcp]",
+          "description": "The MCP server lives behind the `mcp` extra: the CLI and the GitHub Action never import the SDK, so it is not a runtime dependency of the base package."
+        },
+        {
+          "type": "positional",
+          "valueHint": "command",
+          "value": "repo2graph-mcp",
+          "description": "The console script to run out of that package. The bare `repo2graph` entry point is the CLI, not the server."
+        }
+      ],
+      "packageArguments": [
+        {
+          "type": "positional",
+          "valueHint": "repo_path",
+          "format": "filepath",
+          "isRequired": true,
+          "description": "The repository to serve. Its index is built into <repo_path>/.r2g on the first tool call if one does not exist yet, so no setup step is needed.",
+          "placeholder": "/path/to/project"
+        }
+      ],
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
