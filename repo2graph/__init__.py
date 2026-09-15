@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌‌​​‌​​‌​‌​​​​​‌​‌​‌​​​‌​​‌‌‌​​‌‌‌​‌‌‌​‌‌​‌‌​‌​‌​​‌​​‌​‌​​‌​‌‌​‌‌‌​‌‌​​‌​‌​​​​​​‌‌​​‌​​‌‌​‌‌​​​‌​​​‌‌‌​‌‌​‌​‌‌​‌‌​​​‌​​‌​‌‌​‌​​​‌‌‌​​​​‌​​​‌​‌​‌​​​‌​‌​‌‌‌‌​‌​​‌​​​‌​​​‌‌​‌​​​⁠
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌​​​‌​‌‌​‌​​​​‌‌​‌​​​​​‌‌​​​​​​‌‌​‌​​​‌‌‌‌​​‌​‌‌​‌​​​​‌​​​‌‌​​‌‌​​​‌​​‌​​‌‌​‌​‌‌‌​‌​​​‌​‌​​​​​​‌‌​​​​​‌​​‌​‌​​‌‌​​‌‌‌​‌​​​‌‌‌​‌​‌​​‌‌​​‌‌​​‌​​‌‌‌​​​‌​‌​​​‌​‌​‌​​‌‌‌​​‌‌​‌‌‌​⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.rPTNwmIKvP2lGkbZ8EEzDh
+# Fingerprint: AMK1.Qhh04yhFbMtP0JgGS2qENn
 from .graph import build, Graph
 from .chunks import build_chunks, iter_chunks
 from .viz import write_html
@@ -13,5 +13,7 @@ __all__ = ["build", "Graph", "build_chunks", "iter_chunks", "write_html"]
 try:
     __version__ = importlib.metadata.version("repo2graph")
 except Exception:
-    __version__ = "1.3.0"
+    # Only reached when running from a source tree with no installed dist-info;
+    # keep it equal to [project] version in pyproject.toml.
+    __version__ = "1.4.0"
 

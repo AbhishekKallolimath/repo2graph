@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌​​‌​​‌​​‌​‌​​‌‌​‌​‌​​‌‌​‌‌‌‌​​‌‌​​​​​‌‌​‌​​​​‌‌​‌‌​​​‌‌​‌‌​‌​‌‌​​‌​‌​‌​‌​​‌‌​‌‌​​‌‌​​‌​​‌‌‌​​‌​​‌​​​​‌​‌​‌​​​​‌‌​‌‌‌​‌‌‌​​​‌​‌​​‌​‌​​‌​‌​‌​‌​​‌‌​​​​​‌​​‌​​​​‌​‌​‌​​​‌‌‌​​​‌⁠
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌‌​​‌​‌​‌​​‌​​‌‌‌​​‌​​‌​‌‌​​‌​‌​​​‌‌​​‌​‌‌​‌​​‌​​‌‌‌​​‌​​​​‌‌​‌‌‌​‌​​​‌‌​​​‌​​‌​​‌‌​​​​‌‌​​​‌​‌​​‌​‌‌​‌​​‌‌‌‌​‌​​​‌​​​‌‌‌​​‌‌​‌​‌​​​​​‌‌​​​‌​​‌‌​​‌​‌​‌​​‌​​​​‌‌‌​‌‌​​‌​‌​​​‌⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.RJjo0hlmeSfNHT7qJU0HTq
+# Fingerprint: AMK1.YRrYFZNCtbL1KODsPbeHvQ
 """repo2graph CLI: build a code graph, query it, export for RAG."""
 import argparse
 import json
@@ -12,7 +12,11 @@ from pathlib import Path
 
 from . import __version__
 from .chunks import iter_chunks
-from .export import dump_all, make_path, path as artifact_path
+# The name only: `default_embedder` is imported inside the functions that call
+# it, so the heavyweight sentence-transformers import stays off every path that
+# does not embed (and stays patchable through the module object).
+from .embed import DEFAULT_MODEL as EMBED_DEFAULT_MODEL
+from .export import dump_all, make_path, path as artifact_path, rel as artifact_rel
 from .graph import build
 from .viz import MAX_NODES
 
@@ -117,6 +121,108 @@ def _require_index(out: Path, name: str) -> Path:
     return path
 
 
+def _resolve_vectors(idx, args, out=None):
+    """(vectors, embedder) for a query, honouring --vectors / --no-vectors.
+
+    Dense fusion is **opt-in**. Without `--vectors` the ranking is lexical and
+    no embedder is constructed at all: building one loads sentence-transformers
+    and, on a cold cache, downloads ~90 MB of model weights. An unannounced
+    network fetch has no business on the default `query`/`rag` path, whose only
+    promised dependency is tree-sitter -- and an index is a shippable artifact,
+    so "the index happens to carry vectors" is not consent to go fetch a model.
+
+    `--vectors` is a demand: if the index has none, the `rag` extra is missing,
+    or the model/width guard refuses, that is an error. Silently answering a
+    different question than the one asked for is worse than failing. The
+    embedding model is `--embed-model` (a separate surface from `rag --model`,
+    which is the *LLM* for `--answer`); omitted, it is the built-in default.
+    """
+    if not getattr(args, "vectors", None):
+        return None, None
+    # `rag <dir> <query>` opens a different directory than -o; name the one
+    # that was actually opened, not the flag's default.
+    where = out if out is not None else getattr(args, "out", ".r2g")
+    if idx.vectors is None:
+        raise SystemExit(
+            f"no vectors in the index at {where}: run "
+            f"`repo2graph embed -o {where}` first")
+    from .embed import default_embedder
+    try:
+        embedder = default_embedder(getattr(args, "embed_model", None))
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from None
+    ok, reason = idx.fuse_ok(embedder)
+    if not ok:
+        raise SystemExit(reason)
+    return idx.vectors, embedder
+
+
+def cmd_embed(args):
+    """Embed an index's chunks, reusing every vector whose text is unchanged."""
+    from .embed import (
+        build_vectors,
+        default_embedder,
+        model_id_of,
+        text_hash,
+        write_vectors,
+    )
+    from .export import register_written
+    from .query import read_jsonl
+
+    out = Path(args.out)
+    chunks = read_jsonl(_require_index(out, "chunks.jsonl"))
+    try:
+        embedder = default_embedder(args.model)
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from None
+    model_id = model_id_of(embedder)
+
+    npy = make_path(out, "vectors.npy")
+    chunk_ids = [c["id"] for c in chunks if c.get("id")]
+    hashes = {c["id"]: text_hash(c) for c in chunks if c.get("id")}
+    reuse = {}
+    if not args.force:
+        reuse = _reusable_vectors(npy, model_id, hashes)
+    vectors = build_vectors(chunks, embedder, batch=args.batch, reuse=reuse)
+    widths = {len(v) for v in vectors.values()}
+    if len(widths) > 1:
+        # Same model id, different width: the stored vectors cannot be trusted
+        # alongside the new ones, so drop every one of them and re-embed.
+        reuse = {}
+        vectors = build_vectors(chunks, embedder, batch=args.batch)
+        widths = {len(v) for v in vectors.values()}
+    dim = widths.pop() if widths else 0
+
+    n = write_vectors(npy, vectors, model_id, dim, chunk_ids,
+                      [hashes[cid] for cid in chunk_ids])
+    register_written(out, [artifact_rel("vectors.npy"), artifact_rel("vectors.meta.json")])
+    reused = len(set(reuse) & set(vectors))
+    print(json.dumps({"out": str(out), "vectors": n, "reused": reused,
+                      "embedded": n - reused, "model": model_id, "dim": dim},
+                     indent=2))
+
+
+def _reusable_vectors(npy: Path, model_id: str, hashes: dict) -> dict:
+    """Stored vectors whose chunk id *and* chunk text are both unchanged.
+
+    A chunk's vector depends on its own text and nothing else, so this is
+    correct by construction — unlike reusing anything that depends on the
+    graph, whose call confidences are global.
+    """
+    from .embed import load_vectors
+    if not npy.exists():
+        return {}
+    try:
+        previous, meta = load_vectors(npy)
+    except Exception:
+        return {}
+    if not previous or meta.get("model_id") != model_id:
+        return {}
+    stored = dict(zip(meta.get("chunk_ids") or [], meta.get("text_hashes") or []))
+    return {cid: vec for cid, vec in previous.items()
+            if cid in hashes and stored.get(cid) == hashes[cid]}
+
+
 def cmd_query(args):
     from .query import Index, format_pack
     out = Path(args.out)
@@ -130,8 +236,10 @@ def cmd_query(args):
         idx = Index(out)
     except ValueError as exc:
         raise SystemExit(f"error: corrupt index at {out}: {exc}") from None
+    vectors, embedder = _resolve_vectors(idx, args)
     res = idx.retrieve(args.query, k=args.k, hops=args.hops, budget_chars=args.budget,
-                       min_confidence=getattr(args, "min_conf", None))
+                       min_confidence=getattr(args, "min_conf", None),
+                       vectors=vectors, embedder=embedder)
     if getattr(args, "format", "text") == "json" or args.json:
         _emit(json.dumps(res, indent=2))
     else:
@@ -177,10 +285,12 @@ def cmd_rag(args):
         idx = Index(out)
     except ValueError as exc:
         raise SystemExit(f"error: corrupt index at {out}: {exc}") from None
+    vectors, embedder = _resolve_vectors(idx, args, out)
     pack = idx.pack_context(
         args.query, k=args.k, hops=args.hops, budget_chars=args.budget,
         min_confidence=args.min_conf, expand_graph=not args.no_expand,
-        exclude_secrets=args.answer)
+        exclude_secrets=args.answer, vectors=vectors, embedder=embedder,
+        budget_tokens=getattr(args, "budget_tokens", None))
     if args.answer:
         from .answer import stream_answer
         stream_answer(pack, model=args.model, provider=args.provider)
@@ -239,6 +349,25 @@ def _unit_float(value: str) -> float:
     return f
 
 
+def _add_vector_flags(parser) -> None:
+    """--vectors / --no-vectors / --embed-model, for `query` and `rag`.
+
+    `dest="embed_model"`, deliberately not `dest="model"`: on `rag`, `--model`
+    already means the LLM for `--answer`. The two must never share a dest, or
+    `rag --answer --model gpt-4o` would try to load an LLM name as a
+    sentence-transformers checkpoint (and vice versa).
+    """
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--vectors", dest="vectors", action="store_true", default=None,
+                       help="fuse the index's dense vectors into the ranking "
+                            "(error if they are missing or do not match)")
+    group.add_argument("--no-vectors", dest="vectors", action="store_false", default=None,
+                       help="lexical ranking only, even when the index has vectors")
+    parser.add_argument("--embed-model", dest="embed_model", default=None,
+                        help="sentence-transformers model used to embed the query for "
+                             f"--vectors; must match the index (default: {EMBED_DEFAULT_MODEL})")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="repo2graph", description=__doc__)
     p.add_argument("-v", "--version", action="version",
@@ -293,6 +422,7 @@ def main(argv=None):
                    help="drop CALLS edges below this confidence (0.0-1.0)")
     q.add_argument("--format", choices=("text", "json"), default="text")
     q.add_argument("--json", action="store_true")
+    _add_vector_flags(q)
     q.set_defaults(func=cmd_query)
 
     r = sub.add_parser("rag", help="pack a cited, graph-expanded context for a question")
@@ -304,6 +434,8 @@ def main(argv=None):
     r.add_argument("--hops", type=_nonneg, default=1, help="graph expansion hops")
     r.add_argument("--budget", type=_nonneg, default=24000,
                    help="character budget for the whole pack, map and headers included")
+    r.add_argument("--budget-tokens", type=_nonneg, default=None,
+                   help="token budget for the whole pack; replaces --budget when given")
     r.add_argument("--min-conf", type=_unit_float, default=1.0,
                    help="drop CALLS edges below this confidence (0.0-1.0)")
     r.add_argument("--no-expand", action="store_true", help="lexical seeds only")
@@ -313,7 +445,20 @@ def main(argv=None):
     r.add_argument("--model", default=None, help="model name for --answer")
     r.add_argument("--provider", choices=("gemini", "openai", "anthropic", "ollama"),
                    default=None, help="force a specific LLM provider for --answer")
+    _add_vector_flags(r)
     r.set_defaults(func=cmd_rag)
+
+    e = sub.add_parser("embed", help="embed an index's chunks for dense retrieval")
+    e.add_argument("-o", "--out", default=".r2g")
+    # --embed-model is the spelling action.yml uses: `--model` must not appear
+    # in that file, because there it would mean `rag --answer`'s LLM model, the
+    # one surface the Action deliberately does not expose.
+    e.add_argument("--model", "--embed-model", dest="model", default=None,
+                   help=f"sentence-transformers model (default: {EMBED_DEFAULT_MODEL})")
+    e.add_argument("--batch", type=_nonneg, default=64, help="texts per encode() call")
+    e.add_argument("--force", action="store_true",
+                   help="re-embed every chunk instead of reusing unchanged vectors")
+    e.set_defaults(func=cmd_embed)
 
     m = sub.add_parser("map", help="redraw the HTML graph map from a built index")
     m.add_argument("-o", "--out", default=".r2g")

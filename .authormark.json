@@ -11,6 +11,7 @@
     "dist",
     "*.svg",
     "REUSE.toml",
-    "BUILD_STATE.md"
+    "BUILD_STATE.md",
+    "tests/golden"
   ]
 }

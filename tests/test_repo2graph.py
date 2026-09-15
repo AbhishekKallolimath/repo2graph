@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌​​‌‌​‌​‌‌​​​‌‌​‌​‌‌​​‌​​‌‌‌​​‌​‌‌​​‌​​​​‌​‌‌​‌​‌‌​​​​‌​‌‌​​‌​‌​‌​​​​‌​​‌​‌‌​​‌​‌‌​​‌​​​‌​‌​​​‌​​‌‌​​​​​‌​‌​​‌​​‌​‌​‌‌‌​‌‌​​‌​‌​‌​‌​‌​‌​‌​​‌​‌‌​‌‌​‌‌​‌​‌‌​​‌‌​​‌​​‌​‌‌​​‌‌​‌‌‌⁠
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌​​‌​​‌​‌​​​‌‌​​‌‌‌​‌​​​​‌‌​‌​‌​‌‌‌​​​​​‌‌​​‌​‌​‌​​‌‌​‌​​‌‌​​​​​‌​‌‌​‌​​‌​​​​‌‌​​‌‌​‌​​​‌‌‌​‌​‌​‌​‌‌​​‌​‌‌‌​​‌​​‌‌​​‌‌​​‌​​‌‌​‌​‌​​‌​‌​​‌​​​‌‌‌​‌‌‌‌​​‌​‌‌​‌​‌​​‌​​‌​​​​‌‌​​​​‌⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.McY9d-aeBYdQ0RWeUKmfK7
+# Fingerprint: AMK1.IFt5peM0ZC4uYrfMJGyjHa
 """End-to-end and unit coverage for graph building, chunking and retrieval."""
 import re
 import json
@@ -412,8 +412,8 @@ def test_output_is_split_into_human_and_agent_sections(tmp_path, sample_repo, ca
     assert sorted(p.name for p in (out / "human").iterdir()) == [
         "graph.graphml", "graph.html", "overview.md"]
     assert sorted(p.name for p in (out / "agent").iterdir()) == [
-        "chunks.jsonl", "edges.jsonl", "graph.cypher", "manifest.json",
-        "nodes.jsonl", "overview.md", "stats.json"]
+        "chunks.jsonl", "edges.jsonl", "graph.cypher", "index.state.json",
+        "manifest.json", "nodes.jsonl", "overview.md", "stats.json"]
     assert sorted(p.name for p in out.iterdir()) == ["agent", "human"]
     written = json.loads(capsys.readouterr().out)["written"]
     assert "agent/nodes.jsonl" in written and "human/overview.md" in written
@@ -1935,6 +1935,23 @@ def test_expand_malformed_confidence(tmp_path):
     # With min_confidence=0.0, conf 0.0 is not < 0.0, so b is visited
     expanded_zero = idx.expand(["a"], hops=1, min_confidence=0.0)
     assert any(dst == "b" for dst, *_ in expanded_zero)
+
+
+def test_expand_empty_frontier_breaks_early(tmp_path):
+    agent = tmp_path / "agent"
+    agent.mkdir(parents=True, exist_ok=True)
+    (agent / "chunks.jsonl").write_text("", encoding="utf8")
+    (agent / "nodes.jsonl").write_text(
+        json.dumps({"id": "a", "type": "symbol", "name": "a", "path": "a.py"}) + "\n",
+        encoding="utf8",
+    )
+    (agent / "edges.jsonl").write_text("", encoding="utf8")
+    idx = Index(tmp_path)
+    # hops=10**9 should break immediately when frontier becomes empty
+    expanded = idx.expand(["a"], hops=10**9)
+    assert expanded == []
+    # Also when seed_nodes is empty
+    assert idx.expand([], hops=10**9) == []
 
 
 def test_cite_block_disarms_citation_forgery():

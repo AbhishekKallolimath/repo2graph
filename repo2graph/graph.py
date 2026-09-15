@@ -1,9 +1,10 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌​‌‌‌​​‌‌​​‌‌​​‌‌​‌​‌‌​‌‌‌‌​​​​‌​‌​‌​​​‌​‌​​‌​​‌​​​‌‌​​​‌‌​​‌‌​​‌‌​‌‌‌​‌‌​‌‌​‌​‌‌‌​‌‌‌​‌‌​​​‌​​‌​‌​‌​‌​‌‌​​‌‌‌​‌​‌​​​​​‌​​‌‌​​​‌‌​‌​​​​‌​​‌​‌​​‌​​​‌​‌​‌‌​‌​‌‌​​‌‌​‌​‌​‌‌​‌​​​⁠
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌​​‌​‌‌​​‌‌​​‌​​‌‌​​​‌​​‌‌​​‌‌​​‌‌‌​‌​‌​‌​​‌‌‌​​​‌‌​​​​​​‌‌​‌‌​​‌‌‌​‌​​​​‌‌​​​​​‌‌​​​​‌​​‌‌​‌​​​‌‌​​​‌​​‌​‌​‌‌‌​‌​​​​‌​​‌​‌‌​​​​​‌‌​​‌‌​‌‌​‌​​​​​‌‌​​​​​‌‌‌‌​‌​​‌​‌​​‌‌​‌‌‌‌​‌​⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.nfkxTRF37mwbUgPLhJEk5h
+# Fingerprint: AMK1.K2bfuN06t0a4bWBX3h0zSz
 """Build the repository graph: nodes + edges."""
+import hashlib
 import itertools
 import os
 import re
@@ -29,6 +30,9 @@ class Graph:
         self.edges: list[dict] = []
         self._edge_seen: set[tuple] = set()
         self.stats: Counter = Counter()
+        # {relative path: sha256 of the bytes that were indexed}, written to
+        # index.state.json so a later build can tell what actually changed.
+        self.file_hashes: dict[str, str] = {}
 
     def add_node(self, nid: str, **attrs):
         if nid in self.nodes:
@@ -180,7 +184,9 @@ def _read_and_parse(item):
     """Read one file and parse it if it is code.
 
     Top level, and returns only counts plus the ParsedFile, so a process pool
-    can pickle both the call and its result.
+    can pickle both the call and its result. The fourth element of the read
+    tuple is the sha256 of the bytes just parsed: it is computed here because
+    this is the only place that holds them, and build() never keeps them.
     """
     rel, abspath, lang = item
     try:
@@ -194,7 +200,8 @@ def _read_and_parse(item):
         # whole build (nor trigger a pointless serial retry that raises again):
         # count the file, drop its symbols, same as an unavailable parser.
         pf = None
-    return rel, lang, (len(raw), raw.count(b"\n") + 1, pf)
+    return rel, lang, (len(raw), raw.count(b"\n") + 1, pf,
+                       hashlib.sha256(raw).hexdigest())
 
 
 def resolve_jobs(jobs: int) -> int:
@@ -250,7 +257,8 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
     for rel, lang, read in parse_all(files, resolve_jobs(jobs)):
         if read is None:  # unreadable file
             continue
-        size, lines, pf = read
+        size, lines, pf, digest = read
+        g.file_hashes[rel] = digest
         ext = Path(rel).suffix.lower()
         ftype = "code" if lang else ("doc" if ext in DOC_EXT else
                                      "config" if ext in CONFIG_EXT else "other")

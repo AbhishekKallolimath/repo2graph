@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​​‌​‌‌​‌​‌‌​​​‌‌​‌​‌‌​​​​‌​​‌‌‌​​​‌‌​‌‌‌​‌‌​​​​‌​‌‌‌‌​‌​​‌‌‌​‌​​​‌​‌​‌​‌​‌​‌‌​​‌​​‌‌​‌‌‌​​‌‌‌​​‌​‌​​‌​‌‌​‌​‌​​‌‌​‌‌​​​​‌​‌‌​​​​‌​‌‌‌‌​‌​​‌‌​‌‌​‌​‌​‌​​‌‌​‌‌‌​‌​‌​‌‌​‌‌​​​‌‌‌‌​​‌⁠
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌​‌​‌​‌​‌​​‌​​​‌‌​​‌​​‌​​​​‌‌​‌‌‌​‌​‌​‌​‌​​​​​‌​​​​​‌​‌​‌‌​‌​​​‌​‌‌​‌​‌​​​‌‌​​‌​​‌​‌​​‌​‌‌‌‌‌​​‌​‌‌​‌​‌​‌‌​‌​​‌‌​​‌‌​​‌​‌​​‌​​​‌‌​‌​‌​‌​​‌​​​​‌​‌​​​‌​‌‌​‌‌‌​​‌​​‌‌‌‌​‌‌‌‌​​‌⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.-cXN7aztUY79KSaazmSuly
+# Fingerprint: AMK1.UR2CuPAZ-FJ_-ZfR5HQnOy
 """Graph-aware retrieval over a built index: lexical seeds + k-hop expansion."""
 import json
 import math
@@ -47,6 +47,11 @@ DEFAULT_EDGE_TYPES = frozenset(DEFAULT_EDGE_DIRS)
 # retrieve() passes this explicitly so that DEFAULT_EDGE_DIRS, which exists for
 # pack_context(), can never narrow what `repo2graph query` has always returned.
 ALL_EDGE_DIRS: dict = {}
+
+# Token accounting. 4 characters per token is the usual English/code rule of
+# thumb; it under-counts dense code and CJK, which is why pack_context takes a
+# `count_tokens=` hook a caller can point at a real tokenizer.
+CHARS_PER_TOKEN = 4
 
 # pack_context layout constants.
 MAP_BUDGET_FRAC = 0.2          # at most this share of the budget goes to the map
@@ -119,6 +124,17 @@ def read_jsonl(path: Path) -> list:
     return rows
 
 
+def count_tokens(text: str) -> int:
+    """The default token estimate: len(text) // CHARS_PER_TOKEN, never 0 for a
+    non-empty string (a block that costs nothing would defeat any budget)."""
+    return max(1, len(text) // CHARS_PER_TOKEN) if text else 0
+
+
+# Bound at import so pack_context's `count_tokens=` parameter, which shadows
+# the name inside the method, can still reach the default.
+_DEFAULT_MEASURE = count_tokens
+
+
 def tokenize(text: str) -> list[str]:
     out = []
     for t in TOKEN_RE.findall(text):
@@ -165,6 +181,64 @@ class Index:
                 self.postings[term].append((i, n))
             self.df.update(counts.keys())
         self.N = len(self.chunks)
+        # Dense vectors are optional in every sense: absent, unreadable,
+        # truncated or stale, the index still answers lexically.
+        self.vectors: dict[int, list[float]] | None = None
+        self.vector_meta: dict | None = None
+        self._load_vectors()
+
+    def _load_vectors(self) -> None:
+        """Load agent/vectors.npy into chunk-list-index keys, or give up quietly.
+
+        The file is keyed by chunk id; ids the current chunks.jsonl no longer
+        holds are dropped rather than shifted onto a neighbouring row, because
+        a mis-aligned vector produces plausible-looking garbage rankings that
+        nothing downstream can detect.
+        """
+        npy = artifact_path(self.dir, "vectors.npy")
+        if not npy.exists():
+            return
+        try:
+            from .embed import load_vectors
+            by_id, meta = load_vectors(npy)
+        except Exception:
+            # OSError, ValueError, a malformed meta -- all the same answer.
+            return
+        pos = {c.get("id"): i for i, c in enumerate(self.chunks)}
+        vectors = {pos[cid]: vec for cid, vec in by_id.items() if cid in pos}
+        if not vectors:
+            return
+        self.vectors, self.vector_meta = vectors, meta
+
+    def fuse_ok(self, embedder) -> tuple[bool, str]:
+        """May `embedder`'s query vectors be fused with this index's vectors?
+
+        A silent model or width mismatch is worse than no vectors at all: the
+        rankings stay plausible while being meaningless, so the answer is a
+        refusal naming both sides rather than a best effort.
+        """
+        if not self.vectors or not self.vector_meta:
+            return False, (f"no vectors in the index at {self.dir}: run "
+                           f"`repo2graph embed -o {self.dir}` first")
+        from .embed import dim_of, model_id_of
+        index_model = self.vector_meta.get("model_id")
+        query_model = model_id_of(embedder)
+        if index_model != query_model:
+            return False, (
+                f"embedding model mismatch: the index was built with "
+                f"{index_model!r} but the active embedder is {query_model!r}; "
+                f"re-run `repo2graph embed -o {self.dir} --model {index_model}` "
+                f"or query with --no-vectors")
+        index_dim = self.vector_meta.get("dim")
+        try:
+            query_dim = dim_of(embedder)
+        except Exception as exc:
+            return False, f"the active embedder could not be measured: {exc}"
+        if index_dim != query_dim:
+            return False, (
+                f"embedding width mismatch: the index vectors are {index_dim} "
+                f"wide but the active embedder returns {query_dim}")
+        return True, ""
 
     def _load_text(self, name: str) -> str:
         """Read an optional artifact, trying every section it is written to.
@@ -314,6 +388,8 @@ class Index:
         dirs = DEFAULT_EDGE_DIRS if edge_dirs is None else edge_dirs
         seen, frontier, order = set(seed_nodes), list(seed_nodes), []
         for _ in range(hops):
+            if not frontier:
+                break
             nxt = []
             # The cap is per hop, not per frontier node: breaking only the inner
             # loop let each later frontier node add another 60 edges after the
@@ -346,17 +422,21 @@ class Index:
         return order
 
     def retrieve(self, query: str, k: int = 8, hops: int = 1, budget_chars: int = 24000,
-                 *, min_confidence: float | None = None):
+                 *, min_confidence: float | None = None, vectors=None, embedder=None):
         """Lexical seeds plus their graph neighbours, budgeted on chunk text.
 
         `budget_chars` bounds the sum of the returned chunks' `text` only — it
         says nothing about how a caller renders them. pack_context() uses the
         other model (the whole rendered markdown); do not unify the two.
         `min_confidence=None` means "do not filter CALLS on confidence", which is
-        this method's historical behaviour.
+        this method's historical behaviour. With `vectors` and `embedder` both
+        None -- the default -- seeds come from `score()` exactly as they always
+        have; supply either and they come from the fused ranking instead.
         """
         conf = 0.0 if min_confidence is None else min_confidence
-        scored = self.score(query)[: k * 3]
+        ranked = (self.score(query) if vectors is None and embedder is None
+                  else self.score_rrf(query, vectors=vectors, embedder=embedder))
+        scored = ranked[: k * 3]
         picked, seen_nodes_list, seen_nodes_set, used = [], [], set(), 0
         for s, i in scored:
             c = self.chunks[i]
@@ -424,7 +504,8 @@ class Index:
 
     def pack_context(self, query: str, k: int = 8, hops: int = 1, budget_chars: int = 24000,
                      min_confidence: float = 1.0, expand_graph: bool = True,
-                     vectors=None, embedder=None, exclude_secrets: bool = False) -> dict:
+                     vectors=None, embedder=None, exclude_secrets: bool = False,
+                     budget_tokens: int | None = None, count_tokens=None) -> dict:
         """An agent-ready markdown pack: repo map, `---`, then cited chunks.
 
         `budget_chars` bounds the WHOLE returned markdown — map prepend, `---`
@@ -434,8 +515,23 @@ class Index:
         budget), then seeds in score order at full text, then graph neighbours
         at full text or, if that no longer fits, compressed to their header
         lines plus the signature line. Nothing is truncated mid-line.
+
+        `budget_tokens` *replaces* `budget_chars` as the accounting unit when
+        it is not None: every fit test then goes through the measure function
+        (`count_tokens=`, defaulting to the module-level estimate) instead of
+        len(). Accounting is cumulative — the measure is applied to the text
+        assembled so far plus the candidate block, never to blocks in
+        isolation — so a non-additive measure cannot be talked past.
+        `tokens_used` is always reported; `tokens_budget` is 0 when unset.
         """
-        bounded = budget_chars > 0
+        measure_tokens = count_tokens if callable(count_tokens) else _DEFAULT_MEASURE
+        use_tokens = budget_tokens is not None
+        # len is the character measure, and it is additive, so the cumulative
+        # accounting below reduces to exactly the arithmetic this method has
+        # always done when budget_tokens is None (D1: byte-identical output).
+        measure = measure_tokens if use_tokens else len
+        budget = budget_tokens if use_tokens else budget_chars
+        bounded = budget > 0
         seeds, seen_nodes = [], set()
         for s, i in self.score_rrf(query, vectors=vectors, embedder=embedder)[: k * 3]:
             c = self.chunks[i]
@@ -473,20 +569,25 @@ class Index:
         full_map = self.map_prepend()
         shown_map = full_map
         if bounded:
-            shown_map = _fit_lines(full_map, int(budget_chars * MAP_BUDGET_FRAC)
-                                   - len(PACK_SEPARATOR))
+            shown_map = _fit_lines(full_map, int(budget * MAP_BUDGET_FRAC)
+                                   - measure(PACK_SEPARATOR), measure)
         head = shown_map.rstrip("\n") + PACK_SEPARATOR if shown_map.strip() else ""
         truncated = shown_map != full_map
-        remaining = budget_chars - len(head) if bounded else 0
 
         picked = []
+        body = ""          # everything accepted so far, for cumulative measuring
+
+        def fits(block: str) -> bool:
+            return measure(head + body + block) <= budget
+
         for c in seeds:
-            block = _cite_block(c, c.get("text") or "")
+            text = c.get("text") or ""
+            block = _cite_block(c, text)
             if not bounded:
-                picked.append((c, c.get("text") or ""))
-            elif len(block) <= remaining:
-                picked.append((c, c.get("text") or ""))
-                remaining -= len(block)
+                picked.append((c, text))
+            elif fits(block):
+                picked.append((c, text))
+                body += block
             else:
                 truncated = True
         for c in neighbours:
@@ -497,16 +598,18 @@ class Index:
                 break
             text = c.get("text") or ""
             block = _cite_block(c, text)
-            if not bounded or len(block) <= remaining:
+            if not bounded:
                 picked.append((c, text))
-                if bounded:
-                    remaining -= len(block)
+                continue
+            if fits(block):
+                picked.append((c, text))
+                body += block
                 continue
             short = _compress(text)
             block = _cite_block(c, short)
-            if len(block) <= remaining:
+            if fits(block):
                 picked.append((c, short))
-                remaining -= len(block)
+                body += block
             truncated = True
 
         picked.sort(key=lambda p: (p[0].get("path") or "", p[0].get("start_line") or 0,
@@ -521,6 +624,8 @@ class Index:
             "truncated": truncated,
             "budget_chars": budget_chars,
             "used_chars": len(markdown),
+            "tokens_used": measure_tokens(markdown),
+            "tokens_budget": budget_tokens if use_tokens else 0,
             "query": query,
         }
 
@@ -543,17 +648,22 @@ def _cosine(a, b) -> float:
     return num / math.sqrt(na * nb)
 
 
-def _fit_lines(text: str, limit: int) -> str:
-    """The longest whole-line prefix of `text` that fits in `limit` characters."""
+def _fit_lines(text: str, limit: int, measure=len) -> str:
+    """The longest whole-line prefix of `text` that fits in `limit` units.
+
+    The candidate is measured whole rather than line by line, so a measure that
+    is not additive (any token estimate) is applied to the string that will
+    actually be emitted. With the default `len` this is exactly the running
+    "len(line) + a newline" arithmetic it replaces.
+    """
     if limit <= 0:
         return ""
-    kept, used = [], 0
+    kept = []
     for line in text.split("\n"):     # never splitlines(): see AGENTS.md
-        cost = len(line) + (1 if kept else 0)
-        if used + cost > limit:
+        candidate = "\n".join([*kept, line])
+        if measure(candidate) > limit:
             break
         kept.append(line)
-        used += cost
     return "\n".join(kept)
 
 

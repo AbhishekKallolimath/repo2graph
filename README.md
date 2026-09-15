@@ -1,9 +1,9 @@
 <!--
-  @authormark v1 -- do not remove (authorship watermark)⁠​‌​​‌‌​​​‌​​‌‌​‌​​‌‌​​‌​​‌​‌​​‌​​‌‌‌​​​​​​‌‌​‌‌‌​​‌‌​​‌‌​​‌‌​​​​​‌​‌​​​‌​‌‌​​​‌​​‌‌‌​​‌​​‌​​‌​‌‌​​‌‌​​​‌​‌‌‌​‌‌‌​‌​‌‌​‌​​‌‌‌‌​‌​​​‌‌‌​​​​‌​‌​​‌‌​​‌​‌‌​‌​‌‌‌​‌​​​‌‌​‌​‌​​‌‌‌​‌​​⁠
+  @authormark v1 -- do not remove (authorship watermark)⁠​‌‌‌​‌​‌​‌​​​​‌‌​​‌‌‌​​‌​‌‌​‌‌​​​‌​‌​‌‌‌​‌‌‌​​​​​‌‌​‌‌‌​​‌​‌‌​​‌​​‌‌‌​​‌​‌​​​‌​‌​​‌‌​​‌​​‌‌‌​​‌​​‌​​​​‌‌​​‌‌​​​‌​‌‌‌​‌‌‌​‌​​​​​‌​​‌‌‌​​‌​‌​​​‌‌‌​‌​‌​​‌​​​‌‌‌​​‌​‌​‌​‌​‌​‌‌​​‌​‌⁠
   Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
   Author: https://github.com/Srinivasan-78
   SPDX-License-Identifier: MIT
-  Fingerprint: AMK1.LM2Rp730QbrK1wZz8S-tjt
+  Fingerprint: AMK1.uC9lWpnY9E2rC1wA9GR9Ue
 -->
 # repo2graph
 
@@ -182,7 +182,10 @@ repo2graph rag psf/requests "how are redirects followed"         # download, ind
 | `-k` | `8` | How many pieces the text search starts with. |
 | `--hops` | `1` | How many steps along the arrows to walk out from those pieces. |
 | `--budget` | `24000` | Character budget for the **whole** pack. |
+| `--budget-tokens` | unset | Token budget for the **whole** pack. When given it replaces `--budget` as the unit of measurement. |
 | `--min-conf` | `1.0` | Drop `CALLS` arrows the parser was less than this sure about. |
+| `--vectors` / `--no-vectors` | off | `--vectors` adds meaning-based search on top of the word matching — an error if the index has no vectors, if the `rag` extra is missing, or if the model does not match. Off unless you ask for it: turning it on loads a model, and downloads ~90 MB the first time. An index that happens to carry vectors is not permission to go and fetch one. |
+| `--embed-model` | the `embed` default | Which sentence-transformers model embeds your question for `--vectors`. Must be the one the index was built with. Not `--model`, which is the LLM for `--answer`. |
 | `--no-expand` | off | Text search only: no arrow walking. |
 | `--format` | `markdown` | `markdown` for the pack itself, `json` for the pack plus its parts. |
 | `--answer` | off | Send the pack to an LLM and stream the answer. See the warning below. |
@@ -190,7 +193,8 @@ repo2graph rag psf/requests "how are redirects followed"         # download, ind
 | `--provider` | auto | `gemini`, `openai`, `anthropic` or `ollama`, only used with `--answer`. |
 
 `--format json` gives you `markdown` plus `chunks`, `seeds`, `neighbors`, `truncated`,
-`budget_chars`, `used_chars` and `query`, so a program can see what got left out:
+`budget_chars`, `used_chars`, `tokens_budget`, `tokens_used` and `query`, so a program can see what
+got left out:
 
 ```bash
 repo2graph rag "how does export write the manifest" -o .r2g --format json \
@@ -215,6 +219,39 @@ repo2graph query "auth middleware" -o .r2g --format json | jq '.[].path'
 
 `--json` still works and means the same as `--format json`.
 
+#### `embed` — meaning-based search on top of the words
+
+Word matching misses a piece of code that says the same thing in different words. `embed` turns
+every chunk into a vector once, writes it next to the index, and `query`/`rag` blend the two
+rankings from then on.
+
+```bash
+pip install "repo2graph[rag]"          # sentence-transformers + numpy, optional
+repo2graph embed -o .r2g               # writes agent/vectors.npy + vectors.meta.json
+repo2graph rag "how is a request routed" -o .r2g --vectors
+```
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `-o`, `--out` | `.r2g` | Index folder to embed. |
+| `--model`, `--embed-model` | `sentence-transformers/all-MiniLM-L6-v2` | Which sentence-transformers model to use. Two spellings for one flag; the GitHub Action uses the long one. |
+| `--batch` | `64` | Texts handed to the model per call. |
+| `--force` | off | Re-embed everything instead of reusing the vectors of unchanged chunks. |
+
+Three things worth knowing:
+
+- **Re-running it is cheap.** A chunk's vector is reused unless the chunk's own text changed, so a
+  rebuild after editing one file re-embeds one file's chunks. The report says how many:
+  `{"vectors": 412, "reused": 408, "embedded": 4, ...}`.
+- **Reading the vectors needs nothing.** `vectors.npy` is a plain NumPy file, but repo2graph reads
+  it with the standard library alone. A machine that only *queries* a shipped index does not need
+  the `rag` extra — only the machine that *creates* the vectors does.
+- **A model mismatch is refused, not papered over.** The model name and vector width are stored
+  beside the vectors. `--vectors` stops with an error naming both sides rather than fusing two
+  models' geometry into a plausible-looking wrong ranking. If you embedded with something other
+  than the default, say so on the query side too:
+  `repo2graph rag "..." --vectors --embed-model BAAI/bge-small-en`.
+
 #### The two `--budget` flags count different things
 
 This surprises people, so it is worth saying plainly. Both commands take `--budget`, and each one
@@ -234,8 +271,9 @@ promise an LLM that the thing it is handed fits. `rag --budget 0` means no budge
 1. **Text search first.** BM25, the standard word-matching score, with one twist: if a word in your
    question is exactly the name of a function or class, that piece's score is multiplied. Asking
    about `parse_formats` finds `parse_formats`, not the prose that happens to mention it.
-2. **Optional fusion.** If you bring your own vectors, `Index.score_rrf()` blends the two rankings
-   with reciprocal rank fusion. No extra library, and with no vectors it is exactly plain BM25.
+2. **Optional fusion.** Run `repo2graph embed` (or bring your own vectors) and `Index.score_rrf()`
+   blends the two rankings with reciprocal rank fusion. No extra library is needed to *read* the
+   vectors, and with no vectors it is exactly plain BM25.
 3. **Then the arrows, by direction.** Expansion is not "everything one step away". It follows
    `CALLS` both ways (what this calls, and what calls it), `DEFINES` inwards (the file or function
    that holds this one), `INHERITS` outwards (the base classes) and `IMPORTS` outwards (the modules
@@ -300,6 +338,138 @@ write `gh` instead of `github`, and full web links work too.
 For a private project, pass `--token` or set `$GH_TOKEN` or `$GITHUB_TOKEN`. Use `--ref` to pick a
 branch or tag, and `--keep-clone DIR` if you want to keep the downloaded copy.
 
+### Step 5: hand the map to an agent over MCP
+
+The same index, the same engine, a third way in. `repo2graph-mcp` is a stdio
+[MCP](https://modelcontextprotocol.io) server, so an agent can ask the map questions itself instead
+of you pasting a pack into a chat window.
+
+```bash
+pip install "repo2graph[mcp]"
+```
+
+#### Build the index before serving
+
+The server reads an existing index; it does not build one on startup. Build the index first:
+
+```bash
+repo2graph build . -o .r2g
+```
+
+To enable vector-enhanced retrieval (hybrid BM25 + dense semantic search):
+
+```bash
+pip install "repo2graph[rag]"
+repo2graph embed -o .r2g
+```
+
+**Preflight check:** If you run `repo2graph-mcp` against a directory where `.r2g` has not been built yet (or `chunks.jsonl` is missing), the server performs an immediate preflight check and exits cleanly with actionable guidance rather than raising an unhandled exception:
+
+```
+error: no repo2graph index found at '.r2g'. Build one first with: repo2graph build <path> -o .r2g
+```
+
+#### Client configuration
+
+##### Claude Desktop (`claude_desktop_config.json`)
+
+Configuration file location:
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux:** `~/.config/Claude/claude_desktop_config.json`
+
+macOS / Linux:
+```json
+{
+  "mcpServers": {
+    "repo2graph": {
+      "command": "repo2graph-mcp",
+      "args": ["--out", "/path/to/project/.r2g"]
+    }
+  }
+}
+```
+
+Windows:
+```json
+{
+  "mcpServers": {
+    "repo2graph": {
+      "command": "repo2graph-mcp",
+      "args": ["--out", "C:/path/to/project/.r2g"]
+    }
+  }
+}
+```
+*(Tip: If `repo2graph-mcp` is installed inside a virtual environment, specify the full path to `.venv/bin/repo2graph-mcp` or `.venv\Scripts\repo2graph-mcp.exe` as the `command`.)*
+
+##### Cursor (`.cursor/mcp.json`)
+
+Configure `.cursor/mcp.json` in your workspace or global settings:
+
+```json
+{
+  "mcpServers": {
+    "repo2graph": {
+      "command": "repo2graph-mcp",
+      "args": ["--out", "/path/to/project/.r2g"]
+    }
+  }
+}
+```
+
+##### Claude Code
+
+Add the server using the CLI:
+
+```bash
+claude mcp add repo2graph -- repo2graph-mcp --out /path/to/project/.r2g
+```
+
+##### Google Antigravity / Generic MCP Clients
+
+Generic MCP clients can reference `repo2graph-mcp` as a stdio server by specifying the command and arguments:
+
+- **Command:** `repo2graph-mcp` (or path to executable inside your venv)
+- **Args:** `["--out", "/path/to/project/.r2g"]`
+
+In JSON configuration blocks:
+```json
+{
+  "command": "repo2graph-mcp",
+  "args": ["--out", "/path/to/project/.r2g"]
+}
+```
+
+#### Available tools
+
+Three tools, deliberately:
+
+| Tool | Arguments | What comes back |
+|---|---|---|
+| `repo_map` | none | Read high-level repo overview (languages, hub files, entry points). Cacheable, zero-arguments. |
+| `repo_search` | `query`, optional `k`, `hops`, `budget_tokens` | GraphRAG search returning cited code blocks (`[cite: path:start-end]`). Unconditionally excludes secrets, hard-capped at 12,000 tokens. |
+| `repo_neighbours` | `node_id`, optional `hops`, `limit` | Graph traversal around a symbol/file (callers, callees, base classes, defining file). Truncated clearly at limit (`... (truncated at <limit> neighbours)`). |
+
+Three promises the server keeps that the CLI leaves to you:
+
+- **Secrets are excluded, always.** A tool an agent calls unattended never returns a chunk from a
+  path that looks like a credential store. On the CLI that is opt-in (`--answer`).
+- **Output is hard-bounded.** `repo_search` clamps whatever budget it is given to at most 12 000
+  tokens and re-measures the result before returning it, and `repo_neighbours` lists at most 50 rows
+  however large a `limit` it is handed, so no single call can eat a context window. When truncated,
+  `repo_neighbours` explicitly appends `... (truncated at <limit> neighbours)`.
+- **Work is hard-bounded.** `k` is capped at 50 and `hops` at 4. One call sits on the server's only
+  event loop, so an argument that costs minutes would freeze every client, not just the one that
+  sent it.
+
+No LLM call is made by the server itself, and the `mcp` package is an optional extra: without it the
+CLI, the Action and the Python API are all unaffected.
+
+The extra pins `mcp>=1.0,<2`: the server is written against the 1.x `Server` decorator API, which
+2.x removed. If a 1.x SDK is not what you have installed, `repo2graph-mcp` says so and names what
+to install instead rather than raising. 2.x support is tracked in `docs/BACKLOG.md`.
+
 ### Running the tests
 
 ```bash
@@ -330,7 +500,9 @@ The output is split in two, because people and programs want different things.
 | `edges.jsonl` | one line of data per arrow |
 | `graph.cypher` | a script that loads the map into a graph database (Neo4j or Memgraph). Running it twice is safe. |
 | `stats.json` | the counts: dots, arrows, functions, reading errors, starting points |
+| `index.state.json` | the sha256 of every file as it was read, so a later build can tell what actually changed |
 | `index.json` | which project and version was read. Only written by `repo2graph github`. |
+| `vectors.npy` + `vectors.meta.json` | the chunk vectors and the model that made them. Only written by `repo2graph embed`. |
 
 `graph.graphml` also works in the Python libraries NetworkX and igraph. It lives under `human/`
 because the layout it carries is there for a person looking at a picture.
@@ -596,9 +768,12 @@ hand.
 | `query-k` | `8` | Pieces the text search starts with. |
 | `query-hops` | `1` | Steps to walk along the arrows. |
 | `query-budget` | `24000` | Character budget for the whole pack, map and cite headers included. |
+| `query-budget-tokens` | `""` | Token budget for the whole pack. Set it and it replaces `query-budget` as the unit. Blank keeps the character budget. |
 | `query-min-conf` | `1.0` | Drop `CALLS` arrows below this confidence. |
 | `query-format` | `markdown` | `markdown` or `json`. |
 | `query-out` | `""` | File to write the pack to. Blank means `<out>/agent/pack.md` (or `pack.json`). |
+| `embed` | `false` | Also embed the chunks for meaning-based search. Installs the `rag` extra and downloads a model, so it is off by default. When it is `true` the pack is packed with `--vectors`. |
+| `embed-model` | `""` | sentence-transformers model for `embed`. Blank uses the built-in default. Both the embed step and the pack step are given this model, so the two always agree. |
 | `artifact-name` | `repo-graph` | Upload the map under this name. Blank uploads nothing. |
 | `commit-branch` | `""` | Also force-push the map to this orphan branch. Blank pushes nothing. |
 | `token` | `""` | Token that can read `repo` when the target is private. |

@@ -1,0 +1,97 @@
+{
+  "artifact-name": {
+    "default": "repo-graph",
+    "description": "Upload the output under this artifact name (blank = no upload)",
+    "required": "false"
+  },
+  "commit-branch": {
+    "default": "",
+    "description": "Push the output to this orphan branch (blank = no push)",
+    "required": "false"
+  },
+  "exclude": {
+    "default": "",
+    "description": "Space-separated globs to exclude",
+    "required": "false"
+  },
+  "formats": {
+    "default": "jsonl,graphml,cypher,overview,html",
+    "description": "Comma list: jsonl,graphml,cypher,overview,html",
+    "required": "false"
+  },
+  "git-history": {
+    "default": "0",
+    "description": "Commits to scan for CO_CHANGE edges (0 = skip)",
+    "required": "false"
+  },
+  "include": {
+    "default": "",
+    "description": "Space-separated globs to include",
+    "required": "false"
+  },
+  "out": {
+    "default": ".r2g",
+    "description": "Output directory for the graph artifacts",
+    "required": "false"
+  },
+  "path": {
+    "default": ".",
+    "description": "Local path to index when `repo` is blank",
+    "required": "false"
+  },
+  "query": {
+    "default": "",
+    "description": "Question to pack a cited GraphRAG context for (blank = skip). No LLM call is ever made.",
+    "required": "false"
+  },
+  "query-budget": {
+    "default": "24000",
+    "description": "Character budget for the whole pack (map and cite headers included)",
+    "required": "false"
+  },
+  "query-format": {
+    "default": "markdown",
+    "description": "Pack format: markdown or json",
+    "required": "false"
+  },
+  "query-hops": {
+    "default": "1",
+    "description": "Graph expansion hops for `query`",
+    "required": "false"
+  },
+  "query-k": {
+    "default": "8",
+    "description": "Lexical seed chunks for `query`",
+    "required": "false"
+  },
+  "query-min-conf": {
+    "default": "1.0",
+    "description": "Drop CALLS edges below this confidence (0.0-1.0)",
+    "required": "false"
+  },
+  "query-out": {
+    "default": "",
+    "description": "File to write the pack to (blank = <out>/agent/pack.md or pack.json)",
+    "required": "false"
+  },
+  "ref": {
+    "default": "",
+    "description": "Branch or tag to index when cloning a remote repo",
+    "required": "false"
+  },
+  "repo": {
+    "default": "",
+    "description": "Target repo (owner/repo or URL). Leave blank to index `path` in the workspace.",
+    "required": "false"
+  },
+  "token": {
+    "default": "",
+    "description": "Token used to clone a private target repo",
+    "required": "false"
+  },
+  "version": {
+    "default": "git+https://github.com/Srinivasan-78/repo2graph@v1",
+    "description": "repo2graph version spec passed to pip",
+    "required": "false"
+  }
+}

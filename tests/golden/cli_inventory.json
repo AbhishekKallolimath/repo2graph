@@ -1,0 +1,864 @@
+{
+  "<root>": {
+    "--help -h": {
+      "choices": null,
+      "class": "_HelpAction",
+      "default": "'==SUPPRESS=='",
+      "dest": "help",
+      "nargs": "0",
+      "options": [
+        "--help",
+        "-h"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--version -v": {
+      "choices": null,
+      "class": "_VersionAction",
+      "default": "'==SUPPRESS=='",
+      "dest": "version",
+      "nargs": "0",
+      "options": [
+        "--version",
+        "-v"
+      ],
+      "required": false,
+      "type": null
+    }
+  },
+  "build": {
+    "--exclude": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "exclude",
+      "nargs": "'*'",
+      "options": [
+        "--exclude"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--formats": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "'jsonl,graphml,cypher,overview,html'",
+      "dest": "formats",
+      "nargs": "None",
+      "options": [
+        "--formats"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--git-history": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "0",
+      "dest": "git_history",
+      "nargs": "None",
+      "options": [
+        "--git-history"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "--help -h": {
+      "choices": null,
+      "class": "_HelpAction",
+      "default": "'==SUPPRESS=='",
+      "dest": "help",
+      "nargs": "0",
+      "options": [
+        "--help",
+        "-h"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--include": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "include",
+      "nargs": "'*'",
+      "options": [
+        "--include"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--jobs": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "0",
+      "dest": "jobs",
+      "nargs": "None",
+      "options": [
+        "--jobs"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "--max-files": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "0",
+      "dest": "max_files",
+      "nargs": "None",
+      "options": [
+        "--max-files"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "--no-chunks": {
+      "choices": null,
+      "class": "_StoreTrueAction",
+      "default": "False",
+      "dest": "no_chunks",
+      "nargs": "0",
+      "options": [
+        "--no-chunks"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--out -o": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "'.r2g'",
+      "dest": "out",
+      "nargs": "None",
+      "options": [
+        "--out",
+        "-o"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--viz-nodes": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "300",
+      "dest": "viz_nodes",
+      "nargs": "None",
+      "options": [
+        "--viz-nodes"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "repo": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "repo",
+      "nargs": "None",
+      "options": [],
+      "required": true,
+      "type": null
+    }
+  },
+  "gh": {
+    "--depth": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "0",
+      "dest": "depth",
+      "nargs": "None",
+      "options": [
+        "--depth"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "--exclude": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "exclude",
+      "nargs": "'*'",
+      "options": [
+        "--exclude"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--formats": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "'jsonl,graphml,cypher,overview,html'",
+      "dest": "formats",
+      "nargs": "None",
+      "options": [
+        "--formats"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--git-history": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "0",
+      "dest": "git_history",
+      "nargs": "None",
+      "options": [
+        "--git-history"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "--help -h": {
+      "choices": null,
+      "class": "_HelpAction",
+      "default": "'==SUPPRESS=='",
+      "dest": "help",
+      "nargs": "0",
+      "options": [
+        "--help",
+        "-h"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--include": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "include",
+      "nargs": "'*'",
+      "options": [
+        "--include"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--jobs": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "0",
+      "dest": "jobs",
+      "nargs": "None",
+      "options": [
+        "--jobs"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "--keep-clone": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "keep_clone",
+      "nargs": "None",
+      "options": [
+        "--keep-clone"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--max-files": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "0",
+      "dest": "max_files",
+      "nargs": "None",
+      "options": [
+        "--max-files"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "--out -o": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "'.r2g'",
+      "dest": "out",
+      "nargs": "None",
+      "options": [
+        "--out",
+        "-o"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--ref": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "ref",
+      "nargs": "None",
+      "options": [
+        "--ref"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--token": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "token",
+      "nargs": "None",
+      "options": [
+        "--token"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--viz-nodes": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "300",
+      "dest": "viz_nodes",
+      "nargs": "None",
+      "options": [
+        "--viz-nodes"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "repo": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "repo",
+      "nargs": "None",
+      "options": [],
+      "required": true,
+      "type": null
+    }
+  },
+  "github": {
+    "--depth": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "0",
+      "dest": "depth",
+      "nargs": "None",
+      "options": [
+        "--depth"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "--exclude": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "exclude",
+      "nargs": "'*'",
+      "options": [
+        "--exclude"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--formats": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "'jsonl,graphml,cypher,overview,html'",
+      "dest": "formats",
+      "nargs": "None",
+      "options": [
+        "--formats"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--git-history": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "0",
+      "dest": "git_history",
+      "nargs": "None",
+      "options": [
+        "--git-history"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "--help -h": {
+      "choices": null,
+      "class": "_HelpAction",
+      "default": "'==SUPPRESS=='",
+      "dest": "help",
+      "nargs": "0",
+      "options": [
+        "--help",
+        "-h"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--include": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "include",
+      "nargs": "'*'",
+      "options": [
+        "--include"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--jobs": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "0",
+      "dest": "jobs",
+      "nargs": "None",
+      "options": [
+        "--jobs"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "--keep-clone": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "keep_clone",
+      "nargs": "None",
+      "options": [
+        "--keep-clone"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--max-files": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "0",
+      "dest": "max_files",
+      "nargs": "None",
+      "options": [
+        "--max-files"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "--out -o": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "'.r2g'",
+      "dest": "out",
+      "nargs": "None",
+      "options": [
+        "--out",
+        "-o"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--ref": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "ref",
+      "nargs": "None",
+      "options": [
+        "--ref"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--token": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "token",
+      "nargs": "None",
+      "options": [
+        "--token"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--viz-nodes": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "300",
+      "dest": "viz_nodes",
+      "nargs": "None",
+      "options": [
+        "--viz-nodes"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "repo": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "repo",
+      "nargs": "None",
+      "options": [],
+      "required": true,
+      "type": null
+    }
+  },
+  "map": {
+    "--help -h": {
+      "choices": null,
+      "class": "_HelpAction",
+      "default": "'==SUPPRESS=='",
+      "dest": "help",
+      "nargs": "0",
+      "options": [
+        "--help",
+        "-h"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--out -o": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "'.r2g'",
+      "dest": "out",
+      "nargs": "None",
+      "options": [
+        "--out",
+        "-o"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--viz-nodes": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "300",
+      "dest": "viz_nodes",
+      "nargs": "None",
+      "options": [
+        "--viz-nodes"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    }
+  },
+  "query": {
+    "--budget": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "24000",
+      "dest": "budget",
+      "nargs": "None",
+      "options": [
+        "--budget"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "--format": {
+      "choices": [
+        "json",
+        "text"
+      ],
+      "class": "_StoreAction",
+      "default": "'text'",
+      "dest": "format",
+      "nargs": "None",
+      "options": [
+        "--format"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--help -h": {
+      "choices": null,
+      "class": "_HelpAction",
+      "default": "'==SUPPRESS=='",
+      "dest": "help",
+      "nargs": "0",
+      "options": [
+        "--help",
+        "-h"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--hops": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "1",
+      "dest": "hops",
+      "nargs": "None",
+      "options": [
+        "--hops"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "--json": {
+      "choices": null,
+      "class": "_StoreTrueAction",
+      "default": "False",
+      "dest": "json",
+      "nargs": "0",
+      "options": [
+        "--json"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--min-conf": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "min_conf",
+      "nargs": "None",
+      "options": [
+        "--min-conf"
+      ],
+      "required": false,
+      "type": "_unit_float"
+    },
+    "--out -o": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "'.r2g'",
+      "dest": "out",
+      "nargs": "None",
+      "options": [
+        "--out",
+        "-o"
+      ],
+      "required": false,
+      "type": null
+    },
+    "-k": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "8",
+      "dest": "k",
+      "nargs": "None",
+      "options": [
+        "-k"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "query": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "query",
+      "nargs": "None",
+      "options": [],
+      "required": true,
+      "type": null
+    }
+  },
+  "rag": {
+    "--answer": {
+      "choices": null,
+      "class": "_StoreTrueAction",
+      "default": "False",
+      "dest": "answer",
+      "nargs": "0",
+      "options": [
+        "--answer"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--budget": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "24000",
+      "dest": "budget",
+      "nargs": "None",
+      "options": [
+        "--budget"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "--format": {
+      "choices": [
+        "json",
+        "markdown"
+      ],
+      "class": "_StoreAction",
+      "default": "'markdown'",
+      "dest": "format",
+      "nargs": "None",
+      "options": [
+        "--format"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--help -h": {
+      "choices": null,
+      "class": "_HelpAction",
+      "default": "'==SUPPRESS=='",
+      "dest": "help",
+      "nargs": "0",
+      "options": [
+        "--help",
+        "-h"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--hops": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "1",
+      "dest": "hops",
+      "nargs": "None",
+      "options": [
+        "--hops"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "--min-conf": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "1.0",
+      "dest": "min_conf",
+      "nargs": "None",
+      "options": [
+        "--min-conf"
+      ],
+      "required": false,
+      "type": "_unit_float"
+    },
+    "--model": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "model",
+      "nargs": "None",
+      "options": [
+        "--model"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--no-expand": {
+      "choices": null,
+      "class": "_StoreTrueAction",
+      "default": "False",
+      "dest": "no_expand",
+      "nargs": "0",
+      "options": [
+        "--no-expand"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--out -o": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "'.r2g'",
+      "dest": "out",
+      "nargs": "None",
+      "options": [
+        "--out",
+        "-o"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--provider": {
+      "choices": [
+        "anthropic",
+        "gemini",
+        "ollama",
+        "openai"
+      ],
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "provider",
+      "nargs": "None",
+      "options": [
+        "--provider"
+      ],
+      "required": false,
+      "type": null
+    },
+    "-k": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "8",
+      "dest": "k",
+      "nargs": "None",
+      "options": [
+        "-k"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "query": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "query",
+      "nargs": "None",
+      "options": [],
+      "required": true,
+      "type": null
+    },
+    "target": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "target",
+      "nargs": "'?'",
+      "options": [],
+      "required": false,
+      "type": null
+    }
+  },
+  "stats": {
+    "--help -h": {
+      "choices": null,
+      "class": "_HelpAction",
+      "default": "'==SUPPRESS=='",
+      "dest": "help",
+      "nargs": "0",
+      "options": [
+        "--help",
+        "-h"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--out -o": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "'.r2g'",
+      "dest": "out",
+      "nargs": "None",
+      "options": [
+        "--out",
+        "-o"
+      ],
+      "required": false,
+      "type": null
+    }
+  },
+  "version": {
+    "--help -h": {
+      "choices": null,
+      "class": "_HelpAction",
+      "default": "'==SUPPRESS=='",
+      "dest": "help",
+      "nargs": "0",
+      "options": [
+        "--help",
+        "-h"
+      ],
+      "required": false,
+      "type": null
+    }
+  }
+}
