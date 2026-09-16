@@ -10,6 +10,12 @@ on:
   pull_request_review:
     types: [submitted]
 
+# Top-level default: the narrowest thing any job here could need. The job below
+# widens it explicitly. Without this, a job added later with no permissions
+# block of its own inherits the repository default, which may be write-all.
+permissions:
+  contents: read
+
 jobs:
   claude:
     if: |
@@ -26,13 +32,13 @@ jobs:
       actions: read # Required for Claude to read CI results on PRs
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 1
 
       - name: Run Claude Code
         id: claude
-        uses: anthropics/claude-code-action@19dda84776b3518d98b8798e591daee763049ed3  # v1
+        uses: anthropics/claude-code-action@19dda84776b3518d98b8798e591daee763049ed3  # v1 branch @ 2026-09; the v1 tag has since moved, this pin has not
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 

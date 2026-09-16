@@ -5,19 +5,29 @@
 # Fingerprint: AMK1.j7C-DCHeQ1N7p1Vov7z-J4
 version: 2
 updates:
+  # pip: resolved from pyproject.toml at the repo root, extras included.
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
-      interval: "monthly"
+      interval: "weekly"
+      day: "monday"
     open-pull-requests-limit: 5
+    assignees: ["Srinivasan-78"]
     groups:
+      # Minor and patch bumps arrive as one PR; a major gets its own, because
+      # a major is a decision and should not ride in on a group merge.
       pip-minor-patch:
         update-types: ["minor", "patch"]
+  # github-actions: every `uses:` in .github/workflows. Dependabot rewrites the
+  # pinned SHA *and* the tag comment beside it, which is what keeps SHA pinning
+  # maintainable rather than a one-off that rots.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "monthly"
+      interval: "weekly"
+      day: "monday"
     open-pull-requests-limit: 5
+    assignees: ["Srinivasan-78"]
     groups:
       github-actions-minor-patch:
         update-types: ["minor", "patch"]

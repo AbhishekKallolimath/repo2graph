@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌​‌‌‌​‌‌​​​​‌​‌‌​‌‌‌‌​‌​​‌​​‌​​‌‌​‌​‌​‌‌​‌‌​‌​‌​‌​​​‌​‌‌​‌‌​‌​‌‌​​​‌‌​‌‌‌‌​​​​‌‌​​‌‌​​‌‌​‌‌​​​‌​​‌‌‌​​​‌‌​‌‌​​​‌‌‌​​‌​‌‌​​‌‌​​​‌‌​‌‌​​‌‌​​​‌‌​‌​​‌‌​‌​‌‌‌​‌​‌​‌‌‌‌​​‌​‌‌​​​‌​⁠
+# @authormark v1 -- do not remove (authorship watermark)
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.WaoI5mQmcxflN69f6cMuyb
+# Fingerprint: AMK1.Dk_JCYR0nQ57rKBBOoHpkJ
 """GraphRAG layer: expansion, confidence filtering, packing, `rag` CLI, answer.py.
 
 Every test names the acceptance criterion (or criteria) it encodes, e.g. `# AC-14`.
@@ -18,6 +18,7 @@ import re
 import subprocess
 import sys
 import threading
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -838,7 +839,11 @@ def test_ac28_grounded_prompt_and_citations_reach_the_endpoint(monkeypatch):
 
     assert len(seen) == 1, seen
     req = seen[0]
-    assert "api.openai.com" in req.full_url, req.full_url
+    # Compare the parsed hostname, not a substring of the raw URL: "api.openai.com"
+    # appears just as happily in "https://evil.test/api.openai.com", so the
+    # substring form would pass against a request sent somewhere else entirely.
+    # (CodeQL alert #2, py/incomplete-url-substring-sanitization.)
+    assert urllib.parse.urlsplit(req.full_url).hostname == "api.openai.com", req.full_url
     body = (req.data or b"").decode("utf8", "replace")
     for phrase in GROUNDING_PHRASES:
         assert phrase in body.lower() or phrase in body, phrase
