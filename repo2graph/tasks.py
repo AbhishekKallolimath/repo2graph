@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.dxAtYFiJMCmG_4Mgfr8ypa
+# Fingerprint: AMK1.lvwHu2TkkNKkLN3j3JiY-5
 """Background index builds, so a first tool call need not block for a minute.
 
 The default is still to build synchronously on the first tool call, and that is
@@ -28,6 +28,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from typing import Any, Callable
 
 # Rough parse rate used to estimate a build's duration, in files per second.
 # Measured on this repository on a mid-range laptop; it exists to turn a file
@@ -84,7 +85,7 @@ class BuildTask:
             return 0
         return max(0, int(round(self.estimated_s - self._elapsed())))
 
-    def snapshot(self) -> dict:
+    def snapshot(self) -> dict[str, Any]:
         """The status document `repo_build_status` returns."""
         return {
             "task_id": self.task_id,
@@ -112,14 +113,15 @@ class TaskManager:
             seconds. Injected for the same reason.
     """
 
-    def __init__(self, builder=None, estimator=None):
+    def __init__(self, builder: Callable[[Any, Any], None] | None = None,
+                 estimator: Callable[[Any], float] | None = None) -> None:
         self._builder = builder or _default_builder
         self._estimator = estimator or _default_estimator
         self._lock = threading.Lock()
         self._by_dir: dict[str, BuildTask] = {}
         self._by_id: dict[str, BuildTask] = {}
 
-    def start(self, repo, out) -> BuildTask:
+    def start(self, repo: Any, out: Any) -> BuildTask:
         """Begin (or join) a background build for `out`.
 
         Args:
@@ -144,13 +146,13 @@ class TaskManager:
         thread.start()
         return task
 
-    def _estimate(self, repo) -> float:
+    def _estimate(self, repo: Any) -> float:
         try:
             return max(1.0, float(self._estimator(repo)))
         except Exception:
             return 1.0
 
-    def _run(self, task: BuildTask, repo, out) -> None:
+    def _run(self, task: BuildTask, repo: Any, out: Any) -> None:
         try:
             self._builder(repo, out)
         except BaseException as exc:
@@ -172,18 +174,18 @@ class TaskManager:
         with self._lock:
             return self._by_id.get(task_id)
 
-    def for_dir(self, out) -> BuildTask | None:
+    def for_dir(self, out: Any) -> BuildTask | None:
         """The most recent task for this index directory, or None."""
         with self._lock:
             return self._by_dir.get(str(out))
 
-    def forget(self, out) -> None:
+    def forget(self, out: Any) -> None:
         """Drop the task recorded for `out`, so a later failure can be retried."""
         with self._lock:
             self._by_dir.pop(str(out), None)
 
 
-def _default_estimator(repo) -> float:
+def _default_estimator(repo: Any) -> float:
     """Guess a build's duration from how many files discovery finds.
 
     Discovery is cheap next to parsing -- it is a `git ls-files` or one walk --
@@ -203,7 +205,7 @@ def _default_estimator(repo) -> float:
     return max(1.0, count / FILES_PER_SECOND)
 
 
-def _default_builder(repo, out) -> None:
+def _default_builder(repo: Any, out: Any) -> None:
     """Build an index the same way the synchronous path does."""
     from .mcp import _build_index
     from pathlib import Path

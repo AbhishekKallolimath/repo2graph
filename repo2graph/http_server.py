@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.oNKhCspxa1eULZU6Sgoalg
+# Fingerprint: AMK1.31DhMxLQLApnrmxXLcZxAN
 """An HTTP transport for the MCP server, so authentication can be real.
 
 stdio cannot carry credentials -- see `repo2graph.auth` for why -- so bearer and
@@ -32,6 +32,7 @@ Defaults are chosen so that turning this on is not itself the vulnerability:
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any, Callable, Literal
 
 from . import __version__
 from .audit import AuditLogger, timer
@@ -59,8 +60,9 @@ INTERNAL_ERROR = -32603
 UNAUTHORIZED = 401
 
 
-def server_metadata(repo, index_present: bool, auth_modes, index_built_at=None,
-                    tools=None) -> dict:
+def server_metadata(repo: Any, index_present: bool, auth_modes: Any,
+                    index_built_at: str | None = None,
+                    tools: Any = None) -> dict[str, Any]:
     """The `.well-known/mcp-server-metadata` document.
 
     Lets a registry or client learn what this server does without opening a
@@ -96,7 +98,7 @@ def server_metadata(repo, index_present: bool, auth_modes, index_built_at=None,
     }
 
 
-def index_built_at(out) -> str | None:
+def index_built_at(out: Any) -> str | None:
     """When the index at `out` was last written, as ISO-8601, or None.
 
     Args:
@@ -124,20 +126,20 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
 
     server_version = f"repo2graph/{__version__}"
     # Set by make_handler.
-    open_index_fn = None
-    dispatch_fn = None
-    authenticator: Authenticator = None
-    audit: AuditLogger = None
-    cache = None
-    tasks = None
-    repo = None
-    index_dir = None
+    open_index_fn: Any = None
+    dispatch_fn: Any = None
+    authenticator: Any = None
+    audit: Any = None
+    cache: Any = None
+    tasks: Any = None
+    repo: Any = None
+    index_dir: Any = None
     base_url = "http://127.0.0.1:8719"
     publish_cimd = False
 
     # ---------------------------------------------------------- plumbing --
 
-    def log_message(self, fmt, *args):
+    def log_message(self, fmt: str, *args: Any) -> None:
         """Silence the default stderr access log.
 
         BaseHTTPRequestHandler writes an apache-style line per request. The
@@ -146,7 +148,8 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         """
         return
 
-    def _send_json(self, status: int, payload: dict, extra_headers=None) -> None:
+    def _send_json(self, status: int, payload: dict[str, Any],
+                   extra_headers: dict[str, str] | None = None) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -176,7 +179,7 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------- routes --
 
-    def do_GET(self):
+    def do_GET(self) -> None:
         """Serve the unauthenticated discovery documents, and nothing else."""
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
         if path == WELL_KNOWN_METADATA.rstrip("/"):
@@ -201,11 +204,11 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         from .mcp import _has_index
         from pathlib import Path
         try:
-            return _has_index(Path(self.index_dir))
+            return _has_index(Path(str(self.index_dir)))
         except (OSError, TypeError, ValueError):
             return False
 
-    def do_POST(self):
+    def do_POST(self) -> None:
         """Handle one JSON-RPC request on /mcp."""
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
         if path not in ("/mcp", "/"):
@@ -248,7 +251,8 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
                               error=str(exc))
             self._send_json(500, _rpc_error(rpc_id, INTERNAL_ERROR, str(exc)))
 
-    def _reject(self, rpc_id, method, params, exc: AuthError) -> None:
+    def _reject(self, rpc_id: Any, method: str, params: Any,
+                exc: AuthError) -> None:
         """Refuse a call, record it, and execute nothing."""
         tool = str((params or {}).get("name") or method)
         self.audit.record(tool=tool, params=(params or {}).get("arguments") or {},
@@ -268,7 +272,8 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
                     f'authorization_uri="{config.oidc_issuer}"')
         return 'Bearer realm="repo2graph"'
 
-    def _dispatch(self, rpc_id, method, params, identity) -> None:
+    def _dispatch(self, rpc_id: Any, method: str, params: Any,
+                  identity: Any) -> None:
         """Route one authenticated JSON-RPC method."""
         if method == "initialize":
             self._send_json(200, _rpc_result(rpc_id, {
@@ -282,9 +287,10 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
             return
         if method == "tools/list":
             from .mcp import TOOL_DESCRIPTIONS, TOOL_SCHEMAS
-            result = {"tools": [{"name": name, "description": description,
-                                 "inputSchema": TOOL_SCHEMAS[name]}
-                                for name, description in TOOL_DESCRIPTIONS.items()]}
+            result: dict[str, Any] = {
+                "tools": [{"name": name, "description": description,
+                           "inputSchema": TOOL_SCHEMAS[name]}
+                          for name, description in TOOL_DESCRIPTIONS.items()]}
             # ttlMs/cacheScope ride in _meta, which is where the MCP spec puts
             # response metadata and where a client that does not know the fields
             # will harmlessly ignore them.
@@ -299,7 +305,7 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         self._send_json(404, _rpc_error(rpc_id, METHOD_NOT_FOUND,
                                         f"unknown method: {method!r}"))
 
-    def _call_tool(self, rpc_id, params, identity) -> None:
+    def _call_tool(self, rpc_id: Any, params: Any, identity: Any) -> None:
         """Run one tool, timing it and recording the outcome."""
         from .query import count_tokens
         name = str((params or {}).get("name") or "")
@@ -342,18 +348,22 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         }))
 
 
-def _rpc_result(rpc_id, result) -> dict:
+def _rpc_result(rpc_id: Any, result: Any) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": rpc_id, "result": result}
 
 
-def _rpc_error(rpc_id, code: int, message: str) -> dict:
+def _rpc_error(rpc_id: Any, code: int, message: str) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": rpc_id,
             "error": {"code": code, "message": message}}
 
 
-def make_handler(index_dir, repo=None, auth_config=None, audit=None, cache=None,
-                 base_url="http://127.0.0.1:8719", publish_cimd=False,
-                 opener=None, tasks=None):
+def make_handler(index_dir: Any, repo: Any = None,
+                 auth_config: AuthConfig | None = None,
+                 audit: AuditLogger | None = None, cache: Any = None,
+                 base_url: str = "http://127.0.0.1:8719",
+                 publish_cimd: bool = False,
+                 opener: Callable[[str], Any] | None = None,
+                 tasks: Any = None) -> type[MCPRequestHandler]:
     """Build a request-handler class bound to this server's configuration.
 
     Args:
@@ -407,9 +417,13 @@ class HTTPTransport:
             which would publish the whole indexed repository to the network.
     """
 
-    def __init__(self, index_dir, repo=None, host="127.0.0.1", port=8719,
-                 auth_config=None, audit=None, cache=None, publish_cimd=False,
-                 opener=None, tasks=None):
+    def __init__(self, index_dir: Any, repo: Any = None,
+                 host: str = "127.0.0.1", port: int = 8719,
+                 auth_config: AuthConfig | None = None,
+                 audit: AuditLogger | None = None, cache: Any = None,
+                 publish_cimd: bool = False,
+                 opener: Callable[[str], Any] | None = None,
+                 tasks: Any = None) -> None:
         auth_config = auth_config or AuthConfig()
         if host not in LOOPBACK and not auth_config.enabled:
             raise ValueError(
@@ -422,8 +436,8 @@ class HTTPTransport:
             index_dir, repo, auth_config, audit, cache,
             base_url=f"http://{host}:{port}", publish_cimd=publish_cimd,
             opener=opener, tasks=tasks)
-        self._httpd = None
-        self._thread = None
+        self._httpd: ThreadingHTTPServer | None = None
+        self._thread: threading.Thread | None = None
 
     def start(self) -> int:
         """Start serving on a daemon thread.
@@ -453,10 +467,10 @@ class HTTPTransport:
             self._thread.join(timeout=5)
             self._thread = None
 
-    def __enter__(self):
+    def __enter__(self) -> "HTTPTransport":
         self.start()
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exc: Any) -> Literal[False]:
         self.stop()
         return False

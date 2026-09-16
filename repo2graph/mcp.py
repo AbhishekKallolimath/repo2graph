@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.grjq67eN6qlvsMTFIb3f9E
+# Fingerprint: AMK1.Yt1XAPA2TYmJNHn4K-NL8v
 """A stdio MCP server over an existing .r2g index: three tools, one engine.
 
 This is an *additional* surface, not a replacement: every tool is a thin call
@@ -363,12 +363,14 @@ def tool_build_status(tasks, task_id: str) -> str:
     return _json.dumps(task.snapshot(), indent=2)
 
 
-def dispatch(index: Index, name: str, arguments: dict, cache=None,
+def dispatch(index: "Index | None", name: str, arguments: dict, cache=None,
              tasks=None) -> str:
     """Route one tool call to its handler. Pure, so serve() holds no logic.
 
     Args:
-        index: The open index every tool answers from.
+        index: The open index every tool answers from. None is allowed only
+            for `repo_build_status`, which reports on a build and therefore
+            must be answerable while there is still no index to open.
         name: Tool name the caller asked for.
         arguments: The caller's arguments, which are JSON a model wrote and are
             treated as hostile throughout.
@@ -397,6 +399,12 @@ def dispatch(index: Index, name: str, arguments: dict, cache=None,
         if hit is not None:
             return hit
 
+    if index is None:
+        # Only repo_build_status and repo_cache_stats are answerable without an
+        # index, and both returned above. Reaching here with none is a caller
+        # bug rather than a user error, but it must still be a sentence.
+        return ("no index is open, so this tool cannot answer. Use "
+                "repo_build_status to check whether one is still being built.")
     if name == "repo_map":
         result = tool_repo_map(index)
     elif name == "repo_search":
@@ -624,7 +632,9 @@ def main(argv=None):
             # No stdio peer: block on the HTTP thread instead of returning,
             # which would tear the daemon thread down on the way out.
             try:
-                transport._thread.join()
+                thread = transport._thread
+                if thread is not None:
+                    thread.join()
             except KeyboardInterrupt:
                 pass
             finally:

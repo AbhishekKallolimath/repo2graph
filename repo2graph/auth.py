@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.oZ6wBJ6yGv3lThmlT4STvJ
+# Fingerprint: AMK1.hv7e4J9wWEEcM8K4Lasskg
 """Bearer-token and OIDC authentication for the HTTP MCP transport.
 
 **This module is for the HTTP transport only.** Authenticating the stdio
@@ -45,6 +45,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from typing import Any, Callable
 
 # How long a fetched JWKS is trusted before it is re-read.
 DEFAULT_JWKS_TTL = 300.0
@@ -98,7 +99,7 @@ class Identity:
 
     subject: str = "anonymous"
     mode: str = "none"
-    claims: dict = field(default_factory=dict)
+    claims: dict[str, Any] = field(default_factory=dict)
 
 
 def b64url_decode(text: str) -> bytes:
@@ -171,12 +172,13 @@ class JWKSCache:
             tests never touch the network; defaults to a urllib fetch.
     """
 
-    def __init__(self, issuer: str, ttl: float = DEFAULT_JWKS_TTL, opener=None):
+    def __init__(self, issuer: str, ttl: float = DEFAULT_JWKS_TTL,
+                 opener: Callable[[str], Any] | None = None) -> None:
         self.issuer = issuer.rstrip("/")
         self.ttl = ttl
         self._open = opener or _fetch_json
         self._lock = threading.Lock()
-        self._keys: dict[str, dict] = {}
+        self._keys: dict[str, dict[str, Any]] = {}
         self._fetched_at = 0.0
         self._jwks_uri: str | None = None
 
@@ -209,7 +211,7 @@ class JWKSCache:
                       if isinstance(k, dict) and k.get("kid")}
         self._fetched_at = time.monotonic()
 
-    def key_for(self, kid: str) -> dict:
+    def key_for(self, kid: str) -> dict[str, Any]:
         """Return the JWK with this `kid`, refetching at most once on a miss.
 
         Args:
@@ -238,7 +240,7 @@ class JWKSCache:
             return key
 
 
-def _fetch_json(url: str):
+def _fetch_json(url: str) -> Any:
     """GET `url` and parse the JSON body. The only network call in this package.
 
     Args:
@@ -269,7 +271,8 @@ def _fetch_json(url: str):
         raise AuthError("issuer document is not valid JSON") from None
 
 
-def decode_jwt(token: str, jwks: JWKSCache, issuer: str, audience: str | None) -> dict:
+def decode_jwt(token: str, jwks: JWKSCache, issuer: str,
+               audience: str | None) -> dict[str, Any]:
     """Validate a JWT's signature and claims, returning them.
 
     Args:
@@ -324,7 +327,8 @@ def decode_jwt(token: str, jwks: JWKSCache, issuer: str, audience: str | None) -
     return claims
 
 
-def _check_claims(claims: dict, issuer: str, audience: str | None) -> None:
+def _check_claims(claims: dict[str, Any], issuer: str,
+                  audience: str | None) -> None:
     """Enforce iss, aud, exp and nbf. A valid signature is not a valid token."""
     now = time.time()
     if str(claims.get("iss") or "").rstrip("/") != issuer.rstrip("/"):
@@ -396,7 +400,8 @@ class Authenticator:
         opener: JSON fetcher for OIDC discovery, injected for tests.
     """
 
-    def __init__(self, config: AuthConfig, opener=None):
+    def __init__(self, config: AuthConfig,
+                 opener: Callable[[str], Any] | None = None) -> None:
         self.config = config
         self._jwks = (JWKSCache(config.oidc_issuer, config.jwks_ttl, opener)
                       if config.oidc_issuer else None)
@@ -439,7 +444,8 @@ class Authenticator:
         raise AuthError("invalid bearer token")
 
 
-def client_metadata_document(base_url: str, name: str = "repo2graph") -> dict:
+def client_metadata_document(base_url: str,
+                             name: str = "repo2graph") -> dict[str, Any]:
     """A Client ID Metadata Document, as RFC 7591 client metadata.
 
     CIMD serves this at a URL and uses that URL as the `client_id`, so the

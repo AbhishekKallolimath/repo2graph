@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.rdipzxiE3k1ZxaPzaKbZZy
+# Fingerprint: AMK1.Ve7wSPDujcNpfMObRykRE3
 """A bounded, expiring result cache for repeated tool calls.
 
 Agents re-ask. A loop that reads a search result, follows a neighbour, then
@@ -34,6 +34,7 @@ import json
 import threading
 import time
 from collections import OrderedDict
+from typing import Any, Callable
 
 # Entries kept before the least recently used is evicted.
 DEFAULT_MAX_SIZE = 256
@@ -49,7 +50,7 @@ TOOLS_LIST_TTL_MS = 3_600_000
 RESOURCES_LIST_TTL_MS = 60_000
 RESOURCES_READ_TTL_MS = 30_000
 
-CACHE_METADATA = {
+CACHE_METADATA: dict[str, dict[str, Any]] = {
     "tools/list": {"ttlMs": TOOLS_LIST_TTL_MS, "cacheScope": "global"},
     "prompts/list": {"ttlMs": TOOLS_LIST_TTL_MS, "cacheScope": "global"},
     "resources/list": {"ttlMs": RESOURCES_LIST_TTL_MS, "cacheScope": "session"},
@@ -61,7 +62,7 @@ CACHE_METADATA = {
 CACHEABLE_TOOLS = ("repo_map", "repo_search", "repo_neighbours")
 
 
-def cache_metadata(method: str) -> dict:
+def cache_metadata(method: str) -> dict[str, Any]:
     """The `ttlMs`/`cacheScope` hints for one MCP method.
 
     Args:
@@ -73,7 +74,7 @@ def cache_metadata(method: str) -> dict:
     return dict(CACHE_METADATA.get(method, {}))
 
 
-def make_key(tool: str, params) -> str:
+def make_key(tool: str, params: Any) -> str:
     """A total, stable cache key for one tool call.
 
     Args:
@@ -108,12 +109,13 @@ class ResultCache:
     """
 
     def __init__(self, max_size: int = DEFAULT_MAX_SIZE,
-                 ttl: float = DEFAULT_TTL, clock=time.monotonic):
+                 ttl: float = DEFAULT_TTL,
+                 clock: Callable[[], float] = time.monotonic) -> None:
         self.max_size = int(max_size)
         self.ttl = float(ttl)
         self._clock = clock
         self._lock = threading.Lock()
-        self._entries: OrderedDict[str, tuple[float, object]] = OrderedDict()
+        self._entries: OrderedDict[str, tuple[float, Any]] = OrderedDict()
         self.hits = 0
         self.misses = 0
         self.evictions = 0
@@ -123,7 +125,7 @@ class ResultCache:
         """False when the cache is configured away; every call is then a miss."""
         return self.max_size > 0 and self.ttl > 0
 
-    def get(self, key: str):
+    def get(self, key: str) -> Any:
         """Return the cached value for `key`, or None when there is none.
 
         An expired entry is dropped and counted as a miss, so a caller cannot
@@ -153,7 +155,7 @@ class ResultCache:
             self.hits += 1
             return value
 
-    def put(self, key: str, value) -> None:
+    def put(self, key: str, value: Any) -> None:
         """Store `value` under `key`, evicting the oldest entry if needed."""
         if not self.enabled:
             return
@@ -180,7 +182,7 @@ class ResultCache:
             self._entries.clear()
             return dropped
 
-    def stats(self) -> dict:
+    def stats(self) -> dict[str, Any]:
         """Counters for the `repo_cache_stats` tool.
 
         Returns:

@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1._wdJrU6I3exxDE3FrhStQL
+# Fingerprint: AMK1.t4UpN8hWGt7Ez9hsTv5uYv
 """One JSON line per tool call: who asked what, when, and how it went.
 
 Written to stderr, never stdout. On the stdio transport stdout *is* the JSON-RPC
@@ -36,6 +36,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
+from typing import Any, Literal, TextIO
 
 from .events import timestamp, write_safe
 
@@ -112,7 +113,7 @@ def _looks_like_a_secret(value: str) -> str | None:
     return None
 
 
-def sanitize_value(key: str, value):
+def sanitize_value(key: str, value: Any) -> Any:
     """Redact one parameter value, recursing into containers.
 
     Args:
@@ -156,7 +157,7 @@ def sanitize_value(key: str, value):
     return text
 
 
-def sanitize_params(params) -> dict:
+def sanitize_params(params: Any) -> dict[str, Any]:
     """Sanitize a whole tool-argument mapping.
 
     Args:
@@ -182,7 +183,7 @@ class _LockedAppender:
         path: File to append to; created if absent.
     """
 
-    def __init__(self, path):
+    def __init__(self, path: Any) -> None:
         self.path = str(path)
         self._lock = threading.Lock()
         # File offset of the byte locked by _acquire, so _release unlocks the
@@ -210,7 +211,7 @@ class _LockedAppender:
     def _acquire(self) -> None:
         try:
             import fcntl
-            fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)
+            fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)  # type: ignore[attr-defined]
             return
         except ImportError:
             pass
@@ -232,7 +233,7 @@ class _LockedAppender:
     def _release(self) -> None:
         try:
             import fcntl
-            fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
+            fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)  # type: ignore[attr-defined]
             return
         except ImportError:
             pass
@@ -276,7 +277,8 @@ class AuditLogger:
         stream: Where the stderr copy goes; resolved at call time when None.
     """
 
-    def __init__(self, config: AuditConfig | None = None, stream=None):
+    def __init__(self, config: AuditConfig | None = None,
+                 stream: TextIO | None = None) -> None:
         self.config = config or AuditConfig()
         if self.config.level not in LEVELS:
             raise ValueError(
@@ -297,10 +299,10 @@ class AuditLogger:
             return outcome != "success"
         return True
 
-    def record(self, tool: str, params, identity: str = "anonymous",
+    def record(self, tool: str, params: Any, identity: str = "anonymous",
                outcome: str = "success", duration_ms: int = 0,
                result_tokens: int = 0, error: str | None = None,
-               event: str = "tool_call") -> dict | None:
+               event: str = "tool_call") -> dict[str, Any] | None:
         """Write one audit record.
 
         Args:
@@ -318,7 +320,7 @@ class AuditLogger:
         """
         if not self._should_emit(outcome):
             return None
-        record = {
+        record: dict[str, Any] = {
             "ts": timestamp(),
             "event": event,
             "tool": tool,
@@ -359,15 +361,15 @@ class timer:
         True
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.ms = 0
         self._start = 0.0
 
-    def __enter__(self):
+    def __enter__(self) -> "timer":
         self._start = time.perf_counter()
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exc: Any) -> Literal[False]:
         # Never rounds a real call down to 0: a record showing zero duration
         # reads as "never ran", and telling those apart matters in an audit.
         elapsed = (time.perf_counter() - self._start) * 1000.0

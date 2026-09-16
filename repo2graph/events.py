@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.XyWLOyiHALeVw5JVAQoTM2
+# Fingerprint: AMK1.ZrtrCdsqUvTL85XgvI0cDl
 """Structured events on stderr: one JSON object per line, never fatal.
 
 stderr, never stdout. stdout carries either the answer a user is piping into a
@@ -26,6 +26,7 @@ lacks. Both are handled here rather than at each call site.
 import json
 import sys
 from datetime import datetime, timezone
+from typing import Any, TextIO
 
 # Error handlers that cannot raise: each one maps an unencodable character to a
 # substitute. "surrogateescape"/"surrogatepass" are absent on purpose -- they
@@ -35,7 +36,7 @@ SAFE_ERRORS = frozenset({"replace", "backslashreplace", "xmlcharrefreplace",
                          "namereplace"})
 
 
-def encodable(text: str, stream) -> str:
+def encodable(text: str, stream: Any) -> str:
     """Return `text` reduced to something `stream` is guaranteed to accept.
 
     The stream's encoding and error handler are read at call time, not at import
@@ -79,7 +80,7 @@ def encodable(text: str, stream) -> str:
     return text.encode("ascii", "replace").decode("ascii", "replace")
 
 
-def write_safe(stream, text: str, newline: str = "\n") -> None:
+def write_safe(stream: Any, text: str, newline: str = "\n") -> None:
     """Write `text` to `stream`, replacing anything it cannot encode.
 
     Never raises: a UnicodeEncodeError, a closed stream or a broken pipe all end
@@ -121,7 +122,8 @@ def timestamp() -> str:
     return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
 
 
-def emit(event: str, level: str = "warning", stream=None, **fields) -> dict:
+def emit(event: str, level: str = "warning", stream: TextIO | None = None,
+         **fields: Any) -> dict[str, Any]:
     """Write one structured event as a single JSON line on stderr.
 
     Args:
@@ -134,7 +136,8 @@ def emit(event: str, level: str = "warning", stream=None, **fields) -> dict:
         The record that was emitted, so callers and tests can assert on it
         without re-parsing stderr.
     """
-    record = {"ts": timestamp(), "level": level, "event": event}
+    record: dict[str, Any] = {"ts": timestamp(), "level": level,
+                              "event": event}
     record.update(fields)
     try:
         line = json.dumps(record, ensure_ascii=False, default=str)
