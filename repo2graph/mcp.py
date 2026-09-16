@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.gra1hDWbBRipKRwn09MCvd
+# Fingerprint: AMK1.grjq67eN6qlvsMTFIb3f9E
 """A stdio MCP server over an existing .r2g index: three tools, one engine.
 
 This is an *additional* surface, not a replacement: every tool is a thin call
@@ -88,6 +88,9 @@ TOOL_DESCRIPTIONS = {
     "repo_cache_stats": (
         "Result-cache counters: hits, misses, size, max_size, ttl_s. "
         "Diagnostics, not repository content."),
+    "repo_build_status": (
+        "Progress of a background index build, by task_id. Only used when the "
+        "server runs with --async-build."),
 }
 
 TOOL_SCHEMAS = {
@@ -118,6 +121,14 @@ TOOL_SCHEMAS = {
         "required": ["node_id"],
     },
     "repo_cache_stats": {"type": "object", "properties": {}},
+    "repo_build_status": {
+        "type": "object",
+        "properties": {
+            "task_id": {"type": "string",
+                        "description": "the id a previous call returned"},
+        },
+        "required": ["task_id"],
+    },
 }
 
 # What repo_search says instead of handing back an empty string.
@@ -190,6 +201,48 @@ def open_index(out, repo=None, cache=None) -> Index:
             cache.clear()
     index = _INDEXES[key] = Index(out_path)
     return index
+
+
+def open_index_or_task(out, repo=None, cache=None, tasks=None):
+    """Open the index, or start a background build and say so.
+
+    Args:
+        out: Index directory.
+        repo: Repository to build from, or None.
+        cache: A `ResultCache` to clear on a completed rebuild, or None.
+        tasks: A `TaskManager` when `--async-build` is on, else None.
+
+    Returns:
+        `(index, None)` when an index is available, or `(None, message)` when a
+        build is in flight or has failed -- the message being what the caller
+        should hand back to the agent verbatim.
+    """
+    from pathlib import Path as _Path
+    from .tasks import BUILDING, BUILDING_MESSAGE, FAILED, FAILED_MESSAGE
+
+    out_path = _Path(out)
+    if tasks is None or _has_index(out_path) or repo is None:
+        return open_index(out, repo, cache), None
+
+    task = tasks.for_dir(out_path)
+    if task is None:
+        task = tasks.start(repo, out_path)
+
+    # Each status is read once and dispatched on in order. An earlier version
+    # re-tested `status == BUILDING` after starting the task and fell through to
+    # a synchronous open_index() when it had already moved on -- so a build that
+    # failed *quickly* both swallowed its own error and then performed the
+    # blocking build this flag exists to avoid.
+    if task.status == BUILDING:
+        return None, BUILDING_MESSAGE.format(**task.snapshot())
+    if task.status == FAILED:
+        # The server stays usable: every call gets a clear error until someone
+        # rebuilds, rather than the process dying or retrying a build that has
+        # already proved it cannot succeed.
+        return None, FAILED_MESSAGE.format(error=task.error)
+    if cache is not None:
+        cache.clear()
+    return open_index(out, repo, cache), None
 
 
 # --------------------------------------------------------------- tools ----
@@ -281,7 +334,37 @@ def tool_cache_stats(cache) -> str:
     return _json.dumps(cache.stats(), indent=2)
 
 
-def dispatch(index: Index, name: str, arguments: dict, cache=None) -> str:
+def tool_build_status(tasks, task_id: str) -> str:
+    """Status of one background build, as JSON.
+
+    Args:
+        tasks: The `TaskManager`, or None when builds are synchronous.
+        task_id: The id handed out when the build started.
+
+    Returns:
+        A JSON status document, or a sentence naming why there is none.
+    """
+    import json as _json
+    if tasks is None:
+        return _json.dumps({
+            "error": "this server builds synchronously; there are no build "
+                     "tasks to report. Start it with --async-build to use "
+                     "repo_build_status.",
+        }, indent=2)
+    task = tasks.get(str(task_id))
+    if task is None:
+        return _json.dumps({
+            "task_id": task_id,
+            "status": "unknown",
+            "error": f"no build task with id {task_id!r}. Ids are issued by the "
+                     f"tool call that starts a build and do not survive a "
+                     f"server restart.",
+        }, indent=2)
+    return _json.dumps(task.snapshot(), indent=2)
+
+
+def dispatch(index: Index, name: str, arguments: dict, cache=None,
+             tasks=None) -> str:
     """Route one tool call to its handler. Pure, so serve() holds no logic.
 
     Args:
@@ -297,6 +380,10 @@ def dispatch(index: Index, name: str, arguments: dict, cache=None) -> str:
         on bad arguments: every numeric one is coerced and clamped.
     """
     args = arguments or {}
+    if name == "repo_build_status":
+        # Never cached, for the same reason repo_cache_stats is not: a cached
+        # progress report is the one answer guaranteed to be out of date.
+        return tool_build_status(tasks, str(args.get("task_id") or ""))
     if name == "repo_cache_stats":
         # Never cached: a cached cache-stats call reports the counters as they
         # were when it was stored, which is the one answer that is always wrong.
@@ -395,7 +482,7 @@ def _require_sdk():
     return mcp
 
 
-def serve(out, repo=None, cache=None) -> None:
+def serve(out, repo=None, cache=None, tasks=None) -> None:
     """Run the stdio MCP server against the index at `out`.
 
     Deliberately thin: every answer comes from dispatch(), which is tested
@@ -432,8 +519,16 @@ def serve(out, repo=None, cache=None) -> None:
 
     @server.call_tool()
     async def call_tool(name, arguments):
-        text = dispatch(open_index(index_dir, repo, cache), name,
-                        arguments or {}, cache=cache)
+        if (name or "") == "repo_build_status":
+            # Answerable without an index, and the only tool that is: asking
+            # for build progress must not itself wait on the build.
+            return [TextContent(type="text",
+                                text=dispatch(None, name, arguments or {},
+                                              cache=cache, tasks=tasks))]
+        index, pending = open_index_or_task(index_dir, repo, cache, tasks)
+        if pending is not None:
+            return [TextContent(type="text", text=pending)]
+        text = dispatch(index, name, arguments or {}, cache=cache, tasks=tasks)
         return [TextContent(type="text", text=text)]
 
     async def _run():
@@ -481,6 +576,11 @@ def main(argv=None):
                    help="index directory (default: <repo>/.r2g)")
     p.add_argument("--no-auto-build", action="store_true",
                    help="never build: exit unless the index already exists")
+    p.add_argument("--async-build", action="store_true",
+                   help="build a missing index on a background thread and "
+                        "return a task_id immediately, instead of blocking the "
+                        "first tool call until it finishes. Poll it with "
+                        "repo_build_status (default: off, build synchronously)")
     p.add_argument("--cache-size", type=int, default=DEFAULT_MAX_SIZE,
                    metavar="N",
                    help=f"cached tool results before the least recently used "
@@ -505,6 +605,11 @@ def main(argv=None):
     audit = AuditLogger(AuditConfig(level=args.audit_log_level,
                                     path=args.audit_log))
 
+    tasks = None
+    if args.async_build:
+        from .tasks import TaskManager
+        tasks = TaskManager()
+
     auth_config = _auth_config(args)
     transport = None
     if args.http_port is not None or args.auth_cimd:
@@ -513,7 +618,7 @@ def main(argv=None):
             index_dir, build_from, host=args.http_host,
             port=args.http_port if args.http_port is not None else 8719,
             auth_config=auth_config, audit=audit, cache=cache,
-            publish_cimd=args.auth_cimd)
+            publish_cimd=args.auth_cimd, tasks=tasks)
         transport.start()
         if args.http_only:
             # No stdio peer: block on the HTTP thread instead of returning,
@@ -535,7 +640,7 @@ def main(argv=None):
             "checked. Add --http-port to serve over HTTP as well.")
 
     try:
-        serve(index_dir, build_from, cache=cache)
+        serve(index_dir, build_from, cache=cache, tasks=tasks)
     finally:
         if transport is not None:
             transport.stop()

@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.YqgySQkrxBXxoKTQlQqOr-
+# Fingerprint: AMK1.2PvMaOtFI4x6dD1LXBXzwX
 """Change 2 -- the stdio MCP server. AC-26 .. AC-33.
 
 The `mcp` SDK is an optional extra and is deliberately never imported here:
@@ -217,7 +217,8 @@ def test_ac31_tool_descriptions_stay_under_600_chars():
     """
     mcp = mcp_module()
     assert set(mcp.TOOL_DESCRIPTIONS) == {"repo_map", "repo_search",
-                                          "repo_neighbours", "repo_cache_stats"}
+                                          "repo_neighbours", "repo_cache_stats",
+                                          "repo_build_status"}
     for name, text in mcp.TOOL_DESCRIPTIONS.items():
         assert isinstance(text, str) and text.strip(), name
     total = sum(len(d) for d in mcp.TOOL_DESCRIPTIONS.values())

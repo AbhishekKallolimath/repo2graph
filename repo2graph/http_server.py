@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.QzJc039l8LGWP41_lSXUGr
+# Fingerprint: AMK1.oNKhCspxa1eULZU6Sgoalg
 """An HTTP transport for the MCP server, so authentication can be real.
 
 stdio cannot carry credentials -- see `repo2graph.auth` for why -- so bearer and
@@ -129,6 +129,7 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
     authenticator: Authenticator = None
     audit: AuditLogger = None
     cache = None
+    tasks = None
     repo = None
     index_dir = None
     base_url = "http://127.0.0.1:8719"
@@ -305,8 +306,18 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         arguments = (params or {}).get("arguments") or {}
         with timer() as elapsed:
             try:
-                index = self.open_index_fn(self.index_dir, self.repo, self.cache)
-                text = self.dispatch_fn(index, name, arguments, cache=self.cache)
+                if name == "repo_build_status":
+                    # The one tool answerable without an index: asking for build
+                    # progress must not itself wait on the build.
+                    text = self.dispatch_fn(None, name, arguments,
+                                            cache=self.cache, tasks=self.tasks)
+                    index = None
+                else:
+                    index, pending = self.open_index_fn(
+                        self.index_dir, self.repo, self.cache, self.tasks)
+                    text = pending if pending is not None else self.dispatch_fn(
+                        index, name, arguments, cache=self.cache,
+                        tasks=self.tasks)
             except SystemExit as exc:
                 # open_index exits rather than raises when there is no index and
                 # nothing safe to build from. Over HTTP that is a 503, not a
@@ -342,7 +353,7 @@ def _rpc_error(rpc_id, code: int, message: str) -> dict:
 
 def make_handler(index_dir, repo=None, auth_config=None, audit=None, cache=None,
                  base_url="http://127.0.0.1:8719", publish_cimd=False,
-                 opener=None):
+                 opener=None, tasks=None):
     """Build a request-handler class bound to this server's configuration.
 
     Args:
@@ -354,22 +365,24 @@ def make_handler(index_dir, repo=None, auth_config=None, audit=None, cache=None,
         base_url: Externally reachable base URL, used by the CIMD document.
         publish_cimd: Whether `/.well-known/oauth-client-metadata` is served.
         opener: JSON fetcher for OIDC discovery, injected by tests.
+        tasks: A `TaskManager` when builds run in the background, else None.
 
     Returns:
         A `MCPRequestHandler` subclass ready to hand to `ThreadingHTTPServer`.
     """
-    from .mcp import dispatch, open_index
+    from .mcp import dispatch, open_index_or_task
 
     class _Handler(MCPRequestHandler):
         pass
 
     _Handler.index_dir = index_dir
     _Handler.repo = repo
-    _Handler.open_index_fn = staticmethod(open_index)
+    _Handler.open_index_fn = staticmethod(open_index_or_task)
     _Handler.dispatch_fn = staticmethod(dispatch)
     _Handler.authenticator = Authenticator(auth_config or AuthConfig(), opener)
     _Handler.audit = audit or AuditLogger()
     _Handler.cache = cache
+    _Handler.tasks = tasks
     _Handler.base_url = base_url
     _Handler.publish_cimd = publish_cimd
     return _Handler
@@ -396,7 +409,7 @@ class HTTPTransport:
 
     def __init__(self, index_dir, repo=None, host="127.0.0.1", port=8719,
                  auth_config=None, audit=None, cache=None, publish_cimd=False,
-                 opener=None):
+                 opener=None, tasks=None):
         auth_config = auth_config or AuthConfig()
         if host not in LOOPBACK and not auth_config.enabled:
             raise ValueError(
@@ -408,7 +421,7 @@ class HTTPTransport:
         self._handler = make_handler(
             index_dir, repo, auth_config, audit, cache,
             base_url=f"http://{host}:{port}", publish_cimd=publish_cimd,
-            opener=opener)
+            opener=opener, tasks=tasks)
         self._httpd = None
         self._thread = None
 
