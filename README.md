@@ -5,12 +5,16 @@
   SPDX-License-Identifier: MIT
   Fingerprint: AMK1.0VZP79Et-wO6E26qR0dkl9
 -->
-# repo2graph
+# Repo2graph
 
 <!-- mcp-name: io.github.Srinivasan-78/repo2graph -->
 
 repo2graph reads a folder full of code and draws you a map of it — then uses that map to answer
 questions about the code, with citations. Agents can ask it questions directly over MCP.
+
+[![io.github.Srinivasan-78/repo2graph MCP server – quality and maintenance score on Glama](https://glama.ai/mcp/servers/Srinivasan-78/repo2graph/badges/card.svg)](https://glama.ai/mcp/servers/Srinivasan-78/repo2graph)
+
+[![io.github.Srinivasan-78/repo2graph MCP server – quality and maintenance score on Glama](https://glama.ai/mcp/servers/Srinivasan-78/repo2graph/badges/score.svg)](https://glama.ai/mcp/servers/Srinivasan-78/repo2graph)
 
 ![The whole map of a project: 300 dots and the arrows between them](docs/images/graph-overview.png)
 
