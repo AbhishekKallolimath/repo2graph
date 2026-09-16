@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.lppdZBln3eL76mmEOhJtLu
+# Fingerprint: AMK1._pWUrmsb8SeOGEZbCmOiKR
 """repo2graph CLI: build a code graph, query it, export for RAG."""
 import argparse
 import json
@@ -18,6 +18,7 @@ from .chunks import iter_chunks
 from .embed import DEFAULT_MODEL as EMBED_DEFAULT_MODEL
 from .export import (dump_all, load_parse_cache, make_path, path as artifact_path,
                      rel as artifact_rel)
+from .events import SAFE_ERRORS, encodable, write_safe
 from .graph import build
 from .viz import MAX_NODES
 
@@ -33,45 +34,44 @@ def parse_formats(spec: str) -> set[str]:
     return wanted
 
 
-# Error handlers that cannot raise: each one maps an unencodable character to
-# a substitute instead. "surrogateescape"/"surrogatepass" are absent on purpose.
-_SAFE_ERRORS = frozenset({"replace", "backslashreplace", "xmlcharrefreplace", "namereplace"})
+# Kept as a re-export: the canonical definition now lives in events, which both
+# the CLI and the server-side loggers share so the rule cannot drift in two
+# places. Existing importers of cli._SAFE_ERRORS keep working.
+_SAFE_ERRORS = SAFE_ERRORS
 
 
 def _emit(text: str) -> None:
-    """print() that cannot raise UnicodeEncodeError.
+    """The single stdout write for the whole CLI. Cannot raise on encoding.
 
     A redirected or piped Windows stdout is a strict cp1252 TextIOWrapper, so
     `repo2graph rag "..." > pack.md` over any repository holding a single
-    non-ASCII source byte would otherwise die with 'charmap' codec errors.
-    Characters the console cannot represent are replaced, never fatal.
+    non-ASCII source byte would otherwise die with 'charmap' codec errors. Git
+    Bash is worse: it hands a piped stdout `errors='surrogateescape'`, which
+    still raises on any character cp1252 lacks that is not a lone surrogate.
 
-    Only the handlers that *substitute* a replacement are safe to print
-    through untouched. "surrogateescape" -- what Git Bash hands a piped stdout
-    on Windows -- raises on any character the codec lacks that is not a lone
-    surrogate, so it is probed with its own handler rather than trusted: that
-    keeps a surrogateescape-decoded path byte-identical on the way out (S-13)
-    while still replacing, say, a U+2192 that cp1252 cannot represent.
+    Both cases are handled by `events.encodable`, which probes the stream's
+    *actual* encoding and handler at call time -- not at import, since tests
+    replace `sys.stdout` afterwards and a caller may reconfigure it mid-run.
+
+    Args:
+        text: The line to print, without a trailing newline.
     """
-    errors = getattr(sys.stdout, "errors", "strict") or "strict"
-    if errors in _SAFE_ERRORS:
-        print(text)
-        return
-    enc = getattr(sys.stdout, "encoding", None) or "utf8"
+    stream = sys.stdout
     try:
-        text.encode(enc, errors)
-    except UnicodeEncodeError:
-        text = text.encode(enc, "replace").decode(enc, "replace")
-    except LookupError:
-        text = text.encode("utf8", "replace").decode("utf8", "replace")
-    try:
-        print(text)
+        print(encodable(text, stream))
     except BrokenPipeError:
+        # `repo2graph rag ... | head` closes the pipe early. That is the user
+        # getting what they asked for, not an error: exit 0 rather than dumping
+        # a traceback over the output they were reading.
         try:
-            sys.stdout.close()
+            stream.close()
         except Exception:
             pass
         sys.exit(0)
+    except UnicodeEncodeError:
+        # encodable() should have prevented this; a stream that misreports its
+        # own encoding still must not take the command down.
+        write_safe(stream, text)
 
 
 def cmd_build(args):
@@ -93,7 +93,7 @@ def cmd_build(args):
               "stats": dict(g.stats), "chunks": n_chunks}
     if g.incremental is not None:
         report["incremental"] = g.incremental
-    print(json.dumps(report, indent=2))
+    _emit(json.dumps(report, indent=2))
 
 
 def cmd_github(args):
@@ -105,7 +105,7 @@ def cmd_github(args):
         include=args.include, exclude=args.exclude, max_files=args.max_files,
         keep_clone=args.keep_clone, token=args.token, viz_nodes=args.viz_nodes,
         jobs=args.jobs)
-    print(json.dumps(meta, indent=2))
+    _emit(json.dumps(meta, indent=2))
 
 
 def _require_index(out: Path, name: str) -> Path:
@@ -208,7 +208,7 @@ def cmd_embed(args):
                       [hashes[cid] for cid in chunk_ids])
     register_written(out, [artifact_rel("vectors.npy"), artifact_rel("vectors.meta.json")])
     reused = len(set(reuse) & set(vectors))
-    print(json.dumps({"out": str(out), "vectors": n, "reused": reused,
+    _emit(json.dumps({"out": str(out), "vectors": n, "reused": reused,
                       "embedded": n - reused, "model": model_id, "dim": dim},
                      indent=2))
 
@@ -409,13 +409,13 @@ def cmd_map(args):
     _require_index(out, "edges.jsonl")
     html = make_path(out, "graph.html")
     data = write_html(LoadedGraph(out), html, args.viz_nodes)
-    print(json.dumps({"html": str(html),
+    _emit(json.dumps({"html": str(html),
                       "nodes": len(data["nodes"]), "edges": len(data["edges"]),
                       "of": data["totals"]}, indent=2))
 
 
 def cmd_stats(args):
-    print(_require_index(Path(args.out), "stats.json").read_text(encoding="utf8"))
+    _emit(_require_index(Path(args.out), "stats.json").read_text(encoding="utf8"))
 
 
 def _nonneg(value: str) -> int:
@@ -496,7 +496,7 @@ def main(argv=None):
         return 0
 
     v = sub.add_parser("version", help="show repo2graph version")
-    v.set_defaults(func=lambda _args: print(f"repo2graph {__version__}"))
+    v.set_defaults(func=lambda _args: _emit(f"repo2graph {__version__}"))
 
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("-o", "--out", default=".r2g")

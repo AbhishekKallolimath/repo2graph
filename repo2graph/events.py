@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.YyEHFWiewXVSPBVcsJ3eB5
+# Fingerprint: AMK1.XyWLOyiHALeVw5JVAQoTM2
 """Structured events on stderr: one JSON object per line, never fatal.
 
 stderr, never stdout. stdout carries either the answer a user is piping into a
@@ -63,7 +63,14 @@ def encodable(text: str, stream) -> str:
         except (UnicodeDecodeError, LookupError):
             pass
     except LookupError:
-        pass
+        # The stream named an encoding Python does not have (S-12: Windows can
+        # report "cp0"). That says nothing about what the stream can *accept*,
+        # so round-trip through UTF-8 rather than flattening to ascii -- which
+        # would replace characters like "é" that were never the problem.
+        try:
+            return text.encode("utf8", "replace").decode("utf8", "replace")
+        except UnicodeDecodeError:
+            pass
     except Exception:
         # A mock stream whose .encode path misbehaves must not become the
         # caller's problem; fall through to the ascii floor.

@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.ZcElQbPNSmneAWMOjc584N
+# Fingerprint: AMK1.pTL2bS3hBBpnFmxyMNgLCh
 """Stream a grounded, citation-carrying answer from a packed context.
 
 Optional by design: nothing here is imported unless `repo2graph rag --answer`
@@ -273,9 +273,12 @@ def _disclose(name: str, env: str, url: str, n_chars: int) -> None:
         n_chars: How many characters of repository context are being sent.
     """
     host = urllib.parse.urlsplit(url).hostname or url
-    print(f"repo2graph: sending {n_chars} chars of repository context to "
-          f"provider {name} at {host} (selected by {env})",
-          file=sys.stderr)
+    # write_safe, not print: a hostname from an IDN or a non-ASCII OLLAMA_HOST
+    # must not make the disclosure itself the thing that crashes the command.
+    from .events import write_safe
+    write_safe(sys.stderr,
+               f"repo2graph: sending {n_chars} chars of repository context to "
+               f"provider {name} at {host} (selected by {env})")
     _flush(sys.stderr)
 
 
