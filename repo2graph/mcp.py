@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​​‌‌​‌‌‌​‌‌‌‌​​‌​‌​​​​‌​​‌‌​‌‌‌‌​‌​‌​​‌‌​‌‌​‌‌​‌​​‌‌​‌‌‌​‌‌​​‌​‌​​‌‌​‌‌‌​​‌‌‌​​‌​​‌‌‌​​​​‌​‌​‌‌‌​​‌‌​‌​​​‌‌‌​‌‌​​‌​​​​‌‌​‌‌‌​​‌​​‌‌​‌‌​‌​‌​‌‌​‌​​‌‌‌‌​‌​​‌​​‌​‌​​‌‌‌​​‌​​‌‌‌​​​​⁠
+# @authormark v1 -- do not remove (authorship watermark)
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.7yBoSm7e798W4vCrmZzJrp
+# Fingerprint: AMK1.IS-Mx8FpTf0T9mf0qaCv-Y
 """A stdio MCP server over an existing .r2g index: three tools, one engine.
 
 This is an *additional* surface, not a replacement: every tool is a thin call
@@ -35,6 +35,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from .cache import DEFAULT_MAX_SIZE, DEFAULT_TTL, ResultCache
 from .export import path as artifact_path
 from .query import Index, _fit_lines, count_tokens
 
@@ -84,6 +85,9 @@ TOOL_DESCRIPTIONS = {
     "repo_neighbours": (
         "Graph hop from one node id (e.g. sym:pkg/a.py::run): callers, "
         "callees, base classes and the defining file, with edge direction."),
+    "repo_cache_stats": (
+        "Result-cache counters: hits, misses, size, max_size, ttl_s. "
+        "Diagnostics, not repository content."),
 }
 
 TOOL_SCHEMAS = {
@@ -113,6 +117,7 @@ TOOL_SCHEMAS = {
         },
         "required": ["node_id"],
     },
+    "repo_cache_stats": {"type": "object", "properties": {}},
 }
 
 # What repo_search says instead of handing back an empty string.
@@ -153,7 +158,7 @@ def _build_index(repo: Path, out: Path) -> None:
     dump_all(graph, iter_chunks(graph), out, AUTO_BUILD_FORMATS)
 
 
-def open_index(out, repo=None) -> Index:
+def open_index(out, repo=None, cache=None) -> Index:
     """One Index per output directory, reused for the life of the process.
 
     Building an Index reads and inverts every chunk; doing that per tool call
@@ -178,6 +183,11 @@ def open_index(out, repo=None) -> Index:
                 f"Build one first with: repo2graph build <path> -o {out}"
             )
         _build_index(Path(repo), out_path)
+        # A freshly built index invalidates everything computed from whatever
+        # was there before. Dropping the cache here rather than at the call
+        # sites means no path can rebuild and forget to.
+        if cache is not None:
+            cache.clear()
     index = _INDEXES[key] = Index(out_path)
     return index
 
@@ -262,22 +272,64 @@ def _clamp(value, fallback: int, low: int, high: int) -> int:
     return max(low, min(_int(value, fallback), high))
 
 
-def dispatch(index: Index, name: str, arguments: dict) -> str:
-    """Route one tool call to its handler. Pure, so serve() holds no logic."""
+def tool_cache_stats(cache) -> str:
+    """Cache counters as JSON. Diagnostics only: no repository content."""
+    import json as _json
+    if cache is None:
+        return _json.dumps({"enabled": False, "hits": 0, "misses": 0, "size": 0,
+                            "max_size": 0, "ttl_s": 0}, indent=2)
+    return _json.dumps(cache.stats(), indent=2)
+
+
+def dispatch(index: Index, name: str, arguments: dict, cache=None) -> str:
+    """Route one tool call to its handler. Pure, so serve() holds no logic.
+
+    Args:
+        index: The open index every tool answers from.
+        name: Tool name the caller asked for.
+        arguments: The caller's arguments, which are JSON a model wrote and are
+            treated as hostile throughout.
+        cache: Optional `ResultCache`. When given, repeated identical calls are
+            served from it instead of re-scoring the index.
+
+    Returns:
+        The tool's text result, or a sentence naming the problem. Never raises
+        on bad arguments: every numeric one is coerced and clamped.
+    """
     args = arguments or {}
+    if name == "repo_cache_stats":
+        # Never cached: a cached cache-stats call reports the counters as they
+        # were when it was stored, which is the one answer that is always wrong.
+        return tool_cache_stats(cache)
+
+    from .cache import CACHEABLE_TOOLS, make_key
+    key = None
+    if cache is not None and name in CACHEABLE_TOOLS:
+        key = make_key(name, args)
+        hit = cache.get(key)
+        if hit is not None:
+            return hit
+
     if name == "repo_map":
-        return tool_repo_map(index)
-    if name == "repo_search":
-        return tool_repo_search(index, str(args.get("query") or ""),
-                                k=_int(args.get("k"), 8),
-                                hops=_int(args.get("hops"), 1),
-                                budget_tokens=args.get("budget_tokens"))
-    if name == "repo_neighbours":
-        return tool_repo_neighbours(index, str(args.get("node_id") or ""),
-                                    hops=_int(args.get("hops"), 1),
-                                    limit=_int(args.get("limit"),
-                                               MCP_NEIGHBOUR_LIMIT))
-    return f"unknown tool: {name!r}. Available: {', '.join(TOOL_DESCRIPTIONS)}."
+        result = tool_repo_map(index)
+    elif name == "repo_search":
+        result = tool_repo_search(index, str(args.get("query") or ""),
+                                  k=_int(args.get("k"), 8),
+                                  hops=_int(args.get("hops"), 1),
+                                  budget_tokens=args.get("budget_tokens"))
+    elif name == "repo_neighbours":
+        result = tool_repo_neighbours(index, str(args.get("node_id") or ""),
+                                      hops=_int(args.get("hops"), 1),
+                                      limit=_int(args.get("limit"),
+                                                 MCP_NEIGHBOUR_LIMIT))
+    else:
+        # Not cached: an unknown-tool message is cheap, and caching it would
+        # fill the cache with whatever names a confused caller invents.
+        return f"unknown tool: {name!r}. Available: {', '.join(TOOL_DESCRIPTIONS)}."
+
+    if key is not None:
+        cache.put(key, result)
+    return result
 
 
 # -------------------------------------------------------------- server ----
@@ -343,7 +395,7 @@ def _require_sdk():
     return mcp
 
 
-def serve(out, repo=None) -> None:
+def serve(out, repo=None, cache=None) -> None:
     """Run the stdio MCP server against the index at `out`.
 
     Deliberately thin: every answer comes from dispatch(), which is tested
@@ -380,7 +432,8 @@ def serve(out, repo=None) -> None:
 
     @server.call_tool()
     async def call_tool(name, arguments):
-        text = dispatch(open_index(index_dir, repo), name, arguments or {})
+        text = dispatch(open_index(index_dir, repo, cache), name,
+                        arguments or {}, cache=cache)
         return [TextContent(type="text", text=text)]
 
     async def _run():
@@ -428,9 +481,19 @@ def main(argv=None):
                    help="index directory (default: <repo>/.r2g)")
     p.add_argument("--no-auto-build", action="store_true",
                    help="never build: exit unless the index already exists")
+    p.add_argument("--cache-size", type=int, default=DEFAULT_MAX_SIZE,
+                   metavar="N",
+                   help=f"cached tool results before the least recently used "
+                        f"is evicted; 0 disables the cache "
+                        f"(default: {DEFAULT_MAX_SIZE})")
+    p.add_argument("--cache-ttl", type=float, default=DEFAULT_TTL,
+                   metavar="SECONDS",
+                   help=f"seconds a cached result is served before it is "
+                        f"recomputed (default: {DEFAULT_TTL:g})")
     args = p.parse_args(argv)
     index_dir, repo = resolve_paths(args.repo, args.out)
-    serve(index_dir, None if args.no_auto_build else repo)
+    cache = ResultCache(max_size=args.cache_size, ttl=args.cache_ttl)
+    serve(index_dir, None if args.no_auto_build else repo, cache=cache)
     return 0
 
 
