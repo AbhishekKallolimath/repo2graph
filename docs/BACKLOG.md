@@ -31,7 +31,7 @@ Ranked by the IMPROVE phase of that run. Size is rough effort, not risk.
 | # | Item | Size | Why this rank |
 |---|------|------|---------------|
 | 1 | **CI job that installs the `[mcp]` extra and does one stdio round trip** *(Shipped)* | S | **Shipped in PR #54:** CI installs `[dev,mcp]` and runs `test_ac34_stdio_server_roundtrip`, exercising `serve()` end-to-end over stdio JSON-RPC. (Previously `serve()` had no automated test coverage). |
-| 2 | **Say so when fusion silently switches itself off** (detail below) | S | Same failure class the whole run was built to avoid: a feature reporting success while doing nothing. |
+| 2 | **Say so when fusion silently switches itself off** *(Shipped)* | S | **Shipped:** `_vectors_for` now returns a reason, `score_rrf` emits a `rag_fusion_disabled` JSON line on stderr and records `Index.fusion_coverage`, and `repo2graph embed --verify-rag` self-tests the whole path. |
 | 3 | **Port the MCP server to the 2.x SDK API** (detail below) | M | Deliberate deferral, not debt — but the `<2` pin ages, and 1.x will stop getting fixes. |
 | 4 | **Graph-level incremental rebuild** *(Shipped)* | L | **Shipped as `repo2graph build --incremental`.** Resolved the way the analysis below predicted it had to be: cache `ParsedFile` per file, re-run the *whole* resolution phase every build. See "Incremental rebuild, as shipped". |
 | 5 | **A real `sentence-transformers` smoke test, opt-in and network-gated** | S | Every embedder in the suite is `StubEmbedder`. `default_embedder()` is tested only for its *failure* message, so nothing proves the real wrapper's `model_id`/`dim` agree with what `vectors.meta.json` records — the exact pair `fuse_ok` compares. |

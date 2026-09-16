@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌​‌​‌​‌​‌​​‌​​​‌‌​​‌​​‌​​​​‌‌​‌‌‌​‌​‌​‌​‌​​​​​‌​​​​​‌​‌​‌‌​‌​​​‌​‌‌​‌​‌​​​‌‌​​‌​​‌​‌​​‌​‌‌‌‌‌​​‌​‌‌​‌​‌​‌‌​‌​​‌‌​​‌‌​​‌​‌​​‌​​​‌‌​‌​‌​‌​​‌​​​​‌​‌​​​‌​‌‌​‌‌‌​​‌​​‌‌‌‌​‌‌‌‌​​‌⁠
+# @authormark v1 -- do not remove (authorship watermark)
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.UR2CuPAZ-FJ_-ZfR5HQnOy
+# Fingerprint: AMK1.3plmXNS9RrziFzPVbNM7eK
 """Graph-aware retrieval over a built index: lexical seeds + k-hop expansion."""
 import json
 import math
@@ -146,6 +146,11 @@ def tokenize(text: str) -> list[str]:
 
 
 class Index:
+    # (fused, candidates) for the most recent score_rrf call, or None if no
+    # fused query has run on this Index yet. A class-level default so every
+    # Index has the attribute without __init__ having to care.
+    fusion_coverage: tuple[int, int] | None = None
+
     def __init__(self, outdir: Path):
         self.dir = Path(outdir)
         self.chunks = read_jsonl(artifact_path(self.dir, "chunks.jsonl"))
@@ -342,9 +347,21 @@ class Index:
         candidates = [i for _s, i in base[:RRF_CANDIDATES]]
         if not candidates:
             return base
-        qvec, cvecs = self._vectors_for(query, candidates, vectors, embedder)
+        qvec, cvecs, why = self._vectors_for(query, candidates, vectors, embedder)
         if qvec is None or not cvecs:
+            # The failure this branch used to hide. `fuse_ok` can pass -- model
+            # and width both agree -- and fusion can still turn itself off here,
+            # because it needs a vector for *every* candidate and a chunks.jsonl
+            # rebuilt without a re-`embed` leaves some without one. Silence then
+            # means a lexical answer to a question the caller explicitly asked
+            # to be answered densely. Say so instead.
+            from .events import emit
+            emit("rag_fusion_disabled", level="warning", reason=why,
+                 candidates=len(candidates), fused=0,
+                 action="re-run `repo2graph embed` to vectorise every chunk")
+            self.fusion_coverage = (0, len(candidates))
             return base
+        self.fusion_coverage = (len(cvecs), len(candidates))
         by_sim = sorted(range(len(candidates)),
                         key=lambda p: (-_cosine(qvec, cvecs[p]), candidates[p]))
         vec_rank = {candidates[p]: r for r, p in enumerate(by_sim, 1)}
@@ -358,21 +375,48 @@ class Index:
         return fused
 
     def _vectors_for(self, query, candidates, vectors, embedder):
+        """Query vector plus one vector per candidate, or a reason there is none.
+
+        Args:
+            query: The raw query string.
+            candidates: Chunk list-indices BM25 shortlisted, in rank order.
+            vectors: Index-keyed vector mapping, or None to embed on the fly.
+            embedder: An object with `.encode(list[str])`, or None.
+
+        Returns:
+            `(query_vector, candidate_vectors, reason)`. On success `reason` is
+            the empty string; on failure the first two are `None`/`[]` and
+            `reason` names *why*, so the caller can report a fusion that
+            switched itself off instead of degrading in silence.
+        """
         if vectors is not None:
             try:
                 cvecs = [vectors[i] for i in candidates]
                 qvec = vectors.get("query") if hasattr(vectors, "get") else None
             except (KeyError, IndexError, TypeError):
-                return None, []
+                # All-or-nothing by design: one unvectorised candidate abandons
+                # the dense ranking rather than ranking a subset against a
+                # different scale. Count how many are actually missing so the
+                # message can say whether this is one stale chunk or all of them.
+                missing = sum(1 for i in candidates if not _has_vector(vectors, i))
+                return None, [], (
+                    f"{missing} of {len(candidates)} BM25 candidates have no "
+                    f"vector; chunks.jsonl was likely rebuilt without re-running "
+                    f"`repo2graph embed`")
             if qvec is None and embedder is not None:
                 qvec = _first(embedder.encode([query]))
-            return qvec, cvecs
+            if qvec is None:
+                return None, [], ("no query vector: neither the vectors mapping "
+                                  "nor an embedder supplied one")
+            return qvec, cvecs, ""
         texts = [self.chunks[i].get("text") or "" for i in candidates]
         encoded = embedder.encode([query] + texts)
         encoded = list(encoded)
         if len(encoded) != len(texts) + 1:
-            return None, []
-        return encoded[0], encoded[1:]
+            return None, [], (
+                f"embedder returned {len(encoded)} vectors for "
+                f"{len(texts) + 1} texts")
+        return encoded[0], encoded[1:], ""
 
     def expand(self, seed_nodes, hops=1, edge_types=None, per_hop=6,
                min_confidence=1.0, edge_dirs=None):
@@ -634,6 +678,18 @@ def _first(seq):
     for item in seq:
         return item
     return None
+
+
+def _has_vector(vectors, i) -> bool:
+    """True when `vectors` holds a vector for chunk index `i`.
+
+    Used only to count what is missing for a diagnostic message, so it answers
+    False for every failure mode rather than distinguishing them.
+    """
+    try:
+        return vectors[i] is not None
+    except (KeyError, IndexError, TypeError):
+        return False
 
 
 def _cosine(a, b) -> float:

@@ -1,9 +1,9 @@
 <!--
-  @authormark v1 -- do not remove (authorship watermark)⁠​‌‌‌​​​​​‌‌‌​‌​‌​‌‌‌​​​‌​‌​‌​​​​​​‌‌​​​​​​‌‌​​‌​​‌​​‌​​‌​‌​‌​‌​‌​‌‌‌​‌‌​​‌‌​​‌​‌​‌‌‌​‌​​​‌‌‌​​​‌​‌‌‌​‌‌‌​‌‌​​​‌‌​​‌‌​‌​‌​‌​​‌‌‌​​‌‌‌​​‌‌​‌​​​​‌‌​​‌‌​‌‌​​‌‌​​​​‌​‌‌‌‌​​​​​‌‌‌​​‌⁠
+  @authormark v1 -- do not remove (authorship watermark)
   Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
   Author: https://github.com/Srinivasan-78
   SPDX-License-Identifier: MIT
-  Fingerprint: AMK1.puqP02IUvetqwc5NsC6ax9
+  Fingerprint: AMK1.0VZP79Et-wO6E26qR0dkl9
 -->
 # repo2graph
 
@@ -180,9 +180,46 @@ Word matching misses code that says the same thing in different words, so you ca
 search on top — vectors are computed once, then blended into every ranking:
 
 ```bash
-repo2graph embed -o .r2g                        # needs the [rag] extra
+pip install "repo2graph[rag]"                   # sentence-transformers + numpy
+repo2graph embed -o .r2g                        # compute vectors, once
 repo2graph rag "how is a request routed" -o .r2g --vectors
 ```
+
+`embed` writes `agent/vectors.npy` and `agent/vectors.meta.json` next to the rest of the index, and
+reuses every vector whose chunk text is unchanged, so re-running it after a rebuild is cheap. The
+model is `--embed-model` (default: a small MiniLM); `rag --model` is a different thing entirely, the
+*LLM* used by `--answer`.
+
+Dense search is opt-in on purpose. Without `--vectors` nothing is loaded and no model is downloaded,
+because the only promised dependency of `build`/`rag` is tree-sitter and a 90 MB model fetch has no
+business happening unasked.
+
+**Check it is actually on.** Dense retrieval has a failure mode where every surface reports success
+and the ranking is still purely lexical — the index carries vectors, but a `chunks.jsonl` rebuilt
+without re-running `embed` leaves some chunks unvectorised, and fusion is all-or-nothing:
+
+```bash
+repo2graph embed -o .r2g --verify-rag
+```
+
+```json
+{
+  "vectors_present": true,
+  "model_id": "sentence-transformers/all-MiniLM-L6-v2",
+  "dim": 384,
+  "chunks": 812,
+  "unvectorised_chunks": 0,
+  "embedder_model_id": "sentence-transformers/all-MiniLM-L6-v2",
+  "embedder_dim": 384,
+  "ok": true,
+  "error": null
+}
+```
+
+It exits non-zero with an actionable `error` if vectors are missing, if the active embedder's model
+id or width disagrees with the index's, or if any chunk lacks a vector. If fusion ever does switch
+itself off mid-query, that is no longer silent either — a `rag_fusion_disabled` JSON line goes to
+stderr naming the reason, and stdout still carries a usable lexical answer.
 
 `repo2graph rag --answer` will also send the pack to an LLM and stream back a grounded answer. It is
 the one command that puts your source code on the network — read

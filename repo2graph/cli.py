@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.ZqfDB7J1RAFScoTKMmn6a6
+# Fingerprint: AMK1.AojJCy4x6M9vWoRAk-0naF
 """repo2graph CLI: build a code graph, query it, export for RAG."""
 import argparse
 import json
@@ -168,6 +168,8 @@ def _resolve_vectors(idx, args, out=None):
 
 def cmd_embed(args):
     """Embed an index's chunks, reusing every vector whose text is unchanged."""
+    if getattr(args, "verify_rag", False):
+        return cmd_verify_rag(args)
     from .embed import (
         build_vectors,
         default_embedder,
@@ -281,6 +283,94 @@ def _rag_index_dir(args) -> Path:
         raise SystemExit(f"cannot resolve target {target!r}: {RAG_TARGET_HELP}") from None
     index_github(target, out, formats="jsonl,overview")
     return out
+
+
+def verify_rag(idx, out, embed_model=None) -> tuple[dict, str | None]:
+    """Self-test the dense-retrieval path against one index.
+
+    Answers the four questions that distinguish "dense retrieval is working"
+    from "dense retrieval silently is not": are there vectors at all, which
+    model and width were they built with, does the active embedder agree, and
+    does every chunk actually have one.
+
+    Args:
+        idx: An open `Index`.
+        out: The index directory, for error messages.
+        embed_model: Model id to check against, or None for the built-in
+            default. Never defaulted to the index's own `model_id` -- comparing
+            a value with itself is what makes a mismatch guard unfalsifiable.
+
+    Returns:
+        `(report, error)`. `error` is None when the path is sound, otherwise a
+        sentence naming what is broken and how to fix it.
+    """
+    report = {
+        "index": str(out),
+        "vectors_present": bool(idx.vectors),
+        "chunks": len(idx.chunks),
+        "model_id": None,
+        "dim": None,
+        "vectorised_chunks": len(idx.vectors or {}),
+        "unvectorised_chunks": len(idx.chunks) - len(idx.vectors or {}),
+        "embedder_model_id": None,
+        "embedder_dim": None,
+        "rag_extra_installed": None,
+    }
+    if not idx.vectors:
+        return report, (
+            f"no vectors in the index at {out}: dense retrieval is not "
+            f"available. Run `repo2graph embed -o {out}` to build them.")
+    meta = idx.vector_meta or {}
+    report["model_id"] = meta.get("model_id")
+    report["dim"] = meta.get("dim")
+
+    # Chunk coverage: fuse_ok cannot see this, and it is the failure that makes
+    # fusion abandon itself at query time with everything else looking healthy.
+    missing = report["unvectorised_chunks"]
+
+    from .embed import default_embedder
+    try:
+        embedder = default_embedder(embed_model)
+        report["rag_extra_installed"] = True
+    except RuntimeError as exc:
+        report["rag_extra_installed"] = False
+        return report, str(exc)
+    from .embed import dim_of, model_id_of
+    report["embedder_model_id"] = model_id_of(embedder)
+    try:
+        report["embedder_dim"] = dim_of(embedder)
+    except Exception:
+        report["embedder_dim"] = None
+    ok, reason = idx.fuse_ok(embedder)
+    if not ok:
+        return report, reason
+    if missing > 0:
+        return report, (
+            f"{missing} of {report['chunks']} chunks have no vector: a query "
+            f"whose BM25 shortlist touches one of them falls back to lexical "
+            f"ranking. Re-run `repo2graph embed -o {out}`.")
+    return report, None
+
+
+def cmd_verify_rag(args):
+    """`--verify-rag`: report on the index's dense path, non-zero if broken."""
+    from .query import Index
+    out = Path(args.out)
+    _require_index(out, "chunks.jsonl")
+    try:
+        idx = Index(out)
+    except ValueError as exc:
+        raise SystemExit(f"error: corrupt index at {out}: {exc}") from None
+    # `embed` spells it --model/--embed-model; the rag surface spells it
+    # --embed-model. Either way it is the *embedding* model, never the LLM.
+    model = getattr(args, "embed_model", None) or getattr(args, "model", None)
+    report, error = verify_rag(idx, out, model)
+    report["ok"] = error is None
+    report["error"] = error
+    _emit(json.dumps(report, indent=2))
+    if error:
+        raise SystemExit(1)
+    return 0
 
 
 def cmd_rag(args):
@@ -473,6 +563,12 @@ def main(argv=None):
     e.add_argument("--batch", type=_nonneg, default=64, help="texts per encode() call")
     e.add_argument("--force", action="store_true",
                    help="re-embed every chunk instead of reusing unchanged vectors")
+    e.add_argument("--verify-rag", action="store_true",
+                   help="self-test this index's dense-retrieval path instead of "
+                        "embedding: reports whether vectors are present, the "
+                        "model and dimension they were built with, and whether "
+                        "the active embedder matches. Exits 1 if the rag path "
+                        "is broken or misconfigured (default: off)")
     e.set_defaults(func=cmd_embed)
 
     m = sub.add_parser("map", help="redraw the HTML graph map from a built index")
