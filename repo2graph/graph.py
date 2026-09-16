@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​​‌‌​​​​​‌‌​‌​​​​‌‌‌​​​‌​‌‌​​​‌​​‌‌​​‌​‌​‌‌​​​​‌​‌​‌‌​‌​​‌‌​‌​​‌​‌​​‌​‌‌​​‌‌​‌‌‌​‌‌‌​​​​​​‌‌‌​​​​‌​​​‌‌‌​‌‌‌​‌‌‌​​‌‌​‌‌​​‌‌​‌​‌‌​​‌‌‌​​‌​‌​‌​​‌​​‌​‌‌‌‌‌​‌​​​‌​​​‌​​‌​​​​‌​‌​‌‌​⁠
+# @authormark v1 -- do not remove (authorship watermark)
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.0hqbeaZiK7p8Gw6k9R_DHV
+# Fingerprint: AMK1.xgtMbDzPqyG1ojvMGucGER
 """Build the repository graph: nodes + edges."""
 import hashlib
 import itertools
@@ -10,9 +10,11 @@ import os
 import re
 import subprocess
 from collections import Counter, defaultdict
+from dataclasses import asdict
 from pathlib import Path
 
-from .parse import CONFIG_EXT, DOC_EXT, EXT_LANG, discover, parse_source
+from .parse import (CONFIG_EXT, DOC_EXT, EXT_LANG, ParsedFile, Symbol, discover,
+                    parse_source)
 
 MAX_CALL_CANDIDATES = 5
 # Under this many files a process pool costs more to start than it saves.
@@ -33,6 +35,16 @@ class Graph:
         # {relative path: sha256 of the bytes that were indexed}, written to
         # index.state.json so a later build can tell what actually changed.
         self.file_hashes: dict[str, str] = {}
+        # {relative path: cache entry}, written to parse.cache.json so a later
+        # `--incremental` build can skip re-parsing files that did not change.
+        # Populated by every build, full or incremental, so the first full build
+        # is what makes the next incremental one possible.
+        self.parse_cache: dict[str, dict] = {}
+        # Filled in by an incremental build only: {"cached": n, "reparsed": m}.
+        # Deliberately *not* in `stats`, which is written to stats.json -- an
+        # incremental build must produce byte-identical artifacts to a full one,
+        # and a hit/miss count differs by construction between the two.
+        self.incremental: dict[str, int] | None = None
 
     def add_node(self, nid: str, **attrs):
         if nid in self.nodes:
@@ -204,6 +216,125 @@ def _read_and_parse(item):
                        hashlib.sha256(raw).hexdigest())
 
 
+# ---------- parse cache (incremental builds) ----------
+# Bumped whenever a cache entry's shape changes. A cache written by an older
+# repo2graph is ignored wholesale rather than half-read: a `Symbol` that gained
+# a field would otherwise reconstruct with a silently wrong default, and a wrong
+# symbol is exactly the "wrong in a way nothing detects" failure this feature
+# was cut for in the first place.
+PARSE_CACHE_FORMAT = 1
+
+
+def cache_entry(lang: str | None, size: int, lines: int, pf, digest: str) -> dict:
+    """Serialise one file's parse result for `parse.cache.json`.
+
+    Args:
+        lang: Language id the file was parsed as, or None for a non-code file.
+        size: Length in bytes of the file as indexed.
+        lines: Newline count + 1, as recorded on the file node.
+        pf: The `ParsedFile` for this file, or None if it was not parsed.
+        digest: sha256 hex digest of the bytes this entry describes.
+
+    Returns:
+        A JSON-serialisable dict holding everything `build()` needs to rebuild
+        this file's nodes and edges without re-reading or re-parsing it.
+    """
+    return {
+        "sha256": digest,
+        "lang": lang or "",
+        "size": size,
+        "lines": lines,
+        "parsed": None if pf is None else {
+            "lang": pf.lang,
+            "parse_errors": pf.parse_errors,
+            "imports": list(pf.imports),
+            "symbols": [asdict(s) for s in pf.symbols],
+        },
+    }
+
+
+def entry_read(entry: dict) -> tuple | None:
+    """Rebuild `_read_and_parse`'s result tuple from a cache entry.
+
+    Args:
+        entry: One record out of `parse.cache.json`.
+
+    Returns:
+        The `(size, lines, ParsedFile | None, digest)` tuple the build loop
+        consumes, or None if the entry is malformed. A malformed entry is a
+        cache miss, never an exception: a corrupt cache must cost a re-parse,
+        not the build.
+    """
+    try:
+        size, lines = int(entry["size"]), int(entry["lines"])
+        digest = str(entry["sha256"])
+        raw = entry.get("parsed")
+        if raw is None:
+            return size, lines, None, digest
+        symbols = [Symbol(**s) for s in raw["symbols"]]
+        pf = ParsedFile(lang=str(raw["lang"]), symbols=symbols,
+                        imports=[str(i) for i in raw["imports"]],
+                        parse_errors=int(raw.get("parse_errors") or 0))
+        return size, lines, pf, digest
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def parse_incremental(files, jobs: int, cache: dict, counts: dict):
+    """Read every file, but re-parse only the ones whose bytes changed.
+
+    A file's `ParsedFile` is a pure function of its bytes and its language and
+    nothing else, so reusing one for a file whose sha256 still matches is exact
+    -- not an approximation. Everything downstream of parsing (the global name
+    index, CALLS confidences, INHERITS, entrypoints and reach) is then recomputed
+    from scratch over the full symbol set by `build()`, which is what makes an
+    incremental build byte-identical to a full one instead of merely close.
+
+    Reading is still done for every file: the hash *is* the bytes, so there is
+    no cheaper way to know a file is unchanged, and reading is the small half of
+    the cost. Parsing is what this skips, and parsing is what dominates a build.
+
+    Args:
+        files: The `(relpath, abspath)` pairs discovery produced, in order.
+        jobs: Parser process count, passed through to `parse_all`.
+        cache: `{relpath: entry}` loaded from a previous build's parse cache.
+        counts: Mutated in place with "cached" and "reparsed" tallies.
+
+    Returns:
+        The same list of `(rel, lang, read)` tuples `parse_all` returns, in
+        discovery order, so the build loop cannot tell the two apart.
+    """
+    results: dict[str, tuple] = {}
+    order: list[str] = []
+    stale: list[tuple] = []
+    for rel, abspath in files:
+        order.append(rel)
+        lang = EXT_LANG.get(abspath.suffix.lower())
+        try:
+            raw = abspath.read_bytes()
+        except OSError:
+            results[rel] = (rel, lang, None)
+            continue
+        digest = hashlib.sha256(raw).hexdigest()
+        entry = cache.get(rel)
+        read = None
+        # The language must match too: the same bytes parsed as a different
+        # language yield different symbols, and a renamed extension changes the
+        # language without changing the content hash.
+        if isinstance(entry, dict) and entry.get("sha256") == digest \
+                and entry.get("lang") == (lang or ""):
+            read = entry_read(entry)
+        if read is None:
+            stale.append((rel, abspath))
+        else:
+            results[rel] = (rel, lang, read)
+            counts["cached"] = counts.get("cached", 0) + 1
+    counts["reparsed"] = len(stale)
+    for rel, lang, read in parse_all(stale, jobs):
+        results[rel] = (rel, lang, read)
+    return [results[rel] for rel in order]
+
+
 def resolve_jobs(jobs: int) -> int:
     """0 means one worker per core, capped so the parent keeps up with results."""
     if jobs > 0:
@@ -239,7 +370,25 @@ def parse_all(files, jobs: int):
 
 # ---------- build ----------
 def build(root: Path, include=None, exclude=None, git_history: int = 0,
-          max_files: int = 0, jobs: int = 0) -> Graph:
+          max_files: int = 0, jobs: int = 0, cache: dict | None = None) -> Graph:
+    """Parse `root` into a Graph.
+
+    Args:
+        root: Repository directory to index.
+        include: Optional glob(s) restricting discovery.
+        exclude: Optional glob(s) removing paths from discovery.
+        git_history: When non-zero, add CO_CHANGE edges from the last N commits.
+        max_files: When positive, index only the first N discovered files.
+        jobs: Parser processes; 0 means one per core, 1 means serial.
+        cache: A previous build's `{relpath: entry}` parse cache. When given,
+            files whose sha256 and language both still match are not re-parsed.
+            Resolution is recomputed in full either way, so the resulting Graph
+            is identical to one built with `cache=None`.
+
+    Returns:
+        The populated Graph. `parse_cache` holds the cache for the *next*
+        build; `incremental` holds hit/miss counts when `cache` was supplied.
+    """
     root = Path(root).resolve()
     g = Graph(root, root.name)
     repo_id = f"repo:{root.name}"
@@ -254,11 +403,19 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
     parsed: dict[str, object] = {}  # ParsedFile only: keeping raw bytes here
                                     # would hold the whole repo in memory
 
-    for rel, lang, read in parse_all(files, resolve_jobs(jobs)):
+    if cache is None:
+        results = parse_all(files, resolve_jobs(jobs))
+    else:
+        counts: dict[str, int] = {"cached": 0, "reparsed": 0}
+        results = parse_incremental(files, resolve_jobs(jobs), cache, counts)
+        g.incremental = counts
+
+    for rel, lang, read in results:
         if read is None:  # unreadable file
             continue
         size, lines, pf, digest = read
         g.file_hashes[rel] = digest
+        g.parse_cache[rel] = cache_entry(lang, size, lines, pf, digest)
         ext = Path(rel).suffix.lower()
         ftype = "code" if lang else ("doc" if ext in DOC_EXT else
                                      "config" if ext in CONFIG_EXT else "other")

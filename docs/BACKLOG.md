@@ -33,7 +33,7 @@ Ranked by the IMPROVE phase of that run. Size is rough effort, not risk.
 | 1 | **CI job that installs the `[mcp]` extra and does one stdio round trip** *(Shipped)* | S | **Shipped in PR #54:** CI installs `[dev,mcp]` and runs `test_ac34_stdio_server_roundtrip`, exercising `serve()` end-to-end over stdio JSON-RPC. (Previously `serve()` had no automated test coverage). |
 | 2 | **Say so when fusion silently switches itself off** (detail below) | S | Same failure class the whole run was built to avoid: a feature reporting success while doing nothing. |
 | 3 | **Port the MCP server to the 2.x SDK API** (detail below) | M | Deliberate deferral, not debt — but the `<2` pin ages, and 1.x will stop getting fixes. |
-| 4 | **Graph-level incremental rebuild** (detail below) | L | Cut at PLAN with reasoning; a run of its own. Nothing depends on it — `index.state.json` already ships the substrate. |
+| 4 | **Graph-level incremental rebuild** *(Shipped)* | L | **Shipped as `repo2graph build --incremental`.** Resolved the way the analysis below predicted it had to be: cache `ParsedFile` per file, re-run the *whole* resolution phase every build. See "Incremental rebuild, as shipped". |
 | 5 | **A real `sentence-transformers` smoke test, opt-in and network-gated** | S | Every embedder in the suite is `StubEmbedder`. `default_embedder()` is tested only for its *failure* message, so nothing proves the real wrapper's `model_id`/`dim` agree with what `vectors.meta.json` records — the exact pair `fuse_ok` compares. |
 | 6 | **`docs/BACKLOG.md` has no `@authormark` header** | XS | Pre-existing at baseline `ff0e3ca`; not introduced by this run, and deliberately not fixed here (the stamper is not vendored). Fold into the next watermark sweep, with issue #30. |
 | 7 | **No coverage measurement anywhere in the repo** | S | ~130 tests were added this run on judgement alone. Nobody can currently answer "which branch of `embed.py` never runs". |
@@ -72,6 +72,33 @@ expensive part), which is a different design from `build(..., previous=)` and a 
 What shipped instead is the safe, self-contained half: per-file sha256 in `agent/index.state.json`
 (the substrate any incremental build needs) and vector reuse keyed on chunk *text* hash, which is
 correct by construction because a chunk's vector depends on its own text and nothing else.
+
+**Incremental rebuild, as shipped.** The analysis above was right about the blocker and right about
+the fix, and the fix is what shipped — *not* `build(..., previous: Graph)`. `build()` gained
+`cache=`, a `{path: entry}` map read from a new `agent/parse.cache.json`, and reuses a file's
+`ParsedFile` when its sha256 *and* its language both still match. Everything downstream of parsing
+is then recomputed from the complete symbol set, exactly as a full build does: the global name
+index, `CALLS` confidences, `INHERITS`, `mark_entrypoints()` and `reach`. Nothing is spliced, so
+none of the staleness this entry warned about can arise — a repo-wide confidence shift caused by a
+symbol added in *another* file lands on the unchanged caller's edge, because that caller's edges are
+rebuilt from its cached symbols rather than carried over.
+
+The cost model is what makes this worth doing rather than a compromise: parsing dominates a build,
+resolution is O(edges) and negligible, so recomputing all of it buys exactness for no measurable
+time. Every file is still *read* — the content hash is the bytes, there is no cheaper way to know a
+file is unchanged — and reading is the small half.
+
+The acceptance test is whole-artifact byte equality against a full rebuild, across an add, a modify,
+a delete and a no-op (`tests/test_incremental.py`). That is also why the hit/miss tallies live on
+`Graph.incremental` and not in `Graph.stats`: `stats.json` is one of the artifacts compared, so a
+counter that differs between the two routes by construction would have had to be special-cased out
+of the comparison, weakening the very test that makes the feature trustworthy.
+
+Deliberately *not* implemented: partial confidence recalculation over "affected symbol namespaces",
+and a reverse-edge index for a partial reach BFS. Both were considered and rejected — they compute
+the same answer as the full re-resolution above, cost more code and more ways to be subtly wrong,
+and save time that is already close to zero. Should resolution ever become the bottleneck on a very
+large repo, that is when to revisit them, with a profile in hand.
 
 **Say so when fusion silently switches itself off.** `Index` drops vectors whose chunk ids are no
 longer in `chunks.jsonl`, so a `chunks.jsonl` rebuilt without re-running `embed` degrades instead of

@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌​‌‌‌​‌​​​‌‌​​‌​‌​‌​​​‌​‌​​‌​​‌​‌​‌‌‌​‌​‌​​‌​​​‌​‌‌​‌​‌‌​​‌​​​​‌‌​​‌‌​‌​​‌​‌​​‌​​​​‌​​​‌‌​​​‌​‌​‌‌​​‌​‌​‌​‌​‌​‌​​​‌‌‌​‌​​‌​​​​‌​​​‌‌‌​‌​​‌​​​​‌‌​​‌​‌​​‌​‌‌​‌​‌​‌‌​‌​​​‌‌​​‌‌⁠
+# @authormark v1 -- do not remove (authorship watermark)
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.WFTRWR-d3JB1YUGHGHe-Z3
+# Fingerprint: AMK1.8Dn6fYBnd5ieUGI1YrCZMt
 """Serialize the graph: JSONL, GraphML, Cypher, overview, HTML map."""
 import json
 import math
@@ -54,6 +54,7 @@ SECTIONS: dict[str, tuple[str, ...]] = {
     "stats.json": (AGENT_DIR,),
     "index.json": (AGENT_DIR,),
     "index.state.json": (AGENT_DIR,),
+    "parse.cache.json": (AGENT_DIR,),
     "vectors.npy": (AGENT_DIR,),
     "vectors.meta.json": (AGENT_DIR,),
     "manifest.json": (AGENT_DIR,),
@@ -499,6 +500,7 @@ FILE_NOTES = {
     "overview.md": "the repo map in prose: languages, most depended-on files, most called symbols",
     "index.json": "repo slug and indexed commit; written by `repo2graph github` only",
     "index.state.json": "per-file sha256 of the bytes that were indexed, for change detection between builds",
+    "parse.cache.json": "per-file symbols, imports and content hash, so `repo2graph build --incremental` can skip re-parsing files that did not change",
     "vectors.npy": "chunk embeddings as a plain NPY v1.0 array (C-order, <f4, one row per chunk id in vectors.meta.json); written by `repo2graph embed` only",
     "vectors.meta.json": "the embedding model id, vector width and the chunk ids and text hashes each vectors.npy row belongs to",
     "manifest.json": "this file",
@@ -599,6 +601,50 @@ def write_state(g, path: Path, n_chunks: int):
         fh.write(json.dumps(state, indent=2) + "\n")
 
 
+def write_parse_cache(g, path: Path):
+    """Write the per-file parse cache the next `--incremental` build reads.
+
+    Args:
+        g: The Graph just built; its `parse_cache` is the payload.
+        path: Destination for `parse.cache.json`.
+    """
+    from .graph import PARSE_CACHE_FORMAT
+    payload = {
+        "format": STATE_FORMAT,
+        "cache_format": PARSE_CACHE_FORMAT,
+        "files": dict(getattr(g, "parse_cache", {}) or {}),
+    }
+    with atomic_write(path, "w", encoding="utf8", newline="\n") as fh:
+        fh.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def load_parse_cache(outdir: Path) -> dict:
+    """Read a previous build's parse cache out of an index directory.
+
+    Every failure mode -- no index, no cache file, unreadable, malformed JSON,
+    a format bump -- returns an empty dict, which makes the next build a full
+    one. An incremental build that silently reuses entries it does not
+    understand is the failure this whole feature was deferred to avoid, so the
+    only safe response to an unrecognised cache is to ignore it.
+
+    Args:
+        outdir: The index directory (the one holding `agent/`).
+
+    Returns:
+        `{relpath: entry}`, or an empty dict when no usable cache is present.
+    """
+    from .graph import PARSE_CACHE_FORMAT
+    try:
+        path = make_paths(Path(outdir), "parse.cache.json")[0]
+        data = json.loads(path.read_text(encoding="utf8"))
+    except (OSError, ValueError, KeyError):
+        return {}
+    if not isinstance(data, dict) or data.get("cache_format") != PARSE_CACHE_FORMAT:
+        return {}
+    files = data.get("files")
+    return files if isinstance(files, dict) else {}
+
+
 def dump_all(g, chunks, outdir: Path, formats: set[str], viz_nodes: int = MAX_NODES):
     """Write the requested artifacts. `chunks` is an iterable of chunk dicts (a
     build_chunks generator) or None. Returns (written_paths, chunk_count)."""
@@ -635,5 +681,6 @@ def dump_all(g, chunks, outdir: Path, formats: set[str], viz_nodes: int = MAX_NO
     with atomic_write(out("stats.json")[0], "w", encoding="utf8", newline="\n") as fh:
         fh.write(json.dumps(dict(g.stats), indent=2) + "\n")
     write_state(g, out("index.state.json")[0], n_chunks)
+    write_parse_cache(g, out("parse.cache.json")[0])
     write_manifest(g, out("manifest.json")[0], written)
     return written, n_chunks

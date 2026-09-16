@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌‌​​‌​‌​‌​​‌​​‌‌‌​​‌​​‌​‌‌​​‌​‌​​​‌‌​​‌​‌‌​‌​​‌​​‌‌‌​​‌​​​​‌‌​‌‌‌​‌​​​‌‌​​​‌​​‌​​‌‌​​​​‌‌​​​‌​‌​​‌​‌‌​‌​​‌‌‌‌​‌​​​‌​​​‌‌‌​​‌‌​‌​‌​​​​​‌‌​​​‌​​‌‌​​‌​‌​‌​​‌​​​​‌‌‌​‌‌​​‌​‌​​​‌⁠
+# @authormark v1 -- do not remove (authorship watermark)
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.YRrYFZNCtbL1KODsPbeHvQ
+# Fingerprint: AMK1.ZqfDB7J1RAFScoTKMmn6a6
 """repo2graph CLI: build a code graph, query it, export for RAG."""
 import argparse
 import json
@@ -16,7 +16,8 @@ from .chunks import iter_chunks
 # it, so the heavyweight sentence-transformers import stays off every path that
 # does not embed (and stays patchable through the module object).
 from .embed import DEFAULT_MODEL as EMBED_DEFAULT_MODEL
-from .export import dump_all, make_path, path as artifact_path, rel as artifact_rel
+from .export import (dump_all, load_parse_cache, make_path, path as artifact_path,
+                     rel as artifact_rel)
 from .graph import build
 from .viz import MAX_NODES
 
@@ -78,13 +79,21 @@ def cmd_build(args):
     if not repo_path.is_dir():
         raise SystemExit(f"error: repository directory does not exist or is not a directory: {repo_path}")
     formats = parse_formats(args.formats)
-    g = build(repo_path, include=args.include, exclude=args.exclude,
-              git_history=args.git_history, max_files=args.max_files, jobs=args.jobs)
-    chunks = None if args.no_chunks else iter_chunks(g)   # a generator, streamed to disk
     outdir = Path(args.out)
+    # An absent or unreadable cache is an empty dict, which is exactly a full
+    # build -- so `--incremental` against a directory with no index yet works,
+    # it just has nothing to reuse on the first run.
+    cache = load_parse_cache(outdir) if getattr(args, "incremental", False) else None
+    g = build(repo_path, include=args.include, exclude=args.exclude,
+              git_history=args.git_history, max_files=args.max_files, jobs=args.jobs,
+              cache=cache)
+    chunks = None if args.no_chunks else iter_chunks(g)   # a generator, streamed to disk
     written, n_chunks = dump_all(g, chunks, outdir, formats, args.viz_nodes)
-    print(json.dumps({"out": str(outdir), "written": written,
-                      "stats": dict(g.stats), "chunks": n_chunks}, indent=2))
+    report = {"out": str(outdir), "written": written,
+              "stats": dict(g.stats), "chunks": n_chunks}
+    if g.incremental is not None:
+        report["incremental"] = g.incremental
+    print(json.dumps(report, indent=2))
 
 
 def cmd_github(args):
@@ -399,6 +408,12 @@ def main(argv=None):
     b = sub.add_parser("build", parents=[common], help="parse a repo into a graph + RAG chunks")
     b.add_argument("repo")
     b.add_argument("--no-chunks", action="store_true")
+    b.add_argument("--incremental", action="store_true",
+                   help="reuse parse results for files whose content hash is "
+                        "unchanged since the last build in --out (default: off, "
+                        "full rebuild). Safe for edits, adds, deletes and "
+                        "renames; rerun without it after upgrading repo2graph "
+                        "or changing a language grammar")
     b.set_defaults(func=cmd_build)
 
     gh = sub.add_parser("github", aliases=["gh"], parents=[common],
