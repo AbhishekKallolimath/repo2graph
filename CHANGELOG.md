@@ -3,7 +3,7 @@
   Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
   Author: https://github.com/Srinivasan-78
   SPDX-License-Identifier: MIT
-  Fingerprint: AMK1.i9V_9vHIRo2fq3PBcN4B-0
+  Fingerprint: AMK1.pzaFE9ilYcskSQnt8_EIvp
 -->
 # Changelog
 
@@ -19,6 +19,8 @@ section for a version out of this file and uses it as the Release body, which
 makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
+
+## [1.5.0] — 2026-09-16
 
 ### Added
 
@@ -198,7 +200,8 @@ A whole-repository audit landed as one batch:
 - First release: tree-sitter parsing into a code graph, JSONL/GraphML/Cypher
   exports, an interactive HTML map, retrieval chunks, and a GitHub Action.
 
-[Unreleased]: https://github.com/Srinivasan-78/repo2graph/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/Srinivasan-78/repo2graph/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/Srinivasan-78/repo2graph/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/Srinivasan-78/repo2graph/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/Srinivasan-78/repo2graph/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Srinivasan-78/repo2graph/compare/v1.1.2...v1.2.0
