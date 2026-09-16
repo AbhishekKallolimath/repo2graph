@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.IS-Mx8FpTf0T9mf0qaCv-Y
+# Fingerprint: AMK1.gra1hDWbBRipKRwn09MCvd
 """A stdio MCP server over an existing .r2g index: three tools, one engine.
 
 This is an *additional* surface, not a replacement: every tool is a thin call
@@ -490,11 +490,116 @@ def main(argv=None):
                    metavar="SECONDS",
                    help=f"seconds a cached result is served before it is "
                         f"recomputed (default: {DEFAULT_TTL:g})")
+    _add_auth_args(p)
     args = p.parse_args(argv)
     index_dir, repo = resolve_paths(args.repo, args.out)
     cache = ResultCache(max_size=args.cache_size, ttl=args.cache_ttl)
-    serve(index_dir, None if args.no_auto_build else repo, cache=cache)
+    build_from = None if args.no_auto_build else repo
+    # --well-known-port is the spelling the discovery spec uses; it and
+    # --http-port name the same HTTP transport, since serving the metadata
+    # document from a second server would be two ports for one job.
+    if args.http_port is None and args.well_known_port is not None:
+        args.http_port = args.well_known_port
+
+    from .audit import AuditConfig, AuditLogger
+    audit = AuditLogger(AuditConfig(level=args.audit_log_level,
+                                    path=args.audit_log))
+
+    auth_config = _auth_config(args)
+    transport = None
+    if args.http_port is not None or args.auth_cimd:
+        from .http_server import HTTPTransport
+        transport = HTTPTransport(
+            index_dir, build_from, host=args.http_host,
+            port=args.http_port if args.http_port is not None else 8719,
+            auth_config=auth_config, audit=audit, cache=cache,
+            publish_cimd=args.auth_cimd)
+        transport.start()
+        if args.http_only:
+            # No stdio peer: block on the HTTP thread instead of returning,
+            # which would tear the daemon thread down on the way out.
+            try:
+                transport._thread.join()
+            except KeyboardInterrupt:
+                pass
+            finally:
+                transport.stop()
+            return 0
+    elif auth_config.enabled:
+        # Credentials with nowhere to be presented. Refusing beats starting a
+        # server the operator believes is protected and is not: stdio has no
+        # headers, so every one of these flags would be inert.
+        raise SystemExit(
+            "error: --auth-token/--auth-oidc-issuer need a transport that "
+            "carries headers. stdio has none, so the credential could never be "
+            "checked. Add --http-port to serve over HTTP as well.")
+
+    try:
+        serve(index_dir, build_from, cache=cache)
+    finally:
+        if transport is not None:
+            transport.stop()
+        audit.close()
     return 0
+
+
+def _add_auth_args(p) -> None:
+    """Register the HTTP-transport, authentication and audit flags."""
+    http = p.add_argument_group(
+        "http transport",
+        "Serve MCP over HTTP as well as stdio. Required for authentication: "
+        "stdio carries no headers, so a bearer token has nowhere to travel.")
+    http.add_argument("--http-port", type=int, default=None, metavar="PORT",
+                      help="serve JSON-RPC on this port in addition to stdio "
+                           "(default: off)")
+    http.add_argument("--http-host", default="127.0.0.1", metavar="HOST",
+                      help="bind address for --http-port. Binding beyond "
+                           "loopback without authentication is refused "
+                           "(default: 127.0.0.1)")
+    http.add_argument("--http-only", action="store_true",
+                      help="serve HTTP only, without the stdio transport "
+                           "(default: off)")
+    http.add_argument("--well-known-port", type=int, default=None, metavar="PORT",
+                      help="alias for --http-port; the discovery documents are "
+                           "served by the same HTTP transport (default: off)")
+
+    auth = p.add_argument_group("authentication")
+    auth.add_argument("--auth-token", default=None, metavar="TOKEN",
+                      help="require `Authorization: Bearer <TOKEN>` on every "
+                           "HTTP tool call (default: no authentication)")
+    auth.add_argument("--auth-oidc-issuer", default=None, metavar="URL",
+                      help="validate bearer tokens as JWTs against this OIDC "
+                           "issuer's JWKS, enforcing iss, aud and exp "
+                           "(default: off)")
+    auth.add_argument("--auth-audience", default=None, metavar="AUD",
+                      help="expected `aud` claim for --auth-oidc-issuer tokens "
+                           "(default: the claim is not checked)")
+    auth.add_argument("--auth-jwks-ttl", type=float, default=300.0,
+                      metavar="SECONDS",
+                      help="seconds a fetched JWKS is trusted before refetch "
+                           "(default: 300)")
+    auth.add_argument("--auth-cimd", action="store_true",
+                      help="publish an RFC 7591 client metadata document at "
+                           "/.well-known/oauth-client-metadata (default: off)")
+
+    log = p.add_argument_group("audit logging")
+    log.add_argument("--audit-log", default=None, metavar="PATH",
+                     help="append audit records to this file as well as stderr "
+                          "(default: stderr only)")
+    log.add_argument("--audit-log-level", choices=("none", "errors", "all"),
+                     default="all",
+                     help="which tool calls produce an audit record "
+                          "(default: all)")
+
+
+def _auth_config(args):
+    """Build an AuthConfig from parsed arguments."""
+    from .auth import AuthConfig
+    return AuthConfig(token=args.auth_token,
+                      oidc_issuer=args.auth_oidc_issuer,
+                      audience=args.auth_audience,
+                      jwks_ttl=args.auth_jwks_ttl,
+                      cimd=args.auth_cimd)
 
 
 if __name__ == "__main__":
