@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.AojJCy4x6M9vWoRAk-0naF
+# Fingerprint: AMK1.lppdZBln3eL76mmEOhJtLu
 """repo2graph CLI: build a code graph, query it, export for RAG."""
 import argparse
 import json
@@ -430,6 +430,23 @@ def _nonneg(value: str) -> int:
     return n
 
 
+def _viz_nodes(value: str):
+    """argparse type for --viz-nodes: a non-negative int, or "all" for no cap.
+
+    Args:
+        value: The raw command-line string.
+
+    Returns:
+        None for "all" (no cap), otherwise the integer, 0 included.
+
+    Raises:
+        argparse.ArgumentTypeError: On a negative or non-integer value.
+    """
+    if str(value).strip().lower() == "all":
+        return None
+    return _nonneg(value)
+
+
 def _unit_float(value: str) -> float:
     """argparse type: a finite float in [0.0, 1.0].
 
@@ -485,8 +502,11 @@ def main(argv=None):
     common.add_argument("-o", "--out", default=".r2g")
     common.add_argument("--formats", default="jsonl,graphml,cypher,overview,html",
                         help="comma list: jsonl,graphml,cypher,overview,html")
-    common.add_argument("--viz-nodes", type=_nonneg, default=MAX_NODES,
-                        help="best-connected nodes to draw in graph.html (0 = no cap)")
+    common.add_argument("--viz-nodes", type=_viz_nodes, default=MAX_NODES,
+                        metavar="N|all",
+                        help=f"best-connected nodes to draw in graph.html "
+                             f"(default: {MAX_NODES}; 0 draws an empty graph; "
+                             f"'all' draws every node)")
     common.add_argument("--include", nargs="*", default=None, help="glob(s) to include")
     common.add_argument("--exclude", nargs="*", default=None, help="glob(s) to exclude")
     common.add_argument("--git-history", type=_nonneg, default=0,
@@ -573,8 +593,11 @@ def main(argv=None):
 
     m = sub.add_parser("map", help="redraw the HTML graph map from a built index")
     m.add_argument("-o", "--out", default=".r2g")
-    m.add_argument("--viz-nodes", type=_nonneg, default=MAX_NODES,
-                   help="how many of the best-connected nodes to draw (0 = no cap)")
+    m.add_argument("--viz-nodes", type=_viz_nodes, default=MAX_NODES,
+                   metavar="N|all",
+                   help=f"how many of the best-connected nodes to draw "
+                        f"(default: {MAX_NODES}; 0 draws an empty graph; "
+                        f"'all' draws every node)")
     m.set_defaults(func=cmd_map)
 
     s = sub.add_parser("stats", help="print index stats")

@@ -89,6 +89,18 @@
       "required": false,
       "type": null
     },
+    "--incremental": {
+      "choices": null,
+      "class": "_StoreTrueAction",
+      "default": "False",
+      "dest": "incremental",
+      "nargs": "0",
+      "options": [
+        "--incremental"
+      ],
+      "required": false,
+      "type": null
+    },
     "--jobs": {
       "choices": null,
       "class": "_StoreAction",
@@ -148,7 +160,7 @@
         "--viz-nodes"
       ],
       "required": false,
-      "type": "_nonneg"
+      "type": "_viz_nodes"
     },
     "repo": {
       "choices": null,
@@ -158,6 +170,83 @@
       "nargs": "None",
       "options": [],
       "required": true,
+      "type": null
+    }
+  },
+  "embed": {
+    "--batch": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "64",
+      "dest": "batch",
+      "nargs": "None",
+      "options": [
+        "--batch"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "--embed-model --model": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "model",
+      "nargs": "None",
+      "options": [
+        "--embed-model",
+        "--model"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--force": {
+      "choices": null,
+      "class": "_StoreTrueAction",
+      "default": "False",
+      "dest": "force",
+      "nargs": "0",
+      "options": [
+        "--force"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--help -h": {
+      "choices": null,
+      "class": "_HelpAction",
+      "default": "'==SUPPRESS=='",
+      "dest": "help",
+      "nargs": "0",
+      "options": [
+        "--help",
+        "-h"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--out -o": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "'.r2g'",
+      "dest": "out",
+      "nargs": "None",
+      "options": [
+        "--out",
+        "-o"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--verify-rag": {
+      "choices": null,
+      "class": "_StoreTrueAction",
+      "default": "False",
+      "dest": "verify_rag",
+      "nargs": "0",
+      "options": [
+        "--verify-rag"
+      ],
+      "required": false,
       "type": null
     }
   },
@@ -318,7 +407,7 @@
         "--viz-nodes"
       ],
       "required": false,
-      "type": "_nonneg"
+      "type": "_viz_nodes"
     },
     "repo": {
       "choices": null,
@@ -488,7 +577,7 @@
         "--viz-nodes"
       ],
       "required": false,
-      "type": "_nonneg"
+      "type": "_viz_nodes"
     },
     "repo": {
       "choices": null,
@@ -538,7 +627,7 @@
         "--viz-nodes"
       ],
       "required": false,
-      "type": "_nonneg"
+      "type": "_viz_nodes"
     }
   },
   "query": {
@@ -553,6 +642,18 @@
       ],
       "required": false,
       "type": "_nonneg"
+    },
+    "--embed-model": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "embed_model",
+      "nargs": "None",
+      "options": [
+        "--embed-model"
+      ],
+      "required": false,
+      "type": null
     },
     "--format": {
       "choices": [
@@ -618,6 +719,18 @@
       "required": false,
       "type": "_unit_float"
     },
+    "--no-vectors": {
+      "choices": null,
+      "class": "_StoreFalseAction",
+      "default": "None",
+      "dest": "vectors",
+      "nargs": "0",
+      "options": [
+        "--no-vectors"
+      ],
+      "required": false,
+      "type": null
+    },
     "--out -o": {
       "choices": null,
       "class": "_StoreAction",
@@ -627,6 +740,18 @@
       "options": [
         "--out",
         "-o"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--vectors": {
+      "choices": null,
+      "class": "_StoreTrueAction",
+      "default": "None",
+      "dest": "vectors",
+      "nargs": "0",
+      "options": [
+        "--vectors"
       ],
       "required": false,
       "type": null
@@ -678,6 +803,30 @@
       ],
       "required": false,
       "type": "_nonneg"
+    },
+    "--budget-tokens": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "budget_tokens",
+      "nargs": "None",
+      "options": [
+        "--budget-tokens"
+      ],
+      "required": false,
+      "type": "_nonneg"
+    },
+    "--embed-model": {
+      "choices": null,
+      "class": "_StoreAction",
+      "default": "None",
+      "dest": "embed_model",
+      "nargs": "None",
+      "options": [
+        "--embed-model"
+      ],
+      "required": false,
+      "type": null
     },
     "--format": {
       "choices": [
@@ -755,6 +904,18 @@
       "required": false,
       "type": null
     },
+    "--no-vectors": {
+      "choices": null,
+      "class": "_StoreFalseAction",
+      "default": "None",
+      "dest": "vectors",
+      "nargs": "0",
+      "options": [
+        "--no-vectors"
+      ],
+      "required": false,
+      "type": null
+    },
     "--out -o": {
       "choices": null,
       "class": "_StoreAction",
@@ -781,6 +942,18 @@
       "nargs": "None",
       "options": [
         "--provider"
+      ],
+      "required": false,
+      "type": null
+    },
+    "--vectors": {
+      "choices": null,
+      "class": "_StoreTrueAction",
+      "default": "None",
+      "dest": "vectors",
+      "nargs": "0",
+      "options": [
+        "--vectors"
       ],
       "required": false,
       "type": null

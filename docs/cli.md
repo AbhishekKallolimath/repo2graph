@@ -34,7 +34,7 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--git-history` | `0` | Commits to read for `CO_CHANGE` arrows. Capped at 5000. |
 | `--max-files` | `0` (all) | Stop after N files, for very large projects. |
 | `--jobs` | `0` (auto) | Parallel workers. Auto means one per core, up to 8. |
-| `--viz-nodes` | `300` | Node cap in `graph.html`. `0` means no cap. |
+| `--viz-nodes` | `300` | Node cap in `graph.html`. `0` draws an empty graph; `all` draws every node. |
 | `--no-chunks` | off | Skip the retrieval chunks entirely. |
 | `--incremental` | off | Reuse parse results for files whose content hash is unchanged. |
 

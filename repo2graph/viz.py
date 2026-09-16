@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​​‌‌​​‌‌​‌​‌​​​‌​‌​‌​‌‌​​‌​​​‌‌‌​‌‌​‌‌‌‌​‌‌​‌​‌‌​‌‌​​‌​​​‌​​‌​​​​‌​‌​‌​​​‌‌​​​‌​​‌​‌​​​​​​‌‌​​​‌​‌​‌​​‌‌​‌‌‌​‌​​​‌‌‌​​‌​​‌‌‌‌​‌​​​‌‌​​​​​‌​​‌‌‌​​​‌‌​‌​‌​​‌‌​​​​​‌​​​‌‌‌​‌‌​‌‌‌‌⁠
+# @authormark v1 -- do not remove (authorship watermark)
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.3QVGokdHTbP1Strz0N50Go
+# Fingerprint: AMK1.-KuQN7L92Fh5W_GS7nW8LR
 """Interactive knowledge-graph map: one self-contained HTML file, no CDN, no build step."""
 import html
 import json
@@ -57,8 +57,16 @@ def select(nodes: dict, edges: list, max_nodes: int = MAX_NODES):
         w = EDGE_WEIGHT.get(e["type"], 1.0)
         score[e["src"]] += w
         score[e["dst"]] += w
-    # ISS-34: max_nodes <= 0 means no cap (keep all nodes)
-    if max_nodes and max_nodes > 0 and len(nodes) > max_nodes:
+    # `None` means no cap; an integer is taken literally, 0 included. 0 used to
+    # mean "no cap" as well, which made the two most opposite intentions a
+    # caller could have -- "draw everything" and "draw nothing" -- share one
+    # spelling, and made a mistyped or defaulted-to-zero argument silently
+    # render the largest possible page. `all` is now the way to say no cap.
+    if max_nodes is None:
+        keep = set(nodes)
+    elif max_nodes <= 0:
+        keep = set()
+    elif len(nodes) > max_nodes:
         ranked = sorted(nodes.values(), key=lambda n: (-score[n["id"]], n["id"]))
         keep = {n["id"] for n in ranked[:max_nodes]}
     else:
@@ -213,6 +221,14 @@ TEMPLATE = r"""<!doctype html>
     color: #2b2b2b; font-weight: 600;
   }
   #stage { flex: 1; position: relative; }
+  #progress { position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+              z-index: 5; background: #1c2333; color: #c9d1d9; border-radius: 6px;
+              padding: 6px 10px; font-size: 12px; display: flex; align-items: center;
+              gap: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.35); }
+  #progress[hidden] { display: none; }
+  #progress-track { width: 120px; height: 4px; background: #30363d; border-radius: 2px; }
+  #progress-bar { height: 4px; width: 0%; background: #58a6ff; border-radius: 2px;
+                  transition: width .08s linear; }
   svg { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
   svg.panning { cursor: grabbing; }
   .link { stroke: var(--edge); stroke-width: 1.1px; }
@@ -260,7 +276,9 @@ TEMPLATE = r"""<!doctype html>
     </div>
     <div id="details"></div>
   </aside>
-  <div id="stage">
+  <div id="stage" data-max-iterations="500">
+    <div id="progress" hidden><span>laying out…</span>
+      <div id="progress-track"><div id="progress-bar"></div></div></div>
     <svg id="svg">
       <defs>
         <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6"
@@ -288,6 +306,9 @@ const gEdges = document.getElementById("g-edges");
 const gEdgeLabels = document.getElementById("g-edge-labels");
 const gNodes = document.getElementById("g-nodes");
 const panel = document.getElementById("details");
+const stage = document.getElementById("stage");
+const progress = document.getElementById("progress");
+const progressBar = document.getElementById("progress-bar");
 
 const colorOf = n => DATA.colors[n.type] || DATA.colors._;
 const radius = n => 13 + Math.min(20, Math.sqrt(n.deg || 1) * 3.2);
@@ -297,6 +318,8 @@ const nodeShown = n => !hiddenNodeTypes.has(n.type);
 const linkShown = l => !hiddenEdgeTypes.has(l.type) && nodeShown(l.source) && nodeShown(l.target);
 
 let tx = 0, ty = 0, scale = 1, alpha = 1, raf = null, drag = null, pan = null, selected = null;
+// The in-flight incremental settle, so a second relayout can cancel the first.
+let settleRaf = null;
 
 // ---------- model ----------
 const adjacency = new Map();
@@ -454,17 +477,55 @@ function fit() {
   ty = box.height / 2 - ((y0 + y1) / 2) * scale;
   render();
 }
+// How many settle iterations a relayout may run before it gives up and fits
+// whatever it has. Overridable per page with data-max-iterations on #stage, so
+// a very large graph can be given a longer settle without a rebuild.
+const DEFAULT_MAX_ITERATIONS = 500;
+// Iterations per animation frame. The browser gets control back between
+// batches, so the page stays responsive and the progress bar actually paints.
+const SETTLE_BATCH = 20;
+
+function maxIterations() {
+  const raw = parseInt(stage.dataset.maxIterations, 10);
+  return (Number.isFinite(raw) && raw > 0) ? raw : DEFAULT_MAX_ITERATIONS;
+}
+
+function showProgress(done, total) {
+  progress.hidden = false;
+  progressBar.style.width = Math.round((done / total) * 100) + "%";
+}
+
 function relayout() {
   scatter();
   document.querySelectorAll(".node.pinned").forEach(el => el.classList.remove("pinned"));
   alpha = 1;
-  // Settle the whole layout off-screen, so the first paint is the final one and
-  // nothing drifts out of the frame after fit() has measured it.
-  // ISS-35: Cap settle iterations to prevent freezing on large node counts
+  // The settle used to run as one synchronous `while` loop, which blocks the
+  // browser's main thread for its whole duration: on a large graph the page is
+  // frozen -- no paint, no input, no scroll -- and looks hung. Iteration count
+  // was capped to bound that, but a bounded freeze is still a freeze.
+  //
+  // Now it runs in small batches across animation frames. The thread is handed
+  // back between batches, so the layout is visibly converging and the page
+  // stays interactive while it does. Cancelling an in-flight settle matters
+  // too: two overlapping relayouts would otherwise fight over `alpha`.
+  if (settleRaf) cancelAnimationFrame(settleRaf);
+  const cap = maxIterations();
   let iters = 0;
-  const maxIters = Math.min(300, Math.max(50, Math.floor(15000 / Math.max(1, nodes.length))));
-  while (alpha > 0.02 && iters++ < maxIters) step();
-  fit();
+  function settle() {
+    for (let i = 0; i < SETTLE_BATCH && alpha > 0.02 && iters < cap; i++) {
+      step(); iters++;
+    }
+    showProgress(iters, cap);
+    render();
+    if (alpha > 0.02 && iters < cap) {
+      settleRaf = requestAnimationFrame(settle);
+      return;
+    }
+    settleRaf = null;
+    progress.hidden = true;
+    fit();
+  }
+  settleRaf = requestAnimationFrame(settle);
 }
 
 // ---------- selection + details ----------
