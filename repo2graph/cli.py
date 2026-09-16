@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌‌​​‌​‌​‌​​‌​​‌‌‌​​‌​​‌​‌‌​​‌​‌​​​‌‌​​‌​‌‌​‌​​‌​​‌‌‌​​‌​​​​‌‌​‌‌‌​‌​​​‌‌​​​‌​​‌​​‌‌​​​​‌‌​​​‌​‌​​‌​‌‌​‌​​‌‌‌‌​‌​​​‌​​​‌‌‌​​‌‌​‌​‌​​​​​‌‌​​​‌​​‌‌​​‌​‌​‌​​‌​​​​‌‌‌​‌‌​​‌​‌​​​‌⁠
+# @authormark v1 -- do not remove (authorship watermark)
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.YRrYFZNCtbL1KODsPbeHvQ
+# Fingerprint: AMK1._pWUrmsb8SeOGEZbCmOiKR
 """repo2graph CLI: build a code graph, query it, export for RAG."""
 import argparse
 import json
@@ -16,7 +16,9 @@ from .chunks import iter_chunks
 # it, so the heavyweight sentence-transformers import stays off every path that
 # does not embed (and stays patchable through the module object).
 from .embed import DEFAULT_MODEL as EMBED_DEFAULT_MODEL
-from .export import dump_all, make_path, path as artifact_path, rel as artifact_rel
+from .export import (dump_all, load_parse_cache, make_path, path as artifact_path,
+                     rel as artifact_rel)
+from .events import SAFE_ERRORS, encodable, write_safe
 from .graph import build
 from .viz import MAX_NODES
 
@@ -32,45 +34,44 @@ def parse_formats(spec: str) -> set[str]:
     return wanted
 
 
-# Error handlers that cannot raise: each one maps an unencodable character to
-# a substitute instead. "surrogateescape"/"surrogatepass" are absent on purpose.
-_SAFE_ERRORS = frozenset({"replace", "backslashreplace", "xmlcharrefreplace", "namereplace"})
+# Kept as a re-export: the canonical definition now lives in events, which both
+# the CLI and the server-side loggers share so the rule cannot drift in two
+# places. Existing importers of cli._SAFE_ERRORS keep working.
+_SAFE_ERRORS = SAFE_ERRORS
 
 
 def _emit(text: str) -> None:
-    """print() that cannot raise UnicodeEncodeError.
+    """The single stdout write for the whole CLI. Cannot raise on encoding.
 
     A redirected or piped Windows stdout is a strict cp1252 TextIOWrapper, so
     `repo2graph rag "..." > pack.md` over any repository holding a single
-    non-ASCII source byte would otherwise die with 'charmap' codec errors.
-    Characters the console cannot represent are replaced, never fatal.
+    non-ASCII source byte would otherwise die with 'charmap' codec errors. Git
+    Bash is worse: it hands a piped stdout `errors='surrogateescape'`, which
+    still raises on any character cp1252 lacks that is not a lone surrogate.
 
-    Only the handlers that *substitute* a replacement are safe to print
-    through untouched. "surrogateescape" -- what Git Bash hands a piped stdout
-    on Windows -- raises on any character the codec lacks that is not a lone
-    surrogate, so it is probed with its own handler rather than trusted: that
-    keeps a surrogateescape-decoded path byte-identical on the way out (S-13)
-    while still replacing, say, a U+2192 that cp1252 cannot represent.
+    Both cases are handled by `events.encodable`, which probes the stream's
+    *actual* encoding and handler at call time -- not at import, since tests
+    replace `sys.stdout` afterwards and a caller may reconfigure it mid-run.
+
+    Args:
+        text: The line to print, without a trailing newline.
     """
-    errors = getattr(sys.stdout, "errors", "strict") or "strict"
-    if errors in _SAFE_ERRORS:
-        print(text)
-        return
-    enc = getattr(sys.stdout, "encoding", None) or "utf8"
+    stream = sys.stdout
     try:
-        text.encode(enc, errors)
-    except UnicodeEncodeError:
-        text = text.encode(enc, "replace").decode(enc, "replace")
-    except LookupError:
-        text = text.encode("utf8", "replace").decode("utf8", "replace")
-    try:
-        print(text)
+        print(encodable(text, stream))
     except BrokenPipeError:
+        # `repo2graph rag ... | head` closes the pipe early. That is the user
+        # getting what they asked for, not an error: exit 0 rather than dumping
+        # a traceback over the output they were reading.
         try:
-            sys.stdout.close()
+            stream.close()
         except Exception:
             pass
         sys.exit(0)
+    except UnicodeEncodeError:
+        # encodable() should have prevented this; a stream that misreports its
+        # own encoding still must not take the command down.
+        write_safe(stream, text)
 
 
 def cmd_build(args):
@@ -78,13 +79,21 @@ def cmd_build(args):
     if not repo_path.is_dir():
         raise SystemExit(f"error: repository directory does not exist or is not a directory: {repo_path}")
     formats = parse_formats(args.formats)
-    g = build(repo_path, include=args.include, exclude=args.exclude,
-              git_history=args.git_history, max_files=args.max_files, jobs=args.jobs)
-    chunks = None if args.no_chunks else iter_chunks(g)   # a generator, streamed to disk
     outdir = Path(args.out)
+    # An absent or unreadable cache is an empty dict, which is exactly a full
+    # build -- so `--incremental` against a directory with no index yet works,
+    # it just has nothing to reuse on the first run.
+    cache = load_parse_cache(outdir) if getattr(args, "incremental", False) else None
+    g = build(repo_path, include=args.include, exclude=args.exclude,
+              git_history=args.git_history, max_files=args.max_files, jobs=args.jobs,
+              cache=cache)
+    chunks = None if args.no_chunks else iter_chunks(g)   # a generator, streamed to disk
     written, n_chunks = dump_all(g, chunks, outdir, formats, args.viz_nodes)
-    print(json.dumps({"out": str(outdir), "written": written,
-                      "stats": dict(g.stats), "chunks": n_chunks}, indent=2))
+    report = {"out": str(outdir), "written": written,
+              "stats": dict(g.stats), "chunks": n_chunks}
+    if g.incremental is not None:
+        report["incremental"] = g.incremental
+    _emit(json.dumps(report, indent=2))
 
 
 def cmd_github(args):
@@ -96,7 +105,7 @@ def cmd_github(args):
         include=args.include, exclude=args.exclude, max_files=args.max_files,
         keep_clone=args.keep_clone, token=args.token, viz_nodes=args.viz_nodes,
         jobs=args.jobs)
-    print(json.dumps(meta, indent=2))
+    _emit(json.dumps(meta, indent=2))
 
 
 def _require_index(out: Path, name: str) -> Path:
@@ -159,6 +168,8 @@ def _resolve_vectors(idx, args, out=None):
 
 def cmd_embed(args):
     """Embed an index's chunks, reusing every vector whose text is unchanged."""
+    if getattr(args, "verify_rag", False):
+        return cmd_verify_rag(args)
     from .embed import (
         build_vectors,
         default_embedder,
@@ -197,7 +208,7 @@ def cmd_embed(args):
                       [hashes[cid] for cid in chunk_ids])
     register_written(out, [artifact_rel("vectors.npy"), artifact_rel("vectors.meta.json")])
     reused = len(set(reuse) & set(vectors))
-    print(json.dumps({"out": str(out), "vectors": n, "reused": reused,
+    _emit(json.dumps({"out": str(out), "vectors": n, "reused": reused,
                       "embedded": n - reused, "model": model_id, "dim": dim},
                      indent=2))
 
@@ -274,6 +285,94 @@ def _rag_index_dir(args) -> Path:
     return out
 
 
+def verify_rag(idx, out, embed_model=None) -> tuple[dict, str | None]:
+    """Self-test the dense-retrieval path against one index.
+
+    Answers the four questions that distinguish "dense retrieval is working"
+    from "dense retrieval silently is not": are there vectors at all, which
+    model and width were they built with, does the active embedder agree, and
+    does every chunk actually have one.
+
+    Args:
+        idx: An open `Index`.
+        out: The index directory, for error messages.
+        embed_model: Model id to check against, or None for the built-in
+            default. Never defaulted to the index's own `model_id` -- comparing
+            a value with itself is what makes a mismatch guard unfalsifiable.
+
+    Returns:
+        `(report, error)`. `error` is None when the path is sound, otherwise a
+        sentence naming what is broken and how to fix it.
+    """
+    report = {
+        "index": str(out),
+        "vectors_present": bool(idx.vectors),
+        "chunks": len(idx.chunks),
+        "model_id": None,
+        "dim": None,
+        "vectorised_chunks": len(idx.vectors or {}),
+        "unvectorised_chunks": len(idx.chunks) - len(idx.vectors or {}),
+        "embedder_model_id": None,
+        "embedder_dim": None,
+        "rag_extra_installed": None,
+    }
+    if not idx.vectors:
+        return report, (
+            f"no vectors in the index at {out}: dense retrieval is not "
+            f"available. Run `repo2graph embed -o {out}` to build them.")
+    meta = idx.vector_meta or {}
+    report["model_id"] = meta.get("model_id")
+    report["dim"] = meta.get("dim")
+
+    # Chunk coverage: fuse_ok cannot see this, and it is the failure that makes
+    # fusion abandon itself at query time with everything else looking healthy.
+    missing = report["unvectorised_chunks"]
+
+    from .embed import default_embedder
+    try:
+        embedder = default_embedder(embed_model)
+        report["rag_extra_installed"] = True
+    except RuntimeError as exc:
+        report["rag_extra_installed"] = False
+        return report, str(exc)
+    from .embed import dim_of, model_id_of
+    report["embedder_model_id"] = model_id_of(embedder)
+    try:
+        report["embedder_dim"] = dim_of(embedder)
+    except Exception:
+        report["embedder_dim"] = None
+    ok, reason = idx.fuse_ok(embedder)
+    if not ok:
+        return report, reason
+    if missing > 0:
+        return report, (
+            f"{missing} of {report['chunks']} chunks have no vector: a query "
+            f"whose BM25 shortlist touches one of them falls back to lexical "
+            f"ranking. Re-run `repo2graph embed -o {out}`.")
+    return report, None
+
+
+def cmd_verify_rag(args):
+    """`--verify-rag`: report on the index's dense path, non-zero if broken."""
+    from .query import Index
+    out = Path(args.out)
+    _require_index(out, "chunks.jsonl")
+    try:
+        idx = Index(out)
+    except ValueError as exc:
+        raise SystemExit(f"error: corrupt index at {out}: {exc}") from None
+    # `embed` spells it --model/--embed-model; the rag surface spells it
+    # --embed-model. Either way it is the *embedding* model, never the LLM.
+    model = getattr(args, "embed_model", None) or getattr(args, "model", None)
+    report, error = verify_rag(idx, out, model)
+    report["ok"] = error is None
+    report["error"] = error
+    _emit(json.dumps(report, indent=2))
+    if error:
+        raise SystemExit(1)
+    return 0
+
+
 def cmd_rag(args):
     """Pack an agent-ready, citation-carrying context for one question."""
     from .query import Index
@@ -310,13 +409,13 @@ def cmd_map(args):
     _require_index(out, "edges.jsonl")
     html = make_path(out, "graph.html")
     data = write_html(LoadedGraph(out), html, args.viz_nodes)
-    print(json.dumps({"html": str(html),
+    _emit(json.dumps({"html": str(html),
                       "nodes": len(data["nodes"]), "edges": len(data["edges"]),
                       "of": data["totals"]}, indent=2))
 
 
 def cmd_stats(args):
-    print(_require_index(Path(args.out), "stats.json").read_text(encoding="utf8"))
+    _emit(_require_index(Path(args.out), "stats.json").read_text(encoding="utf8"))
 
 
 def _nonneg(value: str) -> int:
@@ -329,6 +428,23 @@ def _nonneg(value: str) -> int:
     if n < 0:
         raise argparse.ArgumentTypeError(f"must be >= 0, got {n}")
     return n
+
+
+def _viz_nodes(value: str):
+    """argparse type for --viz-nodes: a non-negative int, or "all" for no cap.
+
+    Args:
+        value: The raw command-line string.
+
+    Returns:
+        None for "all" (no cap), otherwise the integer, 0 included.
+
+    Raises:
+        argparse.ArgumentTypeError: On a negative or non-integer value.
+    """
+    if str(value).strip().lower() == "all":
+        return None
+    return _nonneg(value)
 
 
 def _unit_float(value: str) -> float:
@@ -380,14 +496,17 @@ def main(argv=None):
         return 0
 
     v = sub.add_parser("version", help="show repo2graph version")
-    v.set_defaults(func=lambda _args: print(f"repo2graph {__version__}"))
+    v.set_defaults(func=lambda _args: _emit(f"repo2graph {__version__}"))
 
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("-o", "--out", default=".r2g")
     common.add_argument("--formats", default="jsonl,graphml,cypher,overview,html",
                         help="comma list: jsonl,graphml,cypher,overview,html")
-    common.add_argument("--viz-nodes", type=_nonneg, default=MAX_NODES,
-                        help="best-connected nodes to draw in graph.html (0 = no cap)")
+    common.add_argument("--viz-nodes", type=_viz_nodes, default=MAX_NODES,
+                        metavar="N|all",
+                        help=f"best-connected nodes to draw in graph.html "
+                             f"(default: {MAX_NODES}; 0 draws an empty graph; "
+                             f"'all' draws every node)")
     common.add_argument("--include", nargs="*", default=None, help="glob(s) to include")
     common.add_argument("--exclude", nargs="*", default=None, help="glob(s) to exclude")
     common.add_argument("--git-history", type=_nonneg, default=0,
@@ -399,6 +518,12 @@ def main(argv=None):
     b = sub.add_parser("build", parents=[common], help="parse a repo into a graph + RAG chunks")
     b.add_argument("repo")
     b.add_argument("--no-chunks", action="store_true")
+    b.add_argument("--incremental", action="store_true",
+                   help="reuse parse results for files whose content hash is "
+                        "unchanged since the last build in --out (default: off, "
+                        "full rebuild). Safe for edits, adds, deletes and "
+                        "renames; rerun without it after upgrading repo2graph "
+                        "or changing a language grammar")
     b.set_defaults(func=cmd_build)
 
     gh = sub.add_parser("github", aliases=["gh"], parents=[common],
@@ -458,12 +583,21 @@ def main(argv=None):
     e.add_argument("--batch", type=_nonneg, default=64, help="texts per encode() call")
     e.add_argument("--force", action="store_true",
                    help="re-embed every chunk instead of reusing unchanged vectors")
+    e.add_argument("--verify-rag", action="store_true",
+                   help="self-test this index's dense-retrieval path instead of "
+                        "embedding: reports whether vectors are present, the "
+                        "model and dimension they were built with, and whether "
+                        "the active embedder matches. Exits 1 if the rag path "
+                        "is broken or misconfigured (default: off)")
     e.set_defaults(func=cmd_embed)
 
     m = sub.add_parser("map", help="redraw the HTML graph map from a built index")
     m.add_argument("-o", "--out", default=".r2g")
-    m.add_argument("--viz-nodes", type=_nonneg, default=MAX_NODES,
-                   help="how many of the best-connected nodes to draw (0 = no cap)")
+    m.add_argument("--viz-nodes", type=_viz_nodes, default=MAX_NODES,
+                   metavar="N|all",
+                   help=f"how many of the best-connected nodes to draw "
+                        f"(default: {MAX_NODES}; 0 draws an empty graph; "
+                        f"'all' draws every node)")
     m.set_defaults(func=cmd_map)
 
     s = sub.add_parser("stats", help="print index stats")

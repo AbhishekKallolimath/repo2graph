@@ -9,6 +9,12 @@ name: Publish
 # `release.yml` moves the floating `vX` tag on the same event; the two are
 # independent on purpose, so a failed publish never leaves the major tag behind.
 on:
+  # A tag push is the whole release trigger: it creates the GitHub Release from
+  # CHANGELOG.md and then ships. A Release created by GITHUB_TOKEN does not
+  # itself start a workflow run, so the `release: published` trigger below
+  # cannot fire a second, duplicate publish off the back of this one.
+  push:
+    tags: ["v*.*.*"]
   release:
     types: [published]
   workflow_dispatch:
@@ -34,7 +40,7 @@ jobs:
       - name: Tag, pyproject.toml and server.json must agree
         id: v
         env:
-          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           case "$TAG" in
@@ -66,6 +72,45 @@ jobs:
             echo "::error::README.md is missing the line 'mcp-name: $name'"
             exit 1
           fi
+
+  github-release:
+    # Only on a tag push. When the maintainer created the Release by hand, it
+    # already exists and there is nothing to cut.
+    if: github.event_name == 'push'
+    needs: check-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # creating a Release is a write to the repository
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Extract this version's CHANGELOG section
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          python - <<'PY' > release-notes.md
+          import os, re, sys, pathlib
+          version = os.environ["VERSION"]
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf8")
+          # Keep everything between this version's heading and the next one.
+          pattern = re.compile(
+              r"^## \[?" + re.escape(version) + r"\]?.*?$(.*?)(?=^## |\Z)",
+              re.M | re.S)
+          match = pattern.search(text)
+          if not match or not match.group(1).strip():
+              print(f"::error::CHANGELOG.md has no section for {version}",
+                    file=sys.stderr)
+              raise SystemExit(1)
+          print(match.group(1).strip())
+          PY
+          test -s release-notes.md
+
+      - name: Create the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" --title "$TAG" --notes-file release-notes.md --verify-tag
 
   pypi:
     needs: check-version

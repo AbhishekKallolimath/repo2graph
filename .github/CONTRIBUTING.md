@@ -13,3 +13,66 @@ Thanks for helping out.
 2. Keep changes focused; add or update tests.
 3. Do not remove `@authormark` headers — refresh a stale fingerprint with `authormark stamp <file>`.
 4. Open a pull request describing the change and its motivation.
+
+## Registry and Quality Score
+
+repo2graph is published to two places that are not PyPI, and both are part of a
+release rather than an afterthought.
+
+### MCP Registry
+
+The canonical entry is `io.github.Srinivasan-78/repo2graph`, generated from
+`server.json` at the repo root and published by `.github/workflows/publish.yml`
+on a version tag. `server.json` is the source of truth — never edit the registry
+entry by hand, or the next release will silently revert it.
+
+Audit it against the live entry with:
+
+```bash
+curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=repo2graph" | jq .
+```
+
+Four fields drift most easily, so check each one after a release:
+
+| Field | Must be |
+| --- | --- |
+| `version` and `packages[].version` | identical to `project.version` in `pyproject.toml` |
+| `packages[].identifier` | `repo2graph` — the PyPI name, not the module name |
+| runtime + package arguments | `uvx --from "repo2graph[mcp]" repo2graph-mcp <repo_path>` |
+| `repository.id` | the numeric GitHub repo id, which does *not* change on rename |
+
+Tool names, descriptions and input schemas are **not** carried in the registry
+entry; a client reads those from `tools/list`, or from
+`/.well-known/mcp-server-metadata` when the server runs with `--http-port`.
+Both are generated from `TOOL_DESCRIPTIONS`/`TOOL_SCHEMAS` in
+`repo2graph/mcp.py`, so there is one definition and nothing to keep in sync.
+
+Licence, homepage and author live in `pyproject.toml` (`license`,
+`project.urls.Homepage`, `authors`) and reach PyPI from there.
+
+### Glama quality score
+
+[Glama](https://glama.ai/mcp/servers) indexes public MCP servers and assigns a
+quality score from the repository: tests, docs, licence, release hygiene and
+whether the server actually starts.
+
+To submit:
+
+1. Confirm the server is listed in the MCP Registry (above). Glama discovers
+   most servers from there and from `awesome-mcp-servers`.
+2. If it has not appeared within a week, submit the repository URL directly at
+   <https://glama.ai/mcp/servers> using the "Add server" flow.
+3. Glama builds the server in a sandbox, so `pip install "repo2graph[mcp]"`
+   followed by `repo2graph-mcp <repo>` must work from a clean environment. CI's
+   `tests` job installs `[dev,mcp]` and runs a real stdio round trip, which is
+   the same thing.
+
+Once a score is assigned, Glama issues a badge URL containing the server's
+generated slug. Add it in two places:
+
+- `README.md`, in the top badge row.
+- `pyproject.toml`, as `project.urls."Quality Score"`.
+
+**Neither is added yet**, because no score has been assigned and a badge
+pointing at a nonexistent score renders as a broken image — worse than no badge.
+Add both in the same commit as the first score.

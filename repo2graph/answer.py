@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​​‌‌​​​‌​‌‌​‌‌​‌​‌​‌​​‌​​‌‌​​‌‌‌​‌​​‌‌‌​​‌‌‌​‌​‌​‌‌​‌​​‌​‌‌​‌‌​​​‌‌‌​‌​​​‌​​‌​​‌​‌‌​‌​‌​​‌​‌​​​​​‌‌‌​‌​‌​‌​​‌​​‌​‌​‌​​‌​​‌‌‌​​​​​‌‌‌‌​​​​‌​​​​‌​​​‌‌‌​​​​‌‌​​‌​​​‌​‌‌​​​​‌​​‌​‌‌⁠
+# @authormark v1 -- do not remove (authorship watermark)
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.1mRgNuiltIjPuIRpxB8dXK
+# Fingerprint: AMK1.pTL2bS3hBBpnFmxyMNgLCh
 """Stream a grounded, citation-carrying answer from a packed context.
 
 Optional by design: nothing here is imported unless `repo2graph rag --answer`
@@ -252,16 +252,33 @@ def _empty_answer(spec: dict, raw_tail: list) -> str:
             f"the {spec['env']} value")
 
 
-def _disclose(spec: dict, url: str, user: str) -> None:
+def _disclose(name: str, env: str, url: str, n_chars: int) -> None:
     """Tell the user, on stderr, where their repository content is going.
+
+    Takes the three scalars it prints rather than the provider `spec`, because
+    that dict also carries the resolved API key under "value". A logging
+    function has no business holding a credential even if it never prints it:
+    the only way to be sure a secret cannot be logged is for it not to be in
+    scope. This also clears CodeQL alert #1 (py/clear-text-logging-sensitive-data),
+    which flagged the whole-dict argument reaching a print.
 
     The pack can contain any indexed file, `.env` included. stderr, not stdout:
     stdout is the answer itself and has to stay pipeable.
+
+    Args:
+        name: Provider name, e.g. "openai".
+        env: Name of the environment variable that selected it -- the variable's
+            *name*, never its value.
+        url: Endpoint URL; only its hostname is printed.
+        n_chars: How many characters of repository context are being sent.
     """
     host = urllib.parse.urlsplit(url).hostname or url
-    print(f"repo2graph: sending {len(user)} chars of repository context to "
-          f"provider {spec['name']} at {host} (selected by {spec['env']})",
-          file=sys.stderr)
+    # write_safe, not print: a hostname from an IDN or a non-ASCII OLLAMA_HOST
+    # must not make the disclosure itself the thing that crashes the command.
+    from .events import write_safe
+    write_safe(sys.stderr,
+               f"repo2graph: sending {n_chars} chars of repository context to "
+               f"provider {name} at {host} (selected by {env})")
     _flush(sys.stderr)
 
 
@@ -276,7 +293,7 @@ def stream_answer(pack, model=None, env=None, out=None, provider=None) -> str:
     url, headers, payload = _request(spec, model, system, user)
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode("utf8"), headers=headers, method="POST")
-    _disclose(spec, url, user)
+    _disclose(str(spec["name"]), str(spec["env"]), url, len(user))
     write = _writer(out)
     parts, raw_tail = [], []
     # urlopen is looked up on the module at call time, so a test can swap it.

@@ -1,0 +1,65 @@
+# @authormark v1 -- do not remove (authorship watermark)
+# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+# Author: https://github.com/Srinivasan-78
+# SPDX-License-Identifier: MIT
+# Fingerprint: AMK1.3XcWbTdt4Ip-s6Ua1pcF3K
+#
+# Install once with:  pip install pre-commit && pre-commit install
+#
+# Deliberately not included: the authormark stamp. It rewrites the file being
+# committed, which a pre-commit hook may do but which needs the canonical tool
+# from Srinivasan-78/authormark-watch -- not vendored here on purpose, because a
+# recovered copy strips the watermark payload. CI's `authormark check` remains
+# the gate; see AGENTS.md.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.2
+    hooks:
+      - id: ruff
+        name: ruff check
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+        name: ruff format --check
+        args: [--check]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      # The repo declares `* text=auto eol=lf`; this enforces it, because the
+      # authormark stamper writes CRLF on Windows and the churn is invisible
+      # until someone diffs a file they never edited.
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-merge-conflict
+
+  - repo: local
+    hooks:
+      - id: version-consistency
+        name: pyproject, __init__ and server.json must agree on the version
+        entry: python scripts/check_version.py
+        language: system
+        pass_filenames: false
+        files: ^(pyproject\.toml|server\.json|repo2graph/__init__\.py)$
+
+      - id: mypy-strict
+        # Strict, and green, on the modules that are annotated. The ten legacy
+        # modules carry 29 real type errors and ~223 missing annotations; a hook
+        # that is red on every commit gets disabled within a week, so it is
+        # scoped to what actually passes and the debt is tracked in DONE.md
+        # instead of being pretended away.
+        #
+        # pyproject's [tool.mypy] is strict by default with the legacy modules
+        # relaxed *by name*, so a brand-new module is strict automatically and
+        # must be listed deliberately to escape. Add new modules to the regex
+        # below as they are written.
+        name: mypy --strict (annotated modules)
+        entry: python -m mypy
+        language: system
+        types: [python]
+        files: ^repo2graph/(events|cache|auth|audit|tasks|http_server)\.py$
+        require_serial: true

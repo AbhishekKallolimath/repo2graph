@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌‌​‌​‌​‌​​‌‌​‌​‌‌​‌​​‌​‌​‌​‌​‌​‌​‌​​​​​‌​‌‌​​‌​‌‌‌​‌‌​​‌​​​​‌‌​‌​‌​​​‌​‌‌‌​‌‌​​‌‌‌​​​​​​‌‌​‌‌​​​‌‌‌​​‌​‌‌​​​​‌​‌‌​‌​​‌​‌​​​‌​​​‌​​​‌‌‌​‌​‌​​‌​​‌​​‌‌​​​‌​‌‌​​‌​‌‌‌​‌​‌​‌​‌‌​​​⁠
+# @authormark v1 -- do not remove (authorship watermark)
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.uMiUPYvCQvp69aiDGRLYuX
+# Fingerprint: AMK1.2PvMaOtFI4x6dD1LXBXzwX
 """Change 2 -- the stdio MCP server. AC-26 .. AC-33.
 
 The `mcp` SDK is an optional extra and is deliberately never imported here:
@@ -207,11 +207,18 @@ def test_ac30_neighbours_respects_its_limit(mini_index):
 # AC-31 -- tool descriptions are context an agent pays for every session
 # ==========================================================================
 
-def test_ac31_tool_descriptions_are_three_and_stay_under_600_chars():
-    """AC-31: exactly the three tool names, ~150 tokens combined."""
+def test_ac31_tool_descriptions_stay_under_600_chars():
+    """AC-31: the published tool set, ~150 tokens combined.
+
+    The character budget is the point of this test, not the tool count. Every
+    description is loaded into every agent's context every session, so it is
+    charged for on every request whether or not a tool is ever called. A fourth
+    tool is allowed; a fourth tool that doubles the standing cost is not.
+    """
     mcp = mcp_module()
     assert set(mcp.TOOL_DESCRIPTIONS) == {"repo_map", "repo_search",
-                                          "repo_neighbours"}
+                                          "repo_neighbours", "repo_cache_stats",
+                                          "repo_build_status"}
     for name, text in mcp.TOOL_DESCRIPTIONS.items():
         assert isinstance(text, str) and text.strip(), name
     total = sum(len(d) for d in mcp.TOOL_DESCRIPTIONS.values())
@@ -883,7 +890,8 @@ def test_no_auto_build_flag_turns_the_repo_off(mini_repo, monkeypatch):
     mcp = mcp_module()
     seen = {}
     monkeypatch.setattr(mcp, "serve",
-                        lambda out, repo=None: seen.update(out=out, repo=repo))
+                        lambda out, repo=None, **kw: seen.update(
+                            out=out, repo=repo, **kw))
 
     mcp.main([str(mini_repo), "--no-auto-build"])
     assert seen["repo"] is None

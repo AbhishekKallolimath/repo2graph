@@ -34,11 +34,44 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--git-history` | `0` | Commits to read for `CO_CHANGE` arrows. Capped at 5000. |
 | `--max-files` | `0` (all) | Stop after N files, for very large projects. |
 | `--jobs` | `0` (auto) | Parallel workers. Auto means one per core, up to 8. |
-| `--viz-nodes` | `300` | Node cap in `graph.html`. `0` means no cap. |
+| `--viz-nodes` | `300` | Node cap in `graph.html`. `0` draws an empty graph; `all` draws every node. |
 | `--no-chunks` | off | Skip the retrieval chunks entirely. |
+| `--incremental` | off | Reuse parse results for files whose content hash is unchanged. |
 
 Output files are written atomically through sibling temp files (`os.replace`), so
 a crash or a full disk never leaves a half-written index behind.
+
+### `--incremental`
+
+Every build writes `agent/parse.cache.json`: each file's sha256 alongside the
+symbols and imports parsed out of it. With `--incremental`, the next build into
+the same `--out` re-reads every file but only *re-parses* the ones whose hash or
+language changed. Parsing is what dominates a build, so on a repo where a handful
+of files moved this is close to free.
+
+The result is byte-for-byte identical to a full rebuild, and that is a property
+of the design rather than a hope. A file's symbol table depends on its own bytes
+and its language and nothing else, so reusing one is exact. Everything that is
+*not* per-file — the repo-global name index, `CALLS` confidences, `INHERITS`
+edges, entrypoint flags and reach counts — is recomputed from the complete symbol
+set on every build, incremental or not. Nothing is spliced, so nothing goes
+stale. `tests/test_incremental.py` asserts the byte equality directly across an
+added file, a modified file, a deleted file and a no-op.
+
+The build report gains an `incremental` block when the flag is on:
+
+```json
+{ "incremental": { "cached": 812, "reparsed": 3 } }
+```
+
+**When a full rebuild is still required.** The cache is keyed on file content, so
+it cannot see a change in how content is *interpreted*. Rerun without the flag
+after upgrading repo2graph, after a `tree-sitter-language-pack` upgrade that
+changes a grammar, or if you ever suspect the cache. Doing so costs only time —
+a full build overwrites the cache and puts you back on a known-good footing.
+Cache entries written by a different cache format are ignored automatically, as
+is a cache that is missing, unreadable or corrupt; each of those degrades to a
+full build rather than to a wrong one.
 
 ## `github` — map a project you do not have locally
 

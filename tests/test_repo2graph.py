@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌​​‌​​‌​‌​​​‌‌​​‌‌‌​‌​​​​‌‌​‌​‌​‌‌‌​​​​​‌‌​​‌​‌​‌​​‌‌​‌​​‌‌​​​​​‌​‌‌​‌​​‌​​​​‌‌​​‌‌​‌​​​‌‌‌​‌​‌​‌​‌‌​​‌​‌‌‌​​‌​​‌‌​​‌‌​​‌​​‌‌​‌​‌​​‌​‌​​‌​​​‌‌‌​‌‌‌‌​​‌​‌‌​‌​‌​​‌​​‌​​​​‌‌​​​​‌⁠
+# @authormark v1 -- do not remove (authorship watermark)
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.IFt5peM0ZC4uYrfMJGyjHa
+# Fingerprint: AMK1.vT70yfDCMsDt4QHvWlEh92
 """End-to-end and unit coverage for graph building, chunking and retrieval."""
 import re
 import json
@@ -413,7 +413,8 @@ def test_output_is_split_into_human_and_agent_sections(tmp_path, sample_repo, ca
         "graph.graphml", "graph.html", "overview.md"]
     assert sorted(p.name for p in (out / "agent").iterdir()) == [
         "chunks.jsonl", "edges.jsonl", "graph.cypher", "index.state.json",
-        "manifest.json", "nodes.jsonl", "overview.md", "stats.json"]
+        "manifest.json", "nodes.jsonl", "overview.md", "parse.cache.json",
+        "stats.json"]
     assert sorted(p.name for p in out.iterdir()) == ["agent", "human"]
     written = json.loads(capsys.readouterr().out)["written"]
     assert "agent/nodes.jsonl" in written and "human/overview.md" in written
@@ -1515,20 +1516,69 @@ def test_iss24_write_html_handles_placeholder_in_title(tmp_path):
     assert "<h1>attacker/__R2G_DATA__/repo</h1>" in content
 
 
-def test_iss24_select_zero_or_negative_means_no_cap():
-    """Issue 24 (ISS-34): max_nodes <= 0 means no cap (returns all nodes)."""
+def test_select_zero_draws_an_empty_graph():
+    """0 means zero nodes, and `None` is the only spelling for "no cap".
+
+    This replaces the ISS-34 behaviour, where `max_nodes <= 0` meant no cap.
+    That made "draw everything" and "draw nothing" -- the two most opposite
+    intentions a caller can have -- share a spelling, so a mistyped or
+    defaulted-to-zero argument silently rendered the *largest* possible page.
+    """
     from repo2graph.viz import select
 
     nodes = {f"n{i}": {"id": f"n{i}"} for i in range(10)}
     edges = [{"src": "n0", "dst": f"n{i}", "type": "CALLS"} for i in range(1, 10)]
 
-    kept_nodes, kept_edges = select(nodes, edges, max_nodes=0)
-    assert len(kept_nodes) == 10
-    assert len(kept_edges) == 9
+    empty_nodes, empty_edges = select(nodes, edges, max_nodes=0)
+    assert empty_nodes == [] and empty_edges == []
 
-    kept_nodes_neg, kept_edges_neg = select(nodes, edges, max_nodes=-5)
-    assert len(kept_nodes_neg) == 10
-    assert len(kept_edges_neg) == 9
+    # A negative is treated like 0 rather than wrapping into a slice.
+    neg_nodes, neg_edges = select(nodes, edges, max_nodes=-5)
+    assert neg_nodes == [] and neg_edges == []
+
+    all_nodes, all_edges = select(nodes, edges, max_nodes=None)
+    assert len(all_nodes) == 10 and len(all_edges) == 9
+
+    capped_nodes, _ = select(nodes, edges, max_nodes=4)
+    assert len(capped_nodes) == 4
+
+
+def test_viz_nodes_flag_parses_all_and_rejects_negatives():
+    """`--viz-nodes all` is the no-cap spelling; a negative is still refused."""
+    import argparse
+
+    from repo2graph.cli import _viz_nodes
+
+    assert _viz_nodes("all") is None
+    assert _viz_nodes("ALL") is None
+    assert _viz_nodes("0") == 0
+    assert _viz_nodes("120") == 120
+    for bad in ("-1", "seven"):
+        with pytest.raises(argparse.ArgumentTypeError):
+            _viz_nodes(bad)
+
+
+def test_build_with_viz_nodes_zero_writes_an_empty_map(tmp_path, capsys):
+    """End to end: 0 renders a page with no nodes rather than every node."""
+    import json as _json
+
+    repo = tmp_path / "src"
+    (repo / "pkg").mkdir(parents=True)
+    (repo / "pkg" / "a.py").write_text(
+        "TABLE = {'a': 1}\n\n\ndef one():\n    return TABLE\n", encoding="utf8")
+    out = tmp_path / "idx"
+    main(["build", str(repo), "-o", str(out), "--formats", "jsonl,html",
+          "--viz-nodes", "0"])
+    capsys.readouterr()
+
+    html = (out / "human" / "graph.html").read_text(encoding="utf8")
+    blob = html.split('"nodes":', 1)[1]
+    assert blob.lstrip().startswith("[]"), "expected zero nodes in the payload"
+
+    # ...and `all` still draws the whole graph.
+    main(["map", "-o", str(out), "--viz-nodes", "all"])
+    report = _json.loads(capsys.readouterr().out)
+    assert report["nodes"] == report["of"]["nodes"]
 
 
 def test_iss22_chunk_caps_and_residual_span(tmp_path):

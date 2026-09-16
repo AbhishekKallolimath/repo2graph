@@ -1,0 +1,95 @@
+# @authormark v1 -- do not remove (authorship watermark)
+# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+# Author: https://github.com/Srinivasan-78
+# SPDX-License-Identifier: MIT
+# Fingerprint: AMK1.PENDING-RESTAMP
+name: Dependency audit
+
+# Fails a PR when a known high-severity CVE is reachable from the dependency
+# tree. `dependency-review.yml` already covers *added* dependencies on a diff;
+# this covers the installed tree as a whole, so a CVE published against a
+# dependency nobody touched this week still surfaces.
+#
+# The whole tree is audited, extras included. The runtime floor is two packages
+# (tree-sitter, tree-sitter-language-pack), but `[rag]` pulls in
+# sentence-transformers and with it torch and transformers -- by far the largest
+# attack surface this project can be installed with, and the one most worth
+# watching. Auditing only the core would report a clean tree while the extra
+# most likely to carry a CVE went unexamined.
+#
+# pip-audit only, no `safety`. `safety check` is deprecated in favour of
+# `safety scan`, which needs an authenticated account for its database -- a
+# CI secret and a third-party account dependency in exchange for advisories
+# pip-audit already reads from the PyPI Advisory Database and OSV. If the
+# duplicate coverage is ever wanted, that trade is the thing to weigh.
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, so a CVE published after a PR merges is still caught.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the project with every extra
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,rag,mcp]"
+          pip install pip-audit
+
+      - name: pip-audit (fails on any known vulnerability)
+        # --strict makes a failure to resolve an advisory an error rather than a
+        # silent pass: an audit that cannot reach its database must not report
+        # "no vulnerabilities found".
+        run: pip-audit --strict --progress-spinner off
+
+      - name: Severity gate (high and critical only)
+        # pip-audit exits non-zero on *any* advisory. The step above is the
+        # strict gate; this one re-runs in JSON to name which findings are
+        # high or critical, so a maintainer reading a red build knows in one
+        # glance whether it is urgent or a low-severity transitive note.
+        if: failure()
+        run: |
+          pip-audit --format json --progress-spinner off > audit.json || true
+          python - <<'PY'
+          import json, sys
+          try:
+              data = json.load(open("audit.json"))
+          except Exception as exc:
+              print(f"could not parse audit output: {exc}")
+              sys.exit(1)
+          severe = []
+          for dep in data.get("dependencies", []):
+              for v in dep.get("vulns", []):
+                  sev = str(v.get("severity") or "").upper()
+                  if sev in ("HIGH", "CRITICAL"):
+                      severe.append(f"{dep.get('name')} {dep.get('version')}: "
+                                    f"{v.get('id')} ({sev})")
+          if severe:
+              print("HIGH/CRITICAL advisories:")
+              for line in severe:
+                  print("  " + line)
+          else:
+              print("no HIGH/CRITICAL advisories; the failure above is "
+                    "low/moderate severity or unscored.")
+          PY
+
+      - name: Upload the audit report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: pip-audit-report
+          path: audit.json
+          if-no-files-found: ignore
