@@ -1,11 +1,11 @@
-# @authormark v1 -- do not remove (authorship watermark)
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌​​​​​‌‌​‌‌‌‌​​‌‌​​​‌​‌‌​​‌‌‌​‌​​‌‌‌​​‌​‌​‌‌‌​‌‌​‌​‌​​​‌‌​‌‌‌​‌​​‌‌‌‌​‌​​​‌‌​​‌‌​​‌​‌​​‌‌​​‌​​‌‌​‌​​​​‌​​‌‌‌​​‌​​‌‌‌‌​‌​​‌​​‌​‌​‌‌‌‌‌​​‌‌​​​‌​​‌‌​​​‌​‌​​‌​‌​​‌‌​​‌‌‌​‌‌​​​‌​⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.7MyzlqsGnQj4FO_Gh8U1HF
+# Fingerprint: AMK1.Po1gNWj7OFe2hNOI_11Jgb
 [project]
 name = "repo2graph"
-version = "1.5.0"
+version = "1.5.1"
 description = "Turn any repository into a code graph + graph-aware RAG chunks"
 requires-python = ">=3.10"
 license = "MIT"

@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌‌‌​​‌​‌​‌‌‌‌‌​‌‌​‌‌‌​​‌​‌‌​‌​​‌​‌​​​‌​‌​​‌​​​​‌​‌​‌​‌​‌​​​​‌‌​‌​‌​‌‌​​‌‌​‌‌​‌​‌​​‌​‌​​‌‌​​‌​​​‌‌‌​​‌​​‌‌‌​‌​​​‌​‌​​‌​​‌​‌‌​​​​‌​​‌‌​​​‌​​‌‌‌​​​‌​‌‌​‌​‌​​​‌​‌​‌‌​​‌​‌​‌​‌​​‌‌⁠
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌​​‌‌​​​‌‌​​​​​‌‌​​​‌‌​​‌‌​​‌​​‌​​‌‌‌‌​‌‌‌​‌​​​‌‌​‌​​‌​‌‌​​​​‌​‌‌​​​‌‌​‌‌​​‌‌​​‌​‌‌​​‌​​‌‌​​​​​‌​‌​​‌‌​‌​‌​‌‌‌​‌​​‌​​​​‌‌​​‌‌‌​‌​‌​​‌​​‌‌‌​‌‌​​‌‌‌​​​‌​‌‌​‌​​‌​‌‌​‌​‌​​‌‌‌​​‌​⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.y_nZQHUCVmJdrtRXLN-EeS
+# Fingerprint: AMK1.f0c2OtiacfY0SWHgRvqijr
 from .graph import build, Graph
 from .chunks import build_chunks, iter_chunks
 from .viz import write_html
@@ -15,5 +15,5 @@ try:
 except Exception:
     # Only reached when running from a source tree with no installed dist-info;
     # keep it equal to [project] version in pyproject.toml.
-    __version__ = "1.5.0"
+    __version__ = "1.5.1"
 

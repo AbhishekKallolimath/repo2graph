@@ -1,9 +1,9 @@
 <!--
-  @authormark v1 -- do not remove (authorship watermark)
+  @authormark v1 -- do not remove (authorship watermark)⁠​​‌‌​​‌‌​‌‌‌​‌​‌​‌​‌​‌​​​‌‌‌​​​‌​​‌‌​​​​​​‌‌​​‌‌​‌​​‌​‌​​‌‌​​‌‌​​‌​‌‌​​‌​‌​​​​‌​​‌‌‌​​​​​‌‌‌​​​‌​​‌‌​‌‌​​‌​​‌‌​​​​‌‌​‌​​​​‌‌​‌‌​​‌​‌​​​​​‌​​‌‌‌‌​‌‌​​​‌‌​‌​‌​​‌‌​​‌‌​​​​​​‌‌​‌​‌⁠
   Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
   Author: https://github.com/Srinivasan-78
   SPDX-License-Identifier: MIT
-  Fingerprint: AMK1.pzaFE9ilYcskSQnt8_EIvp
+  Fingerprint: AMK1.3uTq03JfYBpq6L46POcS05
 -->
 # Changelog
 
@@ -19,6 +19,34 @@ section for a version out of this file and uses it as the Release body, which
 makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
+
+## [1.5.1] — 2026-09-16
+
+### Added
+
+- MCP `ToolAnnotations` across stdio and HTTP transports: `readOnlyHint=True`,
+  `destructiveHint=False`, `idempotentHint=True`, `openWorldHint=False`.
+- Informative parameter descriptions documenting formats (`sym:pkg/mod.py::func`,
+  `file:path`, `dir:path`), bounds, and default values across all tool schemas.
+- macOS-style framed browser window containers, rounded corners, and soft
+  ambient drop shadows for all documentation screenshots (`graph-overview.png`,
+  `graph-zoom.png`, `graph-sidebar.png`).
+
+### Changed
+
+- Enhanced all 5 MCP tool descriptions (`repo_map`, `repo_search`,
+  `repo_neighbours`, `repo_cache_stats`, `repo_build_status`) to meet top-tier
+  Glama Tool Definition Quality Score (TDQS) standards: active purpose verbs,
+  explicit sibling disambiguation, concrete "When to use" / "When NOT to use"
+  guidelines, and exact return shape specifications.
+- Modernized `README.md` hero section with center-aligned branding, single-row
+  badge bar, centered overview map, and balanced side-by-side canvas/controls table.
+- Expanded tool description character budget test in `test_mcp.py` to 2,500 chars.
+
+### Fixed
+
+- Restored AuthorMark watermark fingerprints across modified files and `README.md`,
+  resolving CI provenance verification.
 
 ## [1.5.0] — 2026-09-16
 
