@@ -2,7 +2,16 @@
 
 # repo2graph
 
-**Interactive code-graph maps & zero-dependency GraphRAG for AI agents and humans**
+**AST-driven code graphs & zero-dependency GraphRAG for AI coding agents and humans**
+
+<p align="center">
+  <a href="README.md">English</a> ·
+  <a href="docs/i18n/README_zh-CN.md">简体中文</a> ·
+  <a href="docs/i18n/README_ja.md">日本語</a> ·
+  <a href="docs/i18n/README_fr.md">Français</a> ·
+  <a href="docs/i18n/README_es.md">Español</a> ·
+  <a href="docs/i18n/README_de.md">Deutsch</a>
+</p>
 
 <p align="center">
   <a href="https://glama.ai/mcp/servers/Srinivasan-78/repo2graph"><img src="https://glama.ai/mcp/servers/Srinivasan-78/repo2graph/badges/score.svg" alt="Glama MCP server score" /></a>
@@ -10,6 +19,7 @@
   <a href="https://pypi.org/project/repo2graph/"><img src="https://img.shields.io/pypi/pyversions/repo2graph.svg" alt="Python versions" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
   <a href="https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml"><img src="https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml/badge.svg" alt="CI status" /></a>
+  <img src="https://img.shields.io/badge/MCP-Compatible-purple.svg" alt="MCP Compatible" />
   <a href="https://github.com/Srinivasan-78/repo2graph/stargazers"><img src="https://img.shields.io/github/stars/Srinivasan-78/repo2graph?style=social" alt="GitHub stars" /></a>
 </p>
 
@@ -18,257 +28,83 @@
 </p>
 
 <p align="center">
-  If repo2graph is useful to you, a ⭐ on <a href="https://github.com/Srinivasan-78/repo2graph">GitHub</a> helps others find it.
-</p>
-
-<p align="center">
-  <a href="#the-idea">Overview</a> ·
-  <a href="#see-it-on-real-repositories">Examples</a> ·
-  <a href="docs/benchmarks.md">Benchmarks</a> ·
-  <a href="#install">Install</a> ·
+  <a href="#-what-is-repo2graph">What is it</a> ·
+  <a href="#-quickstart-under-30-seconds">Quickstart</a> ·
+  <a href="#-mcp-client-configuration">MCP setup</a> ·
+  <a href="#-see-it-on-real-repositories">Benchmarks</a> ·
+  <a href="#-architecture--token-economics">Architecture</a> ·
   <a href="docs/README.md">Docs</a> ·
-  <a href="SECURITY.md">Security</a> ·
-  <a href=".github/CONTRIBUTING.md">Contributing</a>
+  <a href="#-contributing--community">Contributing</a>
 </p>
-
-*`repo2graph build` then `repo2graph query`, on this repo's own source — real output, not staged.*
-
-<p align="center">
-  <img src="docs/images/graph-overview.png" alt="Interactive code graph of a project mapped by repo2graph" width="850" />
-</p>
-
-*The picture that build also produces: each dot is a folder, file, function, or library; each arrow is a real code connection.*
 
 </div>
 
 <!-- mcp-name: io.github.Srinivasan-78/repo2graph -->
 
-repo2graph reads a folder full of code and draws you a map of it — then uses that map to answer
-questions about the code, with citations. Agents can ask it questions directly over MCP.
+---
 
-**Want to know how it actually works under the hood** — the tree-sitter pipeline, the graph model,
-confidence scoring, budget accounting, the Python API? That's in
-**[TECHNICAL.md](TECHNICAL.md)**. This page stays to what it does and how to run it.
+## ⚡ What is repo2graph?
 
-## The idea
+When an AI coding agent searches a codebase with grep or plain keyword matching, it either dumps
+whole matching files into context — burning the token budget and losing structure — or misses the
+implementation entirely because it used different words than the search query.
 
-Imagine you get handed a big box of Lego that someone else already built things with. You want to
-know what connects to what. You could look at every brick one at a time, or someone could hand you
-a map.
+**repo2graph** parses source with [tree-sitter](https://tree-sitter.github.io/tree-sitter/) into a
+graph of real code relationships — `CALLS`, `IMPORTS`, `INHERITS`, `DEFINES`, `CO_CHANGE` — and
+serves that graph to agents over the **Model Context Protocol**, or packs it into a budget-bounded
+markdown context for any LLM. Every returned block carries an exact `[cite: path:start-end]`
+anchor, so answers are traceable back to source instead of paraphrased from a guess.
 
-Code is like that box. A project has hundreds of files, and the files use each other in ways you
-cannot see by looking at one file at a time.
+```mermaid
+flowchart LR
+    A[your code] --> B[tree-sitter<br/>reads the code]
+    B --> C[graph<br/>dots + arrows]
+    C --> D[graph.html<br/>the picture]
+    C --> E[chunks.jsonl<br/>pieces for an AI]
+    C -->|MCP stdio| F[Claude / Cursor /<br/>any MCP client]
+```
 
-repo2graph makes the map. On the map:
+No project setup, no language server, no build step — point it at a folder and it works.
 
-- Every **thing** is a dot. A folder is a dot. A file is a dot. A function (a small named piece of
-  code that does a job) is a dot. We call these dots **nodes**.
-- Every **connection** is an arrow. "This file is inside that folder." "This function uses that
-  function." "This file borrows code from that library." We call these arrows **edges**.
+<p align="center">
+  <img src="docs/images/graph-overview.png" alt="Interactive code graph of a project mapped by repo2graph" width="850" />
+</p>
 
-Dots joined by arrows are called a **graph**. That is the whole idea.
+| Interactive canvas, zoomed | Filter & inspector controls |
+| :---: | :---: |
+| <img src="docs/images/graph-zoom.png" alt="Zoomed into the map: named functions, files and libraries joined by arrows" /> | <img src="docs/images/graph-sidebar.png" alt="Side panel with search box, node kinds and relationship kinds" /> |
 
-## Why a map helps
+`graph.html` is one self-contained file — no server, no internet, drag to pan, scroll to zoom,
+click a node to inspect its code and neighbours.
 
-If you search a project for the word "login", you get every file that happens to say "login",
-including comments and typos.
+## 🚀 Quickstart (under 30 seconds)
 
-The map is better, because it knows which function actually does the login work, and it also knows
-which functions call it and which functions it calls. So you get the real answer plus its
-neighbours.
+Requires Python 3.10+. Run via [uv](https://docs.astral.sh/uv/), no install step:
 
-That matters most when a chatbot or AI helper is reading the code for you. Giving it the right
-piece of code plus the pieces around it is usually what it was missing.
+```bash
+uvx repo2graph build . -o .r2g && open .r2g/human/graph.html
+```
 
-## See it on real repositories
-
-Not a toy demo — five real, large, public repositories, each indexed at a pinned commit, with the
-generated graph committed and the exact reproduction command recorded. Every number below is
-measured, from [`benchmarks/results.json`](benchmarks/results.json), not estimated.
-
-| Repository | Language(s) | Scope | Nodes | Edges | Example |
-|---|---|---|---:|---:|---|
-| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | scoped (controllers, scheduler, API server) | 14,197 | 83,525 | [examples/kubernetes](examples/kubernetes/) |
-| [TensorFlow](https://github.com/tensorflow/tensorflow) | C++ / Python | scoped (Python/C++ boundary) | 20,641 | 96,013 | [examples/tensorflow](examples/tensorflow/) |
-| [Django](https://github.com/django/django) | Python | full repository | 54,544 | 228,461 | [examples/django](examples/django/) |
-| [VS Code](https://github.com/microsoft/vscode) | TypeScript | scoped (`src/vs/`) | 113,115 | 431,453 | [examples/vscode](examples/vscode/) |
-| [Linux kernel](https://github.com/torvalds/linux) | C | scoped (extreme-scale) | 136,182 | 257,655 | [examples/linux](examples/linux/) |
-
-"Scoped" means only an architecturally coherent subtree was indexed, not the whole repository —
-Kubernetes' and TensorFlow's full trees run to hundreds of thousands of files once vendored
-dependencies and generated bindings are counted, and the Linux kernel's is every driver ever merged
-for every supported architecture at once. Each example's own README explains exactly why, with the
-paths and commit pinned for reproduction. See **[examples/README.md](examples/README.md)** for the
-full index, **[docs/benchmarks.md](docs/benchmarks.md)** for methodology, and
-**[docs/limitations.md](docs/limitations.md)** for what running the pipeline against five real
-repositories actually surfaced (parse-error rates on macro-heavy C/C++, call-name ambiguity,
-cross-language resolution limits).
-
-## Install
-
-You need Python 3.10 or newer.
+Or install it properly:
 
 ```bash
 pip install repo2graph
+repo2graph build /path/to/project -o .r2g --git-history 200
+repo2graph query "how does routing match a path" -o .r2g
 ```
 
-Two optional extras, neither needed for the core:
+## 🔌 MCP client configuration
 
-```bash
-pip install "repo2graph[rag]"   # sentence-transformers + numpy, for meaning-based search
-pip install "repo2graph[mcp]"   # the MCP SDK, for serving the map to an agent
-```
+`repo2graph-mcp` is a stdio MCP server. It builds its own index on the first call if one doesn't
+exist yet — nothing to run ahead of time.
 
-To run it without installing anything — which is how most people wire up the MCP server — use
-[uv](https://docs.astral.sh/uv/):
-
-```bash
-uvx repo2graph build . -o .r2g
-uvx --from "repo2graph[mcp]" repo2graph-mcp /path/to/project
-```
-
-Or from a checkout, if you want to change it:
-
-```bash
-git clone https://github.com/Srinivasan-78/repo2graph
-cd repo2graph
-python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
-```
-
-## Use it
-
-### 1. Make the map
-
-```bash
-repo2graph build /path/to/your/project -o .r2g --git-history 200
-```
-
-That is it. It walks the project, reads it, and puts everything in a folder called `.r2g`. A medium
-project takes seconds. A very big one takes a minute or two.
-
-`--git-history 200` is optional. It looks at the last 200 saves (commits) in the project's history
-and adds links between files that keep getting changed together. Those links are a good clue about
-which files secretly depend on each other.
-
-No copy on your machine? Point it at GitHub instead — it downloads, maps, and tidies up after
-itself:
-
-```bash
-repo2graph github psf/requests -o out/requests --git-history 200
-```
-
-### 2. Look at the map
-
-```bash
-open .r2g/human/graph.html   # the picture
-cat .r2g/human/overview.md   # the same thing written out in words
-repo2graph stats -o .r2g     # how many dots, arrows and functions there are
-```
-
-`graph.html` is one single file. No internet needed, nothing to install. Open it in a browser and
-you get the picture: drag to move around, scroll to zoom, drag a dot to pin it in place, click a
-dot to see what that function looks like and everything it is connected to.
-
-| Interactive Canvas (Zoomed) | Filter & Inspector Controls |
-| :---: | :---: |
-| <img src="docs/images/graph-zoom.png" alt="Zoomed into the map: named functions, files and libraries joined by arrows" /> | <img src="docs/images/graph-sidebar.png" alt="Side panel with search box, node kinds and relationship kinds" /> |
-| *Zoom in to inspect symbol call paths, imports, and definitions* | *Toggle node types, relationships, and filter on screen* |
-
-By default the picture shows the 300 busiest dots, and hides calls that go out to other people's
-code, because those triple the number of arrows and tell you little about your own project. Tick
-`external` and `CALLS_EXTERNAL` in the side panel to show them. Want a simpler picture? Redraw it
-with fewer dots: `repo2graph map -o .r2g --viz-nodes 80`.
-
-### 3. Ask it questions
-
-A search tool and a GraphRAG context packer are built in. Neither needs an AI account.
-
-```bash
-repo2graph query "how does routing match a path" -o .r2g       # find the code
-repo2graph rag "how does the pack stay inside its budget" -o .r2g   # pack it for an LLM
-```
-
-`query` finds the best matching pieces and follows the arrows one step out, so the functions around
-each answer come along too. `rag` does the same and then assembles a budget-bounded markdown pack,
-repo map on top, every block stamped with an exact citation header:
-
-```
-### [cite: repo2graph/cli.py:22-28] `parse_formats` (CALLS out of cmd_build)
-# file: repo2graph/cli.py
-# function: parse_formats  (lines 22-28, python)
-# called by: repo2graph/cli.py::cmd_build, repo2graph/cli.py::cmd_github
-def parse_formats(spec: str) -> set[str]:
-...
-```
-
-The `(CALLS out of cmd_build)` part is the *reason* the block is in the pack: either `seed` (the
-search found it) or the arrow that dragged it in.
-
-Word matching misses code that says the same thing in different words, so you can add meaning-based
-search on top — vectors are computed once, then blended into every ranking:
-
-```bash
-pip install "repo2graph[rag]"                   # sentence-transformers + numpy
-repo2graph embed -o .r2g                        # compute vectors, once
-repo2graph rag "how is a request routed" -o .r2g --vectors
-```
-
-`embed` writes `agent/vectors.npy` and `agent/vectors.meta.json` next to the rest of the index, and
-reuses every vector whose chunk text is unchanged, so re-running it after a rebuild is cheap. The
-model is `--embed-model` (default: a small MiniLM); `rag --model` is a different thing entirely, the
-*LLM* used by `--answer`.
-
-Dense search is opt-in on purpose. Without `--vectors` nothing is loaded and no model is downloaded,
-because the only promised dependency of `build`/`rag` is tree-sitter and a 90 MB model fetch has no
-business happening unasked.
-
-**Check it is actually on.** Dense retrieval has a failure mode where every surface reports success
-and the ranking is still purely lexical — the index carries vectors, but a `chunks.jsonl` rebuilt
-without re-running `embed` leaves some chunks unvectorised, and fusion is all-or-nothing:
-
-```bash
-repo2graph embed -o .r2g --verify-rag
-```
-
-```json
-{
-  "vectors_present": true,
-  "model_id": "sentence-transformers/all-MiniLM-L6-v2",
-  "dim": 384,
-  "chunks": 812,
-  "unvectorised_chunks": 0,
-  "embedder_model_id": "sentence-transformers/all-MiniLM-L6-v2",
-  "embedder_dim": 384,
-  "ok": true,
-  "error": null
-}
-```
-
-It exits non-zero with an actionable `error` if vectors are missing, if the active embedder's model
-id or width disagrees with the index's, or if any chunk lacks a vector. If fusion ever does switch
-itself off mid-query, that is no longer silent either — a `rag_fusion_disabled` JSON line goes to
-stderr naming the reason, and stdout still carries a usable lexical answer.
-
-`repo2graph rag --answer` will also send the pack to an LLM and stream back a grounded answer. It is
-the one command that puts your source code on the network — read
-[the warning](docs/cli.md#-answer-sends-your-code-to-someone-elses-computer) first.
-
-**Full flag tables, budget accounting and how retrieval works: [docs/cli.md](docs/cli.md).**
-
-### 4. Hand the map to an agent over MCP
-
-`repo2graph-mcp` is a stdio [MCP](https://modelcontextprotocol.io) server, so an agent can ask the
-map questions itself instead of you pasting a pack into a chat window.
-
-Point it at a project and it serves it. Nothing to install and no setup step: if no map exists yet,
-the first question builds one and answers from it.
+**Claude Code**
 
 ```bash
 claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp /path/to/project
 ```
 
-For Claude Desktop, Cursor and generic clients, the JSON block is the same four lines:
+**Claude Desktop** (`claude_desktop_config.json`) and **Cursor** (`.cursor/mcp.json`) — same block:
 
 ```json
 {
@@ -281,117 +117,116 @@ For Claude Desktop, Cursor and generic clients, the JSON block is the same four 
 }
 ```
 
-Three tools, deliberately:
+Any other stdio-based MCP client (Windsurf, Zed, generic clients) takes the same `command`/`args`
+pair — see **[docs/mcp.md](docs/mcp.md)** for config file locations per platform and client.
+
+## ✨ Key features
+
+| | |
+|---|---|
+| **Deterministic graph, not embeddings-only search** | Callers, callees, imports and class hierarchies resolved from the actual AST — not a nearest-neighbour guess. |
+| **Hybrid retrieval** | BM25 + graph-neighbour expansion by default; optional dense vector fusion (`repo2graph embed`) with zero required extra dependencies. |
+| **Hard token ceilings, enforced twice** | `pack_context()`'s budget bounds the *entire* rendered markdown, not just chunk text — and the MCP server clamps and re-measures before returning. |
+| **15 languages, full treatment** | Python, JS/TS/TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP, Kotlin, Swift, Scala, Bash get functions/classes/calls. Everything else still appears as files on the map. |
+| **CI-native** | Published as a GitHub Action — commit a fresh graph next to your code on every push. |
+| **Local by default** | `build`, `query`, `rag`, and the MCP server make zero network calls. The one opt-in exception (`rag --answer`) prints the provider + hostname before sending anything. |
+| **Export to real graph tooling** | `graph.graphml` (yEd, Gephi, NetworkX) and `graph.cypher` (Neo4j, Memgraph) come out of every build, no extra step. |
+
+## 🛠️ MCP tools exposed
 
 | Tool | Arguments | What comes back |
 |---|---|---|
-| `repo_map` | none | Languages, hub files and top entry points. Stable across calls, so it caches. |
-| `repo_search` | `query`, optional `k`, `hops`, `budget_tokens` | Seed chunks plus their graph neighbours, each headed `[cite: path:start-end]`. |
-| `repo_neighbours` | `node_id`, optional `hops`, `limit` | One graph hop from a symbol: callers, callees, base classes, defining file. The thing grep cannot do. |
+| `repo_map` | none | Languages, hub files, and top entry points. Stable across calls — read this first. |
+| `repo_search` | `query`, optional `k` (default 8, max 50), `hops` (default 1, max 4), `budget_tokens` (default 6000, max 12000) | Seed chunks plus graph neighbours, each block headed `[cite: path:start-end]`. |
+| `repo_neighbours` | `node_id`, optional `hops` (max 4), `limit` (default 20, max 50) | One graph hop from a symbol/file/dir id: callers, callees, base classes, defining file. |
 
-The server keeps three promises the CLI leaves to you: secrets are **always** excluded, output is
-hard-capped at 12 000 tokens and re-measured before it is returned, and `k`/`hops` are clamped so no
-single call can wedge the event loop every client shares. It never calls an LLM itself.
+Secrets are excluded unconditionally on every tool call — no flag turns that off. Full contract,
+including the two diagnostic tools (`repo_cache_stats`, `repo_build_status`) added for long-running
+server deployments: **[docs/mcp.md](docs/mcp.md)**.
 
-Auto-build writes only what the tools read, and only into a directory you pointed it at. Build ahead
-with `repo2graph build` if you want the first question to be fast or want the picture too, and pass
-`--no-auto-build` to require an index that already exists.
+## 📐 Architecture & token economics
 
-**Client configs, which directory gets indexed, and the full contract: [docs/mcp.md](docs/mcp.md).**
+- **Nodes**: `repo`, `dir`, `file`, `symbol` (function/method/class/struct/trait/interface/type),
+  `module` (external dependency), `external` (an unresolved call target).
+- **Edges**: `CONTAINS`, `DEFINES`, `IMPORTS`, `CALLS` (carries `count` + `confidence`),
+  `CALLS_EXTERNAL`, `INHERITS`, `CO_CHANGE` (from `--git-history`, requires 3+ co-edits).
+- **Call resolution is name-based, not type-based** — a deliberate trade-off that keeps repo2graph
+  language-agnostic and setup-free. Ambiguous calls fan out to up to 5 candidate edges at
+  `confidence = 1/n`; filter to `confidence == 1.0` when you need certainty over recall.
+- **Two budget models, on purpose**: `Index.retrieve()`'s `budget_chars` bounds only the chunks'
+  own text (a back-compat surface); `Index.pack_context()`'s `budget_chars` bounds the *entire*
+  rendered markdown — citation headers, separators, everything. New retrieval code should be built
+  on `pack_context()`.
+- **Chunking**: roughly one chunk per function/class, cut at ~4000 characters with 8 lines of
+  overlap so nothing is lost at a seam; each chunk's header names its callers and callees, which is
+  what makes graph-expanded retrieval better than plain top-k text search.
 
-### 5. Or run it in CI
+Full breakdown of every node/edge kind and the chunk schema: **[docs/reference.md](docs/reference.md)**.
+The pipeline, the Python API, and where the graph guesses (and why): **[TECHNICAL.md](TECHNICAL.md)**.
 
-repo2graph is on the GitHub Marketplace, so a fresh map can live next to your code:
+## 📊 See it on real repositories
 
-```yaml
-- uses: actions/checkout@v4
-  with: { fetch-depth: 0 }   # full history, so CO_CHANGE edges are meaningful
-- uses: Srinivasan-78/repo2graph@v1
-  with:
-    path: .
-    git-history: "500"
-    artifact-name: repo-graph
-```
+Not a toy demo — five real, large, public repositories, each indexed at a pinned commit, with the
+generated graph committed and the exact reproduction command recorded. Every number is measured,
+from [`benchmarks/results.json`](benchmarks/results.json), not estimated.
 
-**All inputs and outputs: [docs/github-action.md](docs/github-action.md).**
+| Repository | Language(s) | Scope | Nodes | Edges |
+|---|---|---|---:|---:|
+| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | scoped (controllers, scheduler, API server) | 14,197 | 83,525 |
+| [TensorFlow](https://github.com/tensorflow/tensorflow) | C++ / Python | scoped (Python/C++ boundary) | 20,641 | 96,013 |
+| [Django](https://github.com/django/django) | Python | full repository | 54,544 | 228,461 |
+| [VS Code](https://github.com/microsoft/vscode) | TypeScript | scoped (`src/vs/`) | 113,115 | 431,453 |
+| [Linux kernel](https://github.com/torvalds/linux) | C | scoped (extreme-scale) | 136,182 | 257,655 |
 
-## What you get in `.r2g`
+See **[examples/README.md](examples/README.md)** for the full index and reproduction commands,
+**[docs/benchmarks.md](docs/benchmarks.md)** for methodology, and
+**[docs/limitations.md](docs/limitations.md)** for what running against five real repositories
+actually surfaced (parse-error rates on macro-heavy C/C++, call-name ambiguity, cross-language
+resolution limits).
 
-The output is split in two, because people and programs want different things.
+## 📖 CLI & server reference
 
-```
-.r2g/
-├── human/   overview.md   graph.html   graph.graphml
-└── agent/   overview.md   manifest.json   chunks.jsonl
-              nodes.jsonl   edges.jsonl   graph.cypher   stats.json
-```
+| Command | Does |
+|---|---|
+| `repo2graph build <path> -o .r2g [--git-history N]` | Parse a local repo into a graph + chunks. |
+| `repo2graph github <owner/repo> -o <dir>` | Fetch, build, and clean up — no local clone needed. |
+| `repo2graph query "<question>" -o .r2g` | Lexical search + one-hop graph expansion. |
+| `repo2graph rag "<question>" -o .r2g [--vectors] [--answer]` | Budget-bounded GraphRAG pack; `--answer` sends it to an LLM (opt-in, network). |
+| `repo2graph embed -o .r2g [--verify-rag]` | Compute/verify dense vectors for hybrid search. |
+| `repo2graph map -o .r2g [--viz-nodes N]` | Regenerate `graph.html` with a different node cap. |
+| `repo2graph stats -o .r2g` | Node/edge/function counts for an existing index. |
+| `repo2graph-mcp <path> [--no-auto-build] [--async-build]` | stdio MCP server over `.r2g`. |
 
-`agent/manifest.json` is the instruction sheet: what every other file is, what the dots and arrows
-mean, how names are built, and where the code starts. A program needs nothing else to make sense of
-the folder.
+**Environment variables** (only read by `rag --answer`, in this precedence order):
+`GEMINI_API_KEY` → `OPENAI_API_KEY` → `ANTHROPIC_API_KEY` → `OLLAMA_HOST`. No other command makes a
+network call or reads these. Full flag tables and budget accounting: **[docs/cli.md](docs/cli.md)**.
 
-`chunks.jsonl` is the file you hand to an AI system. Each piece already carries its neighbours in
-the header, which is what makes the answers good. If you use a vector database, keep each piece's
-`node_id` — that is the handle that lets you jump back onto the map after a search.
+## 🔐 Security
 
-**Every file, every node and edge kind, the chunk format: [docs/reference.md](docs/reference.md).**
+`build`, `query`, `rag`, and the MCP server make no network calls. `rag --answer` is the one
+opt-in exception — it sends the assembled pack to an LLM provider and prints the provider +
+hostname before doing so. The MCP server excludes credential-shaped files unconditionally, with no
+flag to turn that off. Details: **[SECURITY.md](SECURITY.md)**.
 
-## Using it from Python
-
-Everything the CLI does is also a plain Python call — `build()`, `dump_all()`, and the same `Index`
-class the CLI, the Action and the MCP server all use internally. Code sample, streaming exports,
-and loading into Neo4j: **[TECHNICAL.md](TECHNICAL.md#using-it-from-python)**.
-
-## Languages
-
-Python, JavaScript, TypeScript and TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP, Kotlin, Swift, Scala
-and Bash get the full treatment: functions, classes and calls. Files in any other language still
-appear on the map as files in their folders, so nothing goes missing. Teaching it a new language
-means adding one entry to `LANG_CFG` in `repo2graph/langs.py`.
-
-## Where it guesses
-
-The map is very good, but it is not perfect. Two things worth knowing before you trust it:
-
-- **It matches calls by name, not by type.** If two functions share a name, repo2graph draws up to
-  5 possible arrows and marks each one `1/n` sure. If you need certainty, keep only the arrows where
-  `confidence` is `1.0`.
-- **Some files are skipped:** pictures and other non-text files, anything bigger than 1.5 MB, and
-  the usual vendor and build folders. In a git checkout, `.gitignore` is respected.
-- **No arrow does not prove no call.** Code that decides while running which function to call is
-  invisible to a reader like this one.
-
-How the matching and resolution actually work, per language: **[TECHNICAL.md](TECHNICAL.md#where-it-guesses-and-why)**.
-What that looked like against five real, large repositories — parse-error rates on macro-heavy
-C/C++, call-name ambiguity, cross-language resolution — is in
-**[docs/limitations.md](docs/limitations.md)**. Why a graph instead of just search, and when it is
-not the right tool: **[docs/why-graph.md](docs/why-graph.md)**.
-
-## Security
-
-`build`, `query`, `rag`, and the MCP server make no network calls — everything reads and writes
-locally under `.r2g`. The one exception is opt-in: `rag --answer` sends the assembled pack to an
-LLM provider, and prints the provider + hostname before it does. The MCP server excludes
-credential-shaped files unconditionally, with no flag to turn that off. Details and the full
-reasoning: [SECURITY.md](SECURITY.md).
-
-## Documentation
-
-The [documentation index](docs/README.md) is the hub for everything past this README: architecture,
-the MCP/CLI/Python surfaces, the real-world examples and benchmarks above, security and enterprise
-deployment, and how to contribute.
-
-## Contributing
+## 🤝 Contributing & community
 
 ```bash
-.venv/bin/pip install -e ".[dev]"
-.venv/bin/python -m pytest
+git clone https://github.com/Srinivasan-78/repo2graph
+cd repo2graph
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+make lint test   # or: ruff check . && pytest
 ```
 
-See [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md), and [AGENTS.md](AGENTS.md) for this
-codebase's non-obvious conventions before editing `repo2graph/`.
+- **[.github/CONTRIBUTING.md](.github/CONTRIBUTING.md)** — full local dev setup, code style, and
+  the registry/Glama release process.
+- **[docs/BACKLOG.md](docs/BACKLOG.md)** — deliberately deferred work and why; the closest thing to
+  a roadmap, plus a "good first issues" section.
+- **[AGENTS.md](AGENTS.md)** — this codebase's non-obvious conventions (Windows encoding, text
+  slicing, the two budget models) before editing `repo2graph/`.
+- **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)** — Contributor Covenant v2.1.
+- Found a bug or have a feature idea? [Open an issue](https://github.com/Srinivasan-78/repo2graph/issues/new/choose).
 
-## Licence
+## License
 
 MIT. See [LICENSE](LICENSE).
 
