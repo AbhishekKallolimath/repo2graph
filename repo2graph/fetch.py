@@ -1,4 +1,5 @@
 """Fetch a GitHub repository and index it end to end."""
+
 import base64
 import json
 import os
@@ -23,6 +24,7 @@ def _rmtree(path: Path) -> None:
     raises PermissionError and shutil.rmtree(ignore_errors=True) would leave the
     whole clone (often hundreds of MB) behind. Clear the bit and retry.
     """
+
     def _on_error(func, p, _exc):
         try:
             os.chmod(p, stat.S_IWRITE)
@@ -31,11 +33,14 @@ def _rmtree(path: Path) -> None:
             pass
 
     # onerror was renamed onexc in 3.12; the callback signature is compatible.
-    key = "onexc" if sys.version_info >= (3, 12) else "onerror"
     try:
-        shutil.rmtree(path, **{key: _on_error})
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(path, onexc=_on_error)
+        else:
+            shutil.rmtree(path, onerror=_on_error)
     except OSError:
         pass
+
 
 GITHUB_SPEC = re.compile(
     r"^(?:(?:https?://)?(?:www\.)?github\.com/|git@github\.com:)?"
@@ -46,8 +51,9 @@ GITHUB_SPEC = re.compile(
 @lru_cache(maxsize=1)
 def _git_version() -> tuple[int, ...]:
     try:
-        out = subprocess.run(["git", "--version"], capture_output=True,
-                             encoding="utf8", errors="replace", timeout=10)
+        out = subprocess.run(
+            ["git", "--version"], capture_output=True, encoding="utf8", errors="replace", timeout=10
+        )
         if out.returncode == 0 and out.stdout:
             m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", out.stdout)
             if m:
@@ -113,8 +119,9 @@ def _auth_env(token: str | None) -> dict:
     return env
 
 
-def clone(spec: str, dest: Path, ref: str | None = None, depth: int = 0,
-          token: str | None = None) -> Path:
+def clone(
+    spec: str, dest: Path, ref: str | None = None, depth: int = 0, token: str | None = None
+) -> Path:
     """Clone a GitHub repo into dest/<repo>. depth=0 means full history."""
     owner, repo = parse_spec(spec)
     token = token or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
@@ -125,9 +132,14 @@ def clone(spec: str, dest: Path, ref: str | None = None, depth: int = 0,
     if target.is_dir() and (target / ".git").exists():
         if ref:
             try:
-                proc = subprocess.run(["git", "-C", str(target), "checkout", ref],
-                                      capture_output=True, encoding="utf8", errors="replace",
-                                      timeout=GIT_TIMEOUT, env=_auth_env(token))
+                proc = subprocess.run(
+                    ["git", "-C", str(target), "checkout", ref],
+                    capture_output=True,
+                    encoding="utf8",
+                    errors="replace",
+                    timeout=GIT_TIMEOUT,
+                    env=_auth_env(token),
+                )
             except subprocess.TimeoutExpired:
                 raise RuntimeError("git checkout timed out") from None
             except (OSError, subprocess.SubprocessError) as e:
@@ -138,7 +150,8 @@ def clone(spec: str, dest: Path, ref: str | None = None, depth: int = 0,
             if proc.returncode != 0:
                 raise RuntimeError(
                     f"git checkout {ref!r} in existing clone failed: "
-                    f"{_redact((proc.stderr or '').strip(), token)}")
+                    f"{_redact((proc.stderr or '').strip(), token)}"
+                )
         return target
     if target.is_dir() and any(target.iterdir()):
         raise RuntimeError(f"destination directory '{target}' exists and is not an empty directory")
@@ -152,9 +165,14 @@ def clone(spec: str, dest: Path, ref: str | None = None, depth: int = 0,
         cmd += ["--branch", ref]
     cmd += [url, str(target)]
     try:
-        proc = subprocess.run(cmd, capture_output=True, encoding="utf8",
-                              errors="replace", timeout=CLONE_TIMEOUT,
-                              env=_auth_env(token))
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            encoding="utf8",
+            errors="replace",
+            timeout=CLONE_TIMEOUT,
+            env=_auth_env(token),
+        )
     except subprocess.TimeoutExpired:
         raise RuntimeError("git clone timed out") from None
     except (OSError, subprocess.SubprocessError) as e:
@@ -167,20 +185,33 @@ def clone(spec: str, dest: Path, ref: str | None = None, depth: int = 0,
 
 def head_sha(path: Path) -> str:
     try:
-        out = subprocess.run(["git", "-C", str(path), "rev-parse", "HEAD"],
-                             capture_output=True, encoding="utf8",
-                             errors="replace", timeout=GIT_TIMEOUT)
+        out = subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "HEAD"],
+            capture_output=True,
+            encoding="utf8",
+            errors="replace",
+            timeout=GIT_TIMEOUT,
+        )
     except (subprocess.TimeoutExpired, OSError, subprocess.SubprocessError):
         return "unknown"
     return out.stdout.strip()[:12] if out.returncode == 0 else "unknown"
 
 
-def index_github(spec: str, outdir: Path, ref: str | None = None, depth: int = 0,
-                 git_history: int = 0,
-                 formats: str = "jsonl,graphml,cypher,overview,html",
-                 include=None, exclude=None, max_files: int = 0,
-                 keep_clone: Path | None = None, token: str | None = None,
-                 viz_nodes: int = 300, jobs: int = 0) -> dict:
+def index_github(
+    spec: str,
+    outdir: Path,
+    ref: str | None = None,
+    depth: int = 0,
+    git_history: int = 0,
+    formats: str = "jsonl,graphml,cypher,overview,html",
+    include=None,
+    exclude=None,
+    max_files: int = 0,
+    keep_clone: Path | None = None,
+    token: str | None = None,
+    viz_nodes: int = 300,
+    jobs: int = 0,
+) -> dict:
     """Clone a GitHub repo, build its graph, write artifacts to outdir."""
     from .chunks import iter_chunks
     from .export import atomic_write, dump_all, make_path
@@ -192,20 +223,35 @@ def index_github(spec: str, outdir: Path, ref: str | None = None, depth: int = 0
     try:
         src = clone(spec, workdir, ref=ref, depth=depth, token=token)
         sha = head_sha(src)
-        g = build(src, include=include, exclude=exclude,
-                  git_history=git_history, max_files=max_files, jobs=jobs)
+        g = build(
+            src,
+            include=include,
+            exclude=exclude,
+            git_history=git_history,
+            max_files=max_files,
+            jobs=jobs,
+        )
         g.name = f"{owner}/{repo}"
-        chunks = iter_chunks(g)   # a generator, streamed to disk by dump_all
+        chunks = iter_chunks(g)  # a generator, streamed to disk by dump_all
         outdir = Path(outdir)
         # Same cleaning as cli.parse_formats: tolerate "jsonl, html" (spaces,
         # empty items) so a format the caller asked for is not silently dropped.
         fmts = {f.strip() for f in formats.split(",") if f.strip()}
         written, n_chunks = dump_all(g, chunks, outdir, fmts, viz_nodes)
-        meta = {"repo": f"{owner}/{repo}", "ref": ref or "default", "commit": sha,
-                "nodes": len(g.nodes), "edges": len(g.edges), "chunks": n_chunks,
-                "stats": dict(g.stats), "written": written, "out": str(outdir)}
-        with atomic_write(make_path(outdir, "index.json"), "w",
-                          encoding="utf8", newline="\n") as fh:
+        meta = {
+            "repo": f"{owner}/{repo}",
+            "ref": ref or "default",
+            "commit": sha,
+            "nodes": len(g.nodes),
+            "edges": len(g.edges),
+            "chunks": n_chunks,
+            "stats": dict(g.stats),
+            "written": written,
+            "out": str(outdir),
+        }
+        with atomic_write(
+            make_path(outdir, "index.json"), "w", encoding="utf8", newline="\n"
+        ) as fh:
             fh.write(json.dumps(meta, indent=2))
         return meta
     finally:

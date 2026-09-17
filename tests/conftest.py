@@ -13,6 +13,7 @@ a settable `model_id` and `dim`, and records every `encode()` argument list in
 Do not touch tests/test_rag.py's own fixtures from here: that file has a
 vocabulary contract of its own that several of its tests depend on.
 """
+
 import hashlib
 import json
 from pathlib import Path
@@ -59,8 +60,7 @@ def audit_event(name):
     return {"event": name}
 '''
 
-MINI_NOTES = ("# Notes\n\nThe gateway dispatches an inbound request to a "
-              "handler.\n") * 3
+MINI_NOTES = ("# Notes\n\nThe gateway dispatches an inbound request to a handler.\n") * 3
 
 # A fake credential. Nothing here is a real secret; the words are chosen so
 # that SECRET_QUERY ranks this chunk above every code chunk.
@@ -168,6 +168,7 @@ def big_index(tmp_path_factory):
 # Embedders
 # --------------------------------------------------------------------------
 
+
 class StubEmbedder:
     """Deterministic, dependency-free stand-in for a sentence-transformer.
 
@@ -193,10 +194,8 @@ class StubEmbedder:
         return [t for batch in self.calls for t in batch]
 
     def vector_for(self, text):
-        digest = hashlib.sha256(
-            (text or "").encode("utf8", "surrogateescape")).digest()
-        return [((digest[i % len(digest)] / 255.0) * 2.0) - 1.0
-                for i in range(self.dim)]
+        digest = hashlib.sha256((text or "").encode("utf8", "surrogateescape")).digest()
+        return [((digest[i % len(digest)] / 255.0) * 2.0) - 1.0 for i in range(self.dim)]
 
 
 class ScriptedEmbedder:
@@ -219,7 +218,8 @@ class ScriptedEmbedder:
         self.calls.append(list(batch))
         assert len(batch) == len(self.vectors), (
             f"ScriptedEmbedder was scripted for {len(self.vectors)} texts "
-            f"but asked for {len(batch)}")
+            f"but asked for {len(batch)}"
+        )
         return [list(v) for v in self.vectors]
 
 
@@ -268,6 +268,7 @@ def use_stub_embedder(monkeypatch):
 # --------------------------------------------------------------------------
 # Goldens
 # --------------------------------------------------------------------------
+
 
 def golden_text(name: str) -> str:
     with open(GOLDEN_DIR / name, encoding="utf8", newline="\n") as fh:

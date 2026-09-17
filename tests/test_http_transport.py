@@ -8,6 +8,7 @@ never runs, which is a property of the wiring rather than of the validator.
 Every OIDC test injects a fake issuer through `opener`, so nothing here opens a
 socket to the outside world. One test asserts that directly.
 """
+
 import json
 import socket
 import threading
@@ -45,11 +46,12 @@ class Server:
 
     def rpc(self, method, params=None, token=None, rpc_id=1):
         """POST one JSON-RPC frame; returns (status, parsed body)."""
-        body = json.dumps({"jsonrpc": "2.0", "id": rpc_id, "method": method,
-                           "params": params or {}}).encode()
+        body = json.dumps(
+            {"jsonrpc": "2.0", "id": rpc_id, "method": method, "params": params or {}}
+        ).encode()
         request = urllib.request.Request(
-            self.url(), data=body, method="POST",
-            headers={"Content-Type": "application/json"})
+            self.url(), data=body, method="POST", headers={"Content-Type": "application/json"}
+        )
         if token is not None:
             request.add_header("Authorization", f"Bearer {token}")
         try:
@@ -66,12 +68,12 @@ class Server:
             return exc.code, json.loads(exc.read())
 
     def call(self, tool="repo_map", arguments=None, token=None):
-        return self.rpc("tools/call",
-                        {"name": tool, "arguments": arguments or {}}, token=token)
+        return self.rpc("tools/call", {"name": tool, "arguments": arguments or {}}, token=token)
 
     def audit_lines(self):
-        return [json.loads(line) for line in
-                self.audit_stream.getvalue().splitlines() if line.strip()]
+        return [
+            json.loads(line) for line in self.audit_stream.getvalue().splitlines() if line.strip()
+        ]
 
 
 @pytest.fixture
@@ -79,15 +81,28 @@ def make_server(index, tmp_path):
     """Factory starting a transport on an ephemeral port; stopped on teardown."""
     started = []
 
-    def _make(auth_config=None, opener=None, cache=None, publish_cimd=False,
-              level="all", audit_path=None, repo=None):
+    def _make(
+        auth_config=None,
+        opener=None,
+        cache=None,
+        publish_cimd=False,
+        level="all",
+        audit_path=None,
+        repo=None,
+    ):
         stream = io.StringIO()
-        audit = AuditLogger(AuditConfig(level=level, path=audit_path),
-                            stream=stream)
-        transport = HTTPTransport(index, repo, host="127.0.0.1", port=0,
-                                  auth_config=auth_config, audit=audit,
-                                  cache=cache, publish_cimd=publish_cimd,
-                                  opener=opener)
+        audit = AuditLogger(AuditConfig(level=level, path=audit_path), stream=stream)
+        transport = HTTPTransport(
+            index,
+            repo,
+            host="127.0.0.1",
+            port=0,
+            auth_config=auth_config,
+            audit=audit,
+            cache=cache,
+            publish_cimd=publish_cimd,
+            opener=opener,
+        )
         transport.start()
         server = Server(transport, stream)
         started.append(transport)
@@ -99,6 +114,7 @@ def make_server(index, tmp_path):
 
 
 # ------------------------------------------------------------- no auth ----
+
 
 def test_with_no_auth_every_tool_call_succeeds(make_server):
     server = make_server()
@@ -141,8 +157,8 @@ def test_an_unknown_method_is_a_clean_error(make_server):
 def test_malformed_json_is_a_clean_error(make_server):
     server = make_server()
     request = urllib.request.Request(
-        server.url(), data=b"{not json", method="POST",
-        headers={"Content-Type": "application/json"})
+        server.url(), data=b"{not json", method="POST", headers={"Content-Type": "application/json"}
+    )
     try:
         urllib.request.urlopen(request, timeout=10)
         raise AssertionError("expected a 400")
@@ -153,6 +169,7 @@ def test_malformed_json_is_a_clean_error(make_server):
 
 # -------------------------------------------------------- static token ----
 
+
 def test_the_right_token_is_admitted(make_server):
     server = make_server(AuthConfig(token="s3cret"))
     status, body = server.call("repo_map", token="s3cret")
@@ -162,6 +179,7 @@ def test_the_right_token_is_admitted(make_server):
 def test_a_wrong_token_returns_401_and_does_not_run_the_tool(make_server, monkeypatch):
     """The wiring property: rejected means *not executed*, not merely not returned."""
     from repo2graph import mcp
+
     ran = []
     monkeypatch.setattr(mcp, "tool_repo_map", lambda idx: ran.append(1) or "x")
 
@@ -175,6 +193,7 @@ def test_a_wrong_token_returns_401_and_does_not_run_the_tool(make_server, monkey
 
 def test_no_header_returns_401_and_does_not_run_the_tool(make_server, monkeypatch):
     from repo2graph import mcp
+
     ran = []
     monkeypatch.setattr(mcp, "tool_repo_map", lambda idx: ran.append(1) or "x")
 
@@ -187,8 +206,8 @@ def test_no_header_returns_401_and_does_not_run_the_tool(make_server, monkeypatc
 def test_a_401_carries_a_www_authenticate_challenge(make_server):
     server = make_server(AuthConfig(token="s3cret"))
     request = urllib.request.Request(
-        server.url(), data=b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
-        method="POST")
+        server.url(), data=b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}', method="POST"
+    )
     try:
         urllib.request.urlopen(request, timeout=10)
         raise AssertionError("expected a 401")
@@ -205,6 +224,7 @@ def test_a_rejection_never_echoes_the_attempted_token(make_server):
 
 # ---------------------------------------------------------------- oidc ----
 
+
 def oidc(**over):
     config = {"oidc_issuer": ISSUER, "audience": AUDIENCE}
     config.update(over)
@@ -219,20 +239,19 @@ def test_a_valid_jwt_is_admitted(make_server):
 
 def test_an_expired_jwt_returns_401(make_server, monkeypatch):
     from repo2graph import mcp
+
     ran = []
     monkeypatch.setattr(mcp, "tool_repo_map", lambda idx: ran.append(1) or "x")
 
     server = make_server(oidc(), opener=FakeIssuer())
-    status, body = server.call("repo_map",
-                               token=sign(claims(exp=time.time() - 3600)))
+    status, body = server.call("repo_map", token=sign(claims(exp=time.time() - 3600)))
     assert status == 401 and body["error"]["message"] == "Unauthorized"
     assert ran == []
 
 
 def test_a_wrong_issuer_jwt_returns_401(make_server):
     server = make_server(oidc(), opener=FakeIssuer())
-    status, _ = server.call("repo_map",
-                            token=sign(claims(iss="https://evil.example.com")))
+    status, _ = server.call("repo_map", token=sign(claims(iss="https://evil.example.com")))
     assert status == 401
 
 
@@ -245,8 +264,8 @@ def test_a_wrong_audience_jwt_returns_401(make_server):
 def test_the_oidc_challenge_names_the_issuer(make_server):
     server = make_server(oidc(), opener=FakeIssuer())
     request = urllib.request.Request(
-        server.url(), data=b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
-        method="POST")
+        server.url(), data=b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}', method="POST"
+    )
     try:
         urllib.request.urlopen(request, timeout=10)
     except urllib.error.HTTPError as exc:
@@ -254,6 +273,7 @@ def test_the_oidc_challenge_names_the_issuer(make_server):
 
 
 # --------------------------------------------------------------- audit ----
+
 
 def test_a_successful_call_is_audited(make_server):
     server = make_server()
@@ -297,12 +317,21 @@ def test_a_secret_argument_is_redacted_in_the_audit_line(make_server):
 
 # ----------------------------------------------------------- discovery ----
 
+
 def test_the_metadata_document_has_every_required_field(make_server):
     server = make_server()
     status, doc = server.get("/.well-known/mcp-server-metadata")
     assert status == 200
-    for field in ("name", "version", "description", "tools", "auth_modes",
-                  "repo", "index_present", "index_built_at"):
+    for field in (
+        "name",
+        "version",
+        "description",
+        "tools",
+        "auth_modes",
+        "repo",
+        "index_present",
+        "index_built_at",
+    ):
         assert field in doc, field
     assert doc["name"] == "repo2graph"
     assert {t["name"] for t in doc["tools"]} >= {"repo_map", "repo_search"}
@@ -313,9 +342,9 @@ def test_index_present_is_false_before_a_build_and_true_after(tmp_path):
     """The document must describe the index that exists, not the one configured."""
     repo = write_mini_repo(tmp_path)
     out = tmp_path / ".r2g"
-    transport = HTTPTransport(out, repo, port=0,
-                              audit=AuditLogger(AuditConfig(level="none"),
-                                                stream=io.StringIO()))
+    transport = HTTPTransport(
+        out, repo, port=0, audit=AuditLogger(AuditConfig(level="none"), stream=io.StringIO())
+    )
     transport.start()
     try:
         server = Server(transport, io.StringIO())
@@ -323,7 +352,7 @@ def test_index_present_is_false_before_a_build_and_true_after(tmp_path):
         assert before["index_present"] is False
         assert before["index_built_at"] is None
 
-        server.call("repo_map")          # auto-builds on the first call
+        server.call("repo_map")  # auto-builds on the first call
         _status, after = server.get("/.well-known/mcp-server-metadata")
         assert after["index_present"] is True
         assert after["index_built_at"]
@@ -331,12 +360,15 @@ def test_index_present_is_false_before_a_build_and_true_after(tmp_path):
         transport.stop()
 
 
-@pytest.mark.parametrize("config,expected", [
-    (None, ["none"]),
-    (AuthConfig(token="x"), ["bearer"]),
-    (AuthConfig(oidc_issuer=ISSUER), ["oidc"]),
-    (AuthConfig(token="x", oidc_issuer=ISSUER), ["bearer", "oidc"]),
-])
+@pytest.mark.parametrize(
+    "config,expected",
+    [
+        (None, ["none"]),
+        (AuthConfig(token="x"), ["bearer"]),
+        (AuthConfig(oidc_issuer=ISSUER), ["oidc"]),
+        (AuthConfig(token="x", oidc_issuer=ISSUER), ["bearer", "oidc"]),
+    ],
+)
 def test_auth_modes_reflect_the_flags(make_server, config, expected):
     server = make_server(config, opener=FakeIssuer())
     _status, doc = server.get("/.well-known/mcp-server-metadata")
@@ -381,6 +413,7 @@ def test_an_unknown_path_is_404(make_server):
 
 # ------------------------------------------------------------- refusals ----
 
+
 def test_binding_beyond_loopback_without_auth_is_refused(index):
     """A code index is the whole repository in searchable form."""
     with pytest.raises(ValueError, match="refusing to bind"):
@@ -388,25 +421,27 @@ def test_binding_beyond_loopback_without_auth_is_refused(index):
 
 
 def test_binding_beyond_loopback_with_auth_is_allowed(index):
-    transport = HTTPTransport(index, host="0.0.0.0", port=0,
-                              auth_config=AuthConfig(token="s3cret"),
-                              audit=AuditLogger(AuditConfig(level="none"),
-                                                stream=io.StringIO()))
+    transport = HTTPTransport(
+        index,
+        host="0.0.0.0",
+        port=0,
+        auth_config=AuthConfig(token="s3cret"),
+        audit=AuditLogger(AuditConfig(level="none"), stream=io.StringIO()),
+    )
     transport.start()
     transport.stop()
 
 
 def test_an_oversized_body_is_refused(make_server):
     server = make_server()
-    request = urllib.request.Request(
-        server.url(), data=b"x" * 10, method="POST")
+    request = urllib.request.Request(server.url(), data=b"x" * 10, method="POST")
     request.add_header("Content-Length", str(1 << 30))
     try:
         urllib.request.urlopen(request, timeout=10)
     except urllib.error.HTTPError as exc:
         assert exc.code == 413
     except (urllib.error.URLError, OSError):
-        pass          # the server may close the connection first; also fine
+        pass  # the server may close the connection first; also fine
 
 
 def test_the_transport_runs_on_a_daemon_thread(make_server):
@@ -424,9 +459,9 @@ def test_the_token_ceiling_still_holds_over_http(make_server, index):
     from repo2graph.query import count_tokens
 
     server = make_server()
-    _status, body = server.call("repo_search",
-                                {"query": MINI_QUERY, "k": 50,
-                                 "budget_tokens": 10 ** 9})
+    _status, body = server.call(
+        "repo_search", {"query": MINI_QUERY, "k": 50, "budget_tokens": 10**9}
+    )
     text = body["result"]["content"][0]["text"]
     assert count_tokens(text) <= MCP_MAX_BUDGET_TOKENS
 
@@ -434,6 +469,7 @@ def test_the_token_ceiling_still_holds_over_http(make_server, index):
 def test_exclude_secrets_still_holds_over_http(make_server):
     """The other unconditional promise, re-checked at this surface."""
     from conftest import SECRET_QUERY
+
     server = make_server()
     _status, body = server.call("repo_search", {"query": SECRET_QUERY})
     text = body["result"]["content"][0]["text"]
@@ -442,6 +478,7 @@ def test_exclude_secrets_still_holds_over_http(make_server):
 
 
 # -------------------------------------------------------------- network ----
+
 
 def test_the_server_opens_no_outbound_socket_without_oidc(make_server, monkeypatch):
     """The standing constraint: no network unless an auth issuer is configured."""

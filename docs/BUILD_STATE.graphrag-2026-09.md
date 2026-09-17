@@ -563,10 +563,10 @@ reads. Read from `repo2graph/answer.py:65-89`, both exercised providers (OpenAI
 `[{system}, {user}]` with the whole pack in the user turn — so one key path covers both:
 
 ```python
-sent = json.loads(req.data or b"{}")          # AC-28 primary  (was: body)
+sent = json.loads(req.data or b"{}")  # AC-28 primary  (was: body)
 assert PACK["markdown"] in sent["messages"][-1]["content"]
 
-sent = json.loads(captured[0])                # AC-28 localhost socket
+sent = json.loads(captured[0])  # AC-28 localhost socket
 assert PACK["markdown"] in sent["messages"][-1]["content"]
 ```
 
@@ -704,7 +704,7 @@ Green by criterion: AC-1..AC-27 and AC-29..AC-34 all pass. AC-28 is the only gap
 `tests/test_rag.py:747` and `tests/test_rag.py:790`:
 
 ```python
-assert PACK["markdown"] in body      # body = req.data.decode("utf8", "replace")
+assert PACK["markdown"] in body  # body = req.data.decode("utf8", "replace")
 ```
 
 `PACK["markdown"]` contains literal `\n` newline characters. `body` is the HTTP request
@@ -728,11 +728,13 @@ answer.stream_answer(PACK, out=sink)
 Suggested minimal test fix (TEST agent's call, not made here):
 
 ```python
-sent = json.loads(body)                       # or json.loads(captured[0])
-assert PACK["markdown"] in json.dumps(sent)   # escaped form
+sent = json.loads(body)  # or json.loads(captured[0])
+assert PACK["markdown"] in json.dumps(sent)  # escaped form
 # or, decoding the transported value:
-assert any(PACK["markdown"] in json.dumps(sent)[0:0] or PACK["markdown"] in m["content"]
-           for m in sent["messages"])
+assert any(
+    PACK["markdown"] in json.dumps(sent)[0:0] or PACK["markdown"] in m["content"]
+    for m in sent["messages"]
+)
 ```
 
 i.e. assert the markdown survives *transport* (`in json.dumps(payload)` after re-encoding, or
@@ -779,7 +781,7 @@ orchestrator named. No test file was edited. No other scope.
 `repo2graph/query.py`: new module constant next to `DEFAULT_EDGE_DIRS`
 
 ```python
-ALL_EDGE_DIRS: dict = {}   # expand() reads dirs.get(etype); missing == no filter
+ALL_EDGE_DIRS: dict = {}  # expand() reads dirs.get(etype); missing == no filter
 ```
 
 and `retrieve()` now calls

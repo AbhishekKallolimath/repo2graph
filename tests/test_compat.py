@@ -13,6 +13,7 @@ implementation broke something it promised not to touch.
 
 Every test names the acceptance criterion it encodes as `# AC-n`.
 """
+
 import argparse
 import hashlib
 import json
@@ -51,11 +52,11 @@ def _subprocess_modules(import_stmt: str, watched=OPTIONAL_MODULES):
     ended up in sys.modules. Out-of-process so that a pytest plugin which
     happens to have imported numpy cannot mask a regression."""
     code = (
-        f"import sys\n{import_stmt}\n"
-        f"print(' '.join(m for m in {watched!r} if m in sys.modules))\n"
+        f"import sys\n{import_stmt}\nprint(' '.join(m for m in {watched!r} if m in sys.modules))\n"
     )
-    proc = subprocess.run([sys.executable, "-c", code], cwd=str(REPO_ROOT),
-                          capture_output=True, timeout=180)
+    proc = subprocess.run(
+        [sys.executable, "-c", code], cwd=str(REPO_ROOT), capture_output=True, timeout=180
+    )
     out = proc.stdout.decode("utf8", "replace")
     err = proc.stderr.decode("utf8", "replace")
     return proc.returncode, out.strip(), err.strip()
@@ -64,6 +65,7 @@ def _subprocess_modules(import_stmt: str, watched=OPTIONAL_MODULES):
 # ==========================================================================
 # AC-1 / AC-2 / AC-9 -- the byte-for-byte characterization goldens
 # ==========================================================================
+
 
 def _capture(capsys, argv):
     main(argv)
@@ -81,8 +83,7 @@ def test_ac1_query_output_is_byte_identical_to_baseline(mini_index, capsys):
 
 def test_ac1_query_json_output_is_byte_identical_to_baseline(mini_index, capsys):
     """AC-1: the same for `query --format json` (the machine-readable form)."""
-    text = _capture(capsys, ["query", MINI_QUERY, "-o", str(mini_index),
-                             "--format", "json"])
+    text = _capture(capsys, ["query", MINI_QUERY, "-o", str(mini_index), "--format", "json"])
     if REGEN:
         write_golden_text("query_json.json", text)
     assert text == golden_text("query_json.json")
@@ -99,8 +100,7 @@ def test_ac2_rag_markdown_is_byte_identical_to_baseline(mini_index, capsys):
 def test_ac2_rag_json_differs_only_by_the_two_token_keys(mini_index, capsys):
     """AC-2 (b): the JSON form gains exactly `tokens_used` and `tokens_budget`
     and changes the value of nothing else."""
-    text = _capture(capsys, ["rag", MINI_QUERY, "-o", str(mini_index),
-                             "--format", "json"])
+    text = _capture(capsys, ["rag", MINI_QUERY, "-o", str(mini_index), "--format", "json"])
     payload = json.loads(text)
     if REGEN:
         write_golden_text("rag_json.json", text)
@@ -120,10 +120,8 @@ def test_ac9_pack_context_without_vectors_matches_the_baseline(mini_index):
     keys = ("markdown", "chunks", "seeds", "neighbors", "truncated")
     got = {
         "default": {k: idx.pack_context(MINI_QUERY)[k] for k in keys},
-        "unbounded": {k: idx.pack_context(MINI_QUERY, budget_chars=0)[k]
-                      for k in keys},
-        "tight": {k: idx.pack_context(MINI_QUERY, budget_chars=1200)[k]
-                  for k in keys},
+        "unbounded": {k: idx.pack_context(MINI_QUERY, budget_chars=0)[k] for k in keys},
+        "tight": {k: idx.pack_context(MINI_QUERY, budget_chars=1200)[k] for k in keys},
     }
     if REGEN:
         write_golden_json("pack_context.json", got)
@@ -143,6 +141,7 @@ def test_ac3_score_rrf_without_vectors_is_exactly_score(mini_index):
 # ==========================================================================
 # AC-4 -- the CLI surface, enumerated from argparse rather than from prose
 # ==========================================================================
+
 
 class _CapturedParser(Exception):
     def __init__(self, parser):
@@ -166,6 +165,7 @@ def _describe_action(action) -> dict:
 
 def _cli_inventory(monkeypatch) -> dict:
     """{subcommand: {flag-or-positional: description}} for the whole CLI."""
+
     def fake_parse_args(self, args=None, namespace=None):
         raise _CapturedParser(self)
 
@@ -174,7 +174,7 @@ def _cli_inventory(monkeypatch) -> dict:
         main(["version"])
     except _CapturedParser as captured:
         root = captured.parser
-    else:                                       # pragma: no cover - guard
+    else:  # pragma: no cover - guard
         raise AssertionError("main() never called parse_args")
 
     inventory = {"<root>": {}}
@@ -182,8 +182,7 @@ def _cli_inventory(monkeypatch) -> dict:
         if isinstance(action, argparse._SubParsersAction):
             for name, sub in action.choices.items():
                 inventory[name] = {
-                    (" ".join(sorted(a.option_strings)) or a.dest):
-                        _describe_action(a)
+                    (" ".join(sorted(a.option_strings)) or a.dest): _describe_action(a)
                     for a in sub._actions
                 }
         else:
@@ -221,6 +220,7 @@ def test_ac4_baseline_subcommands_are_all_present(monkeypatch):
 # AC-5 / AC-6 / AC-7 -- the zero-dependency import contract
 # ==========================================================================
 
+
 def test_ac5_importing_query_pulls_in_no_optional_dependency():
     """AC-5: numpy, sentence_transformers, torch and mcp all stay unimported."""
     rc, out, err = _subprocess_modules("import repo2graph.query")
@@ -231,8 +231,8 @@ def test_ac5_importing_query_pulls_in_no_optional_dependency():
 def test_ac6_importing_embed_pulls_in_no_optional_dependency():
     """AC-6: repo2graph.embed is importable with no extras installed."""
     rc, out, err = _subprocess_modules(
-        "import repo2graph.embed",
-        watched=("numpy", "sentence_transformers", "torch"))
+        "import repo2graph.embed", watched=("numpy", "sentence_transformers", "torch")
+    )
     assert rc == 0, err
     assert out == "", out
 
@@ -279,7 +279,7 @@ def parse_action_block(text: str, block: str) -> dict:
     """
     out, current = {}, None
     inside = False
-    for line in text.split("\n"):            # never splitlines(): see AGENTS.md
+    for line in text.split("\n"):  # never splitlines(): see AGENTS.md
         if line.rstrip() == f"{block}:":
             inside = True
             continue
@@ -288,7 +288,7 @@ def parse_action_block(text: str, block: str) -> dict:
         if line.strip() == "" or line.lstrip().startswith("#"):
             continue
         if not line.startswith(" "):
-            break                            # back at column 0: block is over
+            break  # back at column 0: block is over
         name = _NAME_RE.match(line)
         if name:
             current = {}
@@ -308,8 +308,7 @@ def test_ac8_hand_parser_agrees_with_pyyaml():
     data = yaml.safe_load(text)
     for block in ("inputs", "outputs"):
         mine = parse_action_block(text, block)
-        theirs = {k: {kk: str(vv) for kk, vv in v.items()}
-                  for k, v in data[block].items()}
+        theirs = {k: {kk: str(vv) for kk, vv in v.items()} for k, v in data[block].items()}
         assert set(mine) == set(theirs), (block, set(mine) ^ set(theirs))
         for name, fields in theirs.items():
             for key, value in fields.items():
@@ -370,8 +369,7 @@ HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _state(outdir: Path) -> dict:
-    with open(artifact_path(outdir, "index.state.json"),
-              encoding="utf8", newline="\n") as fh:
+    with open(artifact_path(outdir, "index.state.json"), encoding="utf8", newline="\n") as fh:
         return json.load(fh)
 
 
@@ -382,8 +380,7 @@ def test_ac34_build_writes_index_state_with_a_hash_per_file_node(mini_index):
     assert isinstance(state.get("files"), dict), state
     nodes = read_jsonl(artifact_path(mini_index, "nodes.jsonl"))
     file_paths = {n["path"] for n in nodes if n.get("type") == "file"}
-    assert set(state["files"]) == file_paths, (
-        set(state["files"]) ^ file_paths)
+    assert set(state["files"]) == file_paths, set(state["files"]) ^ file_paths
     for rel, digest in state["files"].items():
         assert isinstance(digest, str) and HEX64.match(digest), (rel, digest)
 
@@ -429,7 +426,9 @@ def test_ac35_editing_one_file_changes_exactly_one_hash(mini_repo, tmp_path):
 
 BASH = shutil.which("bash")
 if sys.platform == "win32":
-    git_bash = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git" / "bin" / "bash.exe"
+    git_bash = (
+        Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git" / "bin" / "bash.exe"
+    )
     if git_bash.is_file():
         BASH = str(git_bash)
     elif BASH and "system32" in BASH.lower():
@@ -453,10 +452,10 @@ def _run_body(chunk: str) -> str:
         if line.strip() == "run: |":
             indent = len(line) - len(line.lstrip())
             body = []
-            for nxt in lines[i + 1:]:
+            for nxt in lines[i + 1 :]:
                 if nxt.strip() and len(nxt) - len(nxt.lstrip()) <= indent:
                     break
-                body.append(nxt[indent + 2:])
+                body.append(nxt[indent + 2 :])
             return "\n".join(body) + "\n"
     raise AssertionError("step has no `run: |` block")
 
@@ -482,18 +481,29 @@ def _resolved_rag_argv(tmp_path: Path, embed: str) -> list:
     call and replaced by a `printf` of the array it assembled -- so the argv
     asserted on is the one the action would have run, not a transcription.
     """
-    body = _run_body(_action_step_by_name(ACTION_YML.read_text(encoding="utf8"),
-                                          "Pack a GraphRAG context"))
+    body = _run_body(
+        _action_step_by_name(ACTION_YML.read_text(encoding="utf8"), "Pack a GraphRAG context")
+    )
     head, sep, _ = body.partition('repo2graph "${args[@]}"')
     assert sep, body
     script = head + 'printf "%s\\n" "${args[@]}"\n'
     env = dict(os.environ)
-    env.update(R2G_OUT="out", R2G_QUERY="who routes?", R2G_K="8", R2G_HOPS="1",
-               R2G_BUDGET="24000", R2G_BUDGET_TOKENS="", R2G_MIN_CONF="1.0",
-               R2G_FORMAT="markdown", R2G_QUERY_OUT="", R2G_EMBED=embed,
-               R2G_EMBED_MODEL="")
-    proc = subprocess.run([BASH, "-c", script], cwd=str(tmp_path), env=env,
-                          capture_output=True, text=True)
+    env.update(
+        R2G_OUT="out",
+        R2G_QUERY="who routes?",
+        R2G_K="8",
+        R2G_HOPS="1",
+        R2G_BUDGET="24000",
+        R2G_BUDGET_TOKENS="",
+        R2G_MIN_CONF="1.0",
+        R2G_FORMAT="markdown",
+        R2G_QUERY_OUT="",
+        R2G_EMBED=embed,
+        R2G_EMBED_MODEL="",
+    )
+    proc = subprocess.run(
+        [BASH, "-c", script], cwd=str(tmp_path), env=env, capture_output=True, text=True
+    )
     assert proc.returncode == 0, proc.stderr
     return [line for line in proc.stdout.replace("\r\n", "\n").split("\n") if line]
 
@@ -518,9 +528,21 @@ def test_r6_a_capitalised_true_still_packs_with_vectors(tmp_path):
 def test_r6_the_off_path_is_still_the_baseline_command_line(tmp_path):
     """R-6 (c): with the input at its default, the argv is baseline's, in
     baseline's order -- the fix must not reach the workflows that never opt in."""
-    baseline = ["rag", "-o", "out", "-k", "8", "--hops", "1",
-                "--budget", "24000", "--min-conf", "1.0",
-                "--format", "markdown"]
+    baseline = [
+        "rag",
+        "-o",
+        "out",
+        "-k",
+        "8",
+        "--hops",
+        "1",
+        "--budget",
+        "24000",
+        "--min-conf",
+        "1.0",
+        "--format",
+        "markdown",
+    ]
     for embed in ("false", "False", ""):
         assert _resolved_rag_argv(tmp_path, embed) == baseline, embed
 
@@ -543,13 +565,14 @@ def test_r6_embed_is_the_only_boolean_input_with_a_split_gate():
 # "1.3.0" while `[project] version` had moved to 1.4.0, so the same build
 # reported two different versions depending on how it was imported.
 
+
 def test_r9_the_fallback_version_agrees_with_pyproject():
     """R-9: every `__version__` literal in the package equals the packaged
     version. There is no metadata to read in a source checkout, so the literal
     is the only thing that answers `repo2graph.__version__` there."""
     try:
         import tomllib
-    except ModuleNotFoundError:                      # pragma: no cover - py3.10
+    except ModuleNotFoundError:  # pragma: no cover - py3.10
         pytest.skip("tomllib needs Python 3.11+")
     with open(REPO_ROOT / "pyproject.toml", "rb") as fh:
         declared = tomllib.load(fh)["project"]["version"]

@@ -1,4 +1,5 @@
 """Build the repository graph: nodes + edges."""
+
 import hashlib
 import itertools
 import os
@@ -8,8 +9,7 @@ from collections import Counter, defaultdict
 from dataclasses import asdict
 from pathlib import Path
 
-from .parse import (CONFIG_EXT, DOC_EXT, EXT_LANG, ParsedFile, Symbol, discover,
-                    parse_source)
+from .parse import CONFIG_EXT, DOC_EXT, EXT_LANG, ParsedFile, Symbol, discover, parse_source
 
 MAX_CALL_CANDIDATES = 5
 # Under this many files a process pool costs more to start than it saves.
@@ -44,8 +44,15 @@ class Graph:
     def add_node(self, nid: str, **attrs):
         if nid in self.nodes:
             # ISS-11: preserve legitimate 0 and False values on re-add
-            self.nodes[nid].update({k: v for k, v in attrs.items()
-                                    if v is not None and v != "" and (not isinstance(v, (list, tuple)) or len(v) > 0)})
+            self.nodes[nid].update(
+                {
+                    k: v
+                    for k, v in attrs.items()
+                    if v is not None
+                    and v != ""
+                    and (not isinstance(v, (list, tuple)) or len(v) > 0)
+                }
+            )
         else:
             self.nodes[nid] = dict(id=nid, **attrs)
         return nid
@@ -84,8 +91,15 @@ def import_targets(raw: str, lang: str) -> list[str]:
         return [p.strip().split(" as ")[0].strip() for p in m.group(2).split(",") if p.strip()]
     # Kotlin/Swift/Scala all import with `import a.b.C`, like Java; C# uses
     # `using`, PHP uses `use A\B` — both need their own pattern, not Java's.
-    key = {"javascript": "js", "typescript": "js", "tsx": "js",
-           "kotlin": "java", "swift": "java", "scala": "java", "cpp": "c"}.get(lang, lang)
+    key = {
+        "javascript": "js",
+        "typescript": "js",
+        "tsx": "js",
+        "kotlin": "java",
+        "swift": "java",
+        "scala": "java",
+        "cpp": "c",
+    }.get(lang, lang)
     rx = _IMPORT_RE.get(key)
     if rx is None:
         return []
@@ -108,8 +122,9 @@ def path_index(file_index) -> dict:
     return {"by_name": by_name, "by_dir": by_dir}
 
 
-def resolve_import(target: str, from_path: str, lang: str, file_index: set[str],
-                   ctx: dict | None = None) -> str | None:
+def resolve_import(
+    target: str, from_path: str, lang: str, file_index: set[str], ctx: dict | None = None
+) -> str | None:
     """Map an import target to an in-repo file path when possible."""
     if ctx is None:
         ctx = path_index(file_index)
@@ -152,15 +167,23 @@ def resolve_import(target: str, from_path: str, lang: str, file_index: set[str],
     elif lang == "go":
         module = ctx.get("go_module")
         if module and (target == module or target.startswith(module + "/")):
-            pkg_dir = target[len(module):].strip("/")
-            cands = [p for p in by_dir.get(pkg_dir, [])
-                     if p.endswith(".go") and not p.endswith("_test.go")][:1]
+            pkg_dir = target[len(module) :].strip("/")
+            cands = [
+                p
+                for p in by_dir.get(pkg_dir, [])
+                if p.endswith(".go") and not p.endswith("_test.go")
+            ][:1]
         elif module:
             cands = []  # module path known: anything outside it is a third-party package
         else:
             tail = target.split("/")[-1]
-            cands = [p for d, paths in sorted(by_dir.items()) if d.split("/")[-1] == tail
-                     for p in paths if p.endswith(".go")][:1]
+            cands = [
+                p
+                for d, paths in sorted(by_dir.items())
+                if d.split("/")[-1] == tail
+                for p in paths
+                if p.endswith(".go")
+            ][:1]
     elif lang in ("c", "cpp"):
         cands = by_name.get(target.split("/")[-1], [])[:1]
     elif lang == "java":
@@ -207,8 +230,7 @@ def _read_and_parse(item):
         # whole build (nor trigger a pointless serial retry that raises again):
         # count the file, drop its symbols, same as an unavailable parser.
         pf = None
-    return rel, lang, (len(raw), raw.count(b"\n") + 1, pf,
-                       hashlib.sha256(raw).hexdigest())
+    return rel, lang, (len(raw), raw.count(b"\n") + 1, pf, hashlib.sha256(raw).hexdigest())
 
 
 # ---------- parse cache (incremental builds) ----------
@@ -239,7 +261,9 @@ def cache_entry(lang: str | None, size: int, lines: int, pf, digest: str) -> dic
         "lang": lang or "",
         "size": size,
         "lines": lines,
-        "parsed": None if pf is None else {
+        "parsed": None
+        if pf is None
+        else {
             "lang": pf.lang,
             "parse_errors": pf.parse_errors,
             "imports": list(pf.imports),
@@ -267,9 +291,12 @@ def entry_read(entry: dict) -> tuple | None:
         if raw is None:
             return size, lines, None, digest
         symbols = [Symbol(**s) for s in raw["symbols"]]
-        pf = ParsedFile(lang=str(raw["lang"]), symbols=symbols,
-                        imports=[str(i) for i in raw["imports"]],
-                        parse_errors=int(raw.get("parse_errors") or 0))
+        pf = ParsedFile(
+            lang=str(raw["lang"]),
+            symbols=symbols,
+            imports=[str(i) for i in raw["imports"]],
+            parse_errors=int(raw.get("parse_errors") or 0),
+        )
         return size, lines, pf, digest
     except (KeyError, TypeError, ValueError):
         return None
@@ -316,8 +343,11 @@ def parse_incremental(files, jobs: int, cache: dict, counts: dict):
         # The language must match too: the same bytes parsed as a different
         # language yield different symbols, and a renamed extension changes the
         # language without changing the content hash.
-        if isinstance(entry, dict) and entry.get("sha256") == digest \
-                and entry.get("lang") == (lang or ""):
+        if (
+            isinstance(entry, dict)
+            and entry.get("sha256") == digest
+            and entry.get("lang") == (lang or "")
+        ):
             read = entry_read(entry)
         if read is None:
             stale.append((rel, abspath))
@@ -345,16 +375,17 @@ def parse_all(files, jobs: int):
     keeps node ids and edge order identical to a serial run.
     """
     jobs = resolve_jobs(jobs)
-    items = [(rel, abspath, EXT_LANG.get(abspath.suffix.lower()))
-             for rel, abspath in files]
+    items = [(rel, abspath, EXT_LANG.get(abspath.suffix.lower())) for rel, abspath in files]
     if jobs == 1 or len(items) < PARALLEL_MIN_FILES:
         return [_read_and_parse(i) for i in items]
     import concurrent.futures
+
     try:
         # Note: accessed as concurrent.futures.ProcessPoolExecutor to allow monkeypatching in tests (NC-6)
         with concurrent.futures.ProcessPoolExecutor(max_workers=jobs) as pool:
-            return list(pool.map(_read_and_parse, items,
-                                 chunksize=max(1, len(items) // (jobs * 8))))
+            return list(
+                pool.map(_read_and_parse, items, chunksize=max(1, len(items) // (jobs * 8)))
+            )
     except Exception:
         # No fork / no POSIX semaphores to build on, a BrokenProcessPool, a
         # worker ImportError, or a pickling failure on the call or its result:
@@ -364,8 +395,15 @@ def parse_all(files, jobs: int):
 
 
 # ---------- build ----------
-def build(root: Path, include=None, exclude=None, git_history: int = 0,
-          max_files: int = 0, jobs: int = 0, cache: dict | None = None) -> Graph:
+def build(
+    root: Path,
+    include=None,
+    exclude=None,
+    git_history: int = 0,
+    max_files: int = 0,
+    jobs: int = 0,
+    cache: dict | None = None,
+) -> Graph:
     """Parse `root` into a Graph.
 
     Args:
@@ -395,8 +433,9 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
     file_index = {rel for rel, _ in files}
     ctx = repo_context(root)
     ctx.update(path_index(file_index))
-    parsed: dict[str, object] = {}  # ParsedFile only: keeping raw bytes here
-                                    # would hold the whole repo in memory
+    # Only ParsedFile, never the raw bytes -- keeping those too would hold the
+    # whole repo in memory.
+    parsed: dict[str, ParsedFile] = {}
 
     if cache is None:
         results = parse_all(files, resolve_jobs(jobs))
@@ -412,11 +451,22 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
         g.file_hashes[rel] = digest
         g.parse_cache[rel] = cache_entry(lang, size, lines, pf, digest)
         ext = Path(rel).suffix.lower()
-        ftype = "code" if lang else ("doc" if ext in DOC_EXT else
-                                     "config" if ext in CONFIG_EXT else "other")
+        ftype = (
+            "code"
+            if lang
+            else ("doc" if ext in DOC_EXT else "config" if ext in CONFIG_EXT else "other")
+        )
         fid = f"file:{rel}"
-        g.add_node(fid, type="file", name=Path(rel).name, path=rel, lang=lang or ext.lstrip("."),
-                   file_type=ftype, size=size, lines=lines)
+        g.add_node(
+            fid,
+            type="file",
+            name=Path(rel).name,
+            path=rel,
+            lang=lang or ext.lstrip("."),
+            file_type=ftype,
+            size=size,
+            lines=lines,
+        )
         g.stats["files"] += 1
 
         # directory chain
@@ -438,9 +488,19 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
 
         for sym in pf.symbols:
             sid = f"sym:{rel}::{sym.qualname}"
-            g.add_node(sid, type="symbol", name=sym.name, qualname=sym.qualname, kind=sym.kind,
-                       path=rel, lang=lang, start_line=sym.start_line, end_line=sym.end_line,
-                       signature=sym.signature, docstring=sym.docstring)
+            g.add_node(
+                sid,
+                type="symbol",
+                name=sym.name,
+                qualname=sym.qualname,
+                kind=sym.kind,
+                path=rel,
+                lang=lang,
+                start_line=sym.start_line,
+                end_line=sym.end_line,
+                signature=sym.signature,
+                docstring=sym.docstring,
+            )
             g.stats[f"symbol:{sym.kind}"] += 1
             owner = f"sym:{rel}::{sym.parent}" if sym.parent else fid
             g.add_edge(owner, sid, "DEFINES")
@@ -476,8 +536,7 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
                     g.add_edge(sid, pick[0], "CALLS", count=count, confidence=1.0)
                 elif len(pick) <= MAX_CALL_CANDIDATES:
                     for c in pick:
-                        g.add_edge(sid, c, "CALLS", count=count,
-                                   confidence=round(1 / len(pick), 3))
+                        g.add_edge(sid, c, "CALLS", count=count, confidence=round(1 / len(pick), 3))
                 else:
                     g.stats["ambiguous_calls"] += 1
             for base in sym.bases:
@@ -504,7 +563,7 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
 
 
 ENTRY_KINDS = ("function", "method")
-SCORED_ENTRYPOINTS = 200   # exact reach is a BFS each, so only rank the busiest
+SCORED_ENTRYPOINTS = 200  # exact reach is a BFS each, so only rank the busiest
 
 
 def mark_entrypoints(g: Graph):
@@ -522,11 +581,19 @@ def mark_entrypoints(g: Graph):
         if e["type"] == "CALLS":
             called.add(e["dst"])
             out[e["src"]].append(e["dst"])
-    nested = {e["dst"] for e in g.edges if e["type"] == "DEFINES"
-              and g.nodes.get(e["src"], {}).get("kind") in ENTRY_KINDS}
-    roots = [nid for nid, n in g.nodes.items()
-             if n["type"] == "symbol" and n.get("kind") in ENTRY_KINDS
-             and nid not in called and nid not in nested]
+    nested = {
+        e["dst"]
+        for e in g.edges
+        if e["type"] == "DEFINES" and g.nodes.get(e["src"], {}).get("kind") in ENTRY_KINDS
+    }
+    roots = [
+        nid
+        for nid, n in g.nodes.items()
+        if n["type"] == "symbol"
+        and n.get("kind") in ENTRY_KINDS
+        and nid not in called
+        and nid not in nested
+    ]
     for nid in roots:
         g.nodes[nid]["entrypoint"] = True
     roots.sort(key=lambda nid: (-len(out.get(nid, ())), nid))
@@ -561,9 +628,22 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
         # leaves stdin inherited, and a git that blocks on the MCP server's
         # JSON-RPC pipe stalls until the timeout and can eat client frames.
         out = subprocess.run(
-            ["git", "-c", "core.quotepath=false", "-C", str(root), "log",
-             f"-n{commits}", "--name-only", "--pretty=format:%H", "--no-merges"],
-            capture_output=True, stdin=subprocess.DEVNULL, timeout=120)
+            [
+                "git",
+                "-c",
+                "core.quotepath=false",
+                "-C",
+                str(root),
+                "log",
+                f"-n{commits}",
+                "--name-only",
+                "--pretty=format:%H",
+                "--no-merges",
+            ],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=120,
+        )
         if out.returncode != 0:
             return
     except (OSError, subprocess.SubprocessError):

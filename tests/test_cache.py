@@ -6,13 +6,20 @@ since been rebuilt, and a key collision between two calls that differ only in an
 argument the key forgot to include. The last of those is the quiet one -- it
 returns a plausible answer to the wrong question.
 """
+
 import json
 
 import pytest
 
 from repo2graph import mcp
-from repo2graph.cache import (CACHE_METADATA, DEFAULT_MAX_SIZE, DEFAULT_TTL,
-                              ResultCache, cache_metadata, make_key)
+from repo2graph.cache import (
+    CACHE_METADATA,
+    DEFAULT_MAX_SIZE,
+    DEFAULT_TTL,
+    ResultCache,
+    cache_metadata,
+    make_key,
+)
 
 
 class Clock:
@@ -29,6 +36,7 @@ class Clock:
 
 
 # ----------------------------------------------------------------- keys ----
+
 
 def test_equal_arguments_produce_equal_keys_whatever_the_order():
     assert make_key("t", {"a": 1, "b": 2}) == make_key("t", {"b": 2, "a": 1})
@@ -47,8 +55,7 @@ def test_a_key_distinguishes_every_argument_that_changes_the_answer():
     """
     base = {"query": "routing", "k": 8, "hops": 1, "budget_tokens": 6000}
     keys = {make_key("repo_search", base)}
-    for field, other in (("query", "auth"), ("k", 20), ("hops", 3),
-                         ("budget_tokens", 12000)):
+    for field, other in (("query", "auth"), ("k", 20), ("hops", 3), ("budget_tokens", 12000)):
         keys.add(make_key("repo_search", {**base, field: other}))
     assert len(keys) == 5, "two distinct calls collided on one key"
 
@@ -68,10 +75,12 @@ def test_list_and_dict_arguments_do_not_raise():
 def test_an_unserialisable_argument_is_a_miss_not_a_crash():
     class Weird:
         pass
+
     assert isinstance(make_key("t", {"x": Weird()}), str)
 
 
 # ---------------------------------------------------------------- basic ----
+
 
 def test_a_second_identical_call_hits():
     cache = ResultCache()
@@ -105,8 +114,8 @@ def test_the_least_recently_used_entry_is_evicted_first():
     cache = ResultCache(max_size=3)
     for name in "abc":
         cache.put(name, name)
-    cache.get("a")                     # a is now the most recently used
-    cache.put("d", "d")                # evicts b, the least recently used
+    cache.get("a")  # a is now the most recently used
+    cache.put("d", "d")  # evicts b, the least recently used
 
     assert cache.get("b") is None
     assert cache.get("a") == "a"
@@ -157,11 +166,15 @@ def test_stats_reports_every_documented_field():
 
 # ------------------------------------------------------------- metadata ----
 
-@pytest.mark.parametrize("method,ttl,scope", [
-    ("tools/list", 3_600_000, "global"),
-    ("resources/list", 60_000, "session"),
-    ("resources/read", 30_000, "session"),
-])
+
+@pytest.mark.parametrize(
+    "method,ttl,scope",
+    [
+        ("tools/list", 3_600_000, "global"),
+        ("resources/list", 60_000, "session"),
+        ("resources/read", 30_000, "session"),
+    ],
+)
 def test_cache_metadata_matches_the_documented_defaults(method, ttl, scope):
     meta = cache_metadata(method)
     assert meta["ttlMs"] == ttl
@@ -180,6 +193,7 @@ def test_cache_metadata_is_a_copy():
 
 
 # ------------------------------------------------------------- dispatch ----
+
 
 def test_dispatch_serves_a_repeat_from_the_cache(mini_index, monkeypatch):
     """Two identical repo_search calls: the second must not re-score."""
@@ -251,12 +265,13 @@ def test_cache_stats_appears_in_the_tool_list():
 def test_a_rebuild_clears_the_cache(tmp_path, monkeypatch):
     """A rebuilt index must never serve an answer computed from the old one."""
     from conftest import write_mini_repo
+
     repo = write_mini_repo(tmp_path)
     out = tmp_path / ".r2g"
     cache = ResultCache()
     cache.put("stale", "answer from the previous index")
 
     monkeypatch.setattr(mcp, "_INDEXES", {})
-    mcp.open_index(out, repo, cache)          # no index yet -> builds one
+    mcp.open_index(out, repo, cache)  # no index yet -> builds one
 
     assert cache.get("stale") is None, "the cache survived a rebuild"

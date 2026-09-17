@@ -12,6 +12,7 @@ Usage:
     python scripts/bump_version.py major       # explicit major bump
     python scripts/bump_version.py 1.5.2       # explicit target version
 """
+
 import datetime
 import pathlib
 import re
@@ -35,7 +36,16 @@ def get_latest_tag() -> str | None:
     """Find the most recent semver tag in the repository."""
     try:
         proc = subprocess.run(
-            ["git", "-c", "core.quotepath=false", "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*.[0-9]*.[0-9]*"],
+            [
+                "git",
+                "-c",
+                "core.quotepath=false",
+                "describe",
+                "--tags",
+                "--abbrev=0",
+                "--match",
+                "v[0-9]*.[0-9]*.[0-9]*",
+            ],
             cwd=str(ROOT),
             capture_output=True,
             timeout=10,
@@ -49,7 +59,15 @@ def get_latest_tag() -> str | None:
 
     try:
         proc = subprocess.run(
-            ["git", "-c", "core.quotepath=false", "tag", "-l", "v[0-9]*.[0-9]*.[0-9]*", "--sort=-v:refname"],
+            [
+                "git",
+                "-c",
+                "core.quotepath=false",
+                "tag",
+                "-l",
+                "v[0-9]*.[0-9]*.[0-9]*",
+                "--sort=-v:refname",
+            ],
             cwd=str(ROOT),
             capture_output=True,
             timeout=10,
@@ -102,7 +120,9 @@ def detect_bump_type() -> str:
     print(f"- Found {len(changelog_unreleased)} characters of unreleased changelog notes")
 
     if not commits and not changelog_unreleased:
-        raise RuntimeError(f"No changes or unreleased changelog notes detected since {latest_tag or 'repository start'}.")
+        raise RuntimeError(
+            f"No changes or unreleased changelog notes detected since {latest_tag or 'repository start'}."
+        )
 
     combined_text = "\n".join(commits) + "\n" + changelog_unreleased
 
@@ -125,7 +145,9 @@ def detect_bump_type() -> str:
     # 2. Check for MINOR new features:
     # - User-facing feature commits: feat: or feat(scope): (ignoring internal ci/test/docs/chore scopes)
     # - "### Added" in changelog [Unreleased]
-    feat_re = re.compile(r"^feat(?:\((?!(ci|test|docs|chore)\b)[^)]*\))?:", re.MULTILINE | re.IGNORECASE)
+    feat_re = re.compile(
+        r"^feat(?:\((?!(ci|test|docs|chore)\b)[^)]*\))?:", re.MULTILINE | re.IGNORECASE
+    )
     added_changelog_re = re.compile(r"^### Added", re.MULTILINE | re.IGNORECASE)
 
     if feat_re.search(combined_text) or added_changelog_re.search(changelog_unreleased):
@@ -226,7 +248,7 @@ def bump_changelog(new_ver: str) -> None:
                 f"### Changed\n\n"
                 f"- Release version {new_ver}.\n\n"
             )
-        new_content = content[:match.start()] + replacement + content[match.end():]
+        new_content = content[: match.start()] + replacement + content[match.end() :]
     else:
         # No unreleased header; prepend release section
         new_content = (
@@ -244,7 +266,9 @@ def sync_lockfile() -> None:
             subprocess.run([uv, "lock"], cwd=str(ROOT), check=True, capture_output=True)
             print("Synchronized uv.lock")
         except subprocess.CalledProcessError as e:
-            print(f"Warning: `uv lock` failed: {e.stderr.decode('utf8', 'replace')}", file=sys.stderr)
+            print(
+                f"Warning: `uv lock` failed: {e.stderr.decode('utf8', 'replace')}", file=sys.stderr
+            )
 
 
 def main() -> int:
@@ -268,7 +292,9 @@ def main() -> int:
     # Validate with check_version
     check_script = ROOT / "scripts" / "check_version.py"
     if check_script.is_file():
-        res = subprocess.run([sys.executable, str(check_script)], cwd=str(ROOT), capture_output=True)
+        res = subprocess.run(
+            [sys.executable, str(check_script)], cwd=str(ROOT), capture_output=True
+        )
         if res.returncode != 0:
             print("check_version.py failed after bump:", file=sys.stderr)
             print(res.stderr.decode("utf8", "replace"), file=sys.stderr)

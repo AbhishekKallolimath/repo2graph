@@ -23,6 +23,7 @@ resolve it:
 path the retrieval layer refuses to return is also a path this layer refuses to
 log -- one definition, not two that drift.
 """
+
 import hashlib
 import json
 import os
@@ -51,7 +52,9 @@ LEVELS = ("none", "errors", "all")
 # Field names whose *value* is a credential whatever it looks like.
 SECRET_KEY_RE = re.compile(
     r"(pass(word|wd)?|secret|token|api[-_]?key|auth|credential|private[-_]?key"
-    r"|session|cookie|bearer|signature|access[-_]?key)", re.I)
+    r"|session|cookie|bearer|signature|access[-_]?key)",
+    re.I,
+)
 
 # Value shapes that are credentials wherever they appear. Ordered most specific
 # first; the first match wins and names what was found.
@@ -62,18 +65,27 @@ SECRET_VALUE_PATTERNS = (
     ("openai_key", re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b")),
     ("google_key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
     ("private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
-    ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\."
-                       r"[A-Za-z0-9_-]{8,}\b")),
+    (
+        "jwt",
+        re.compile(
+            r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\."
+            r"[A-Za-z0-9_-]{8,}\b"
+        ),
+    ),
     ("basic_auth_url", re.compile(r"\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@")),
-    ("assignment", re.compile(r"(?i)\b(?:pass(?:word|wd)?|secret|token|api[-_]?key)"
-                              r"\s*[=:]\s*\S{6,}")),
+    (
+        "assignment",
+        re.compile(
+            r"(?i)\b(?:pass(?:word|wd)?|secret|token|api[-_]?key)"
+            r"\s*[=:]\s*\S{6,}"
+        ),
+    ),
 )
 
 
 def _fingerprint(value: str) -> str:
     """A short, stable, non-reversible tag for a redacted value."""
-    digest = hashlib.blake2b(value.encode("utf8", "surrogateescape"),
-                            digest_size=16).hexdigest()
+    digest = hashlib.blake2b(value.encode("utf8", "surrogateescape"), digest_size=16).hexdigest()
     return digest[:REDACTION_HASH_CHARS]
 
 
@@ -145,6 +157,7 @@ def sanitize_value(key: str, value: Any) -> Any:
     # A path the retrieval layer would refuse to return must not be logged
     # either: the same definition governs both, so they cannot drift apart.
     from .query import _is_secret_path
+
     if ("/" in text or "\\" in text) and _is_secret_path(text):
         return f"[redacted:secret_path fp={_fingerprint(text)}]"
     if len(text) > MAX_VALUE_CHARS:
@@ -184,8 +197,7 @@ class _LockedAppender:
         # File offset of the byte locked by _acquire, so _release unlocks the
         # same one. None when no OS-level lock is held.
         self._locked_at: int | None = None
-        self._fh = open(self.path, "a", encoding="utf8", errors="replace",
-                        newline="\n")
+        self._fh = open(self.path, "a", encoding="utf8", errors="replace", newline="\n")
 
     def write(self, line: str) -> None:
         """Append one line, holding an OS-level lock for the write."""
@@ -204,45 +216,59 @@ class _LockedAppender:
                 return
 
     def _acquire(self) -> None:
-        try:
-            import fcntl
-            fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)  # type: ignore[attr-defined]
-            return
-        except ImportError:
-            pass
-        try:
-            import msvcrt
-            # msvcrt.locking locks a byte range starting at the *current*
-            # position, so the offset has to be remembered: the write moves the
-            # file pointer, and unlocking at the new position would leave the
-            # original byte locked forever -- which on Windows makes the file
-            # unreadable by every other process, including the one auditing it.
-            self._fh.seek(0, os.SEEK_END)
-            self._locked_at = self._fh.tell()
-            msvcrt.locking(self._fh.fileno(), msvcrt.LK_LOCK, 1)
-        except (ImportError, OSError):
-            # No lock available: still write. An interleaved line is a far
-            # smaller problem than a dropped audit record.
-            self._locked_at = None
+        # sys.platform branches, not a bare try/except ImportError: mypy checks
+        # each platform's CI job against that job's own sys.platform, so it
+        # statically knows the other branch is unreachable there and needs no
+        # ignore comment on either platform.
+        if sys.platform != "win32":
+            try:
+                import fcntl
+
+                fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)
+                return
+            except ImportError:
+                pass
+        if sys.platform == "win32":
+            try:
+                import msvcrt
+
+                # msvcrt.locking locks a byte range starting at the *current*
+                # position, so the offset has to be remembered: the write moves
+                # the file pointer, and unlocking at the new position would
+                # leave the original byte locked forever -- which on Windows
+                # makes the file unreadable by every other process, including
+                # the one auditing it.
+                self._fh.seek(0, os.SEEK_END)
+                self._locked_at = self._fh.tell()
+                msvcrt.locking(self._fh.fileno(), msvcrt.LK_LOCK, 1)
+                return
+            except (ImportError, OSError):
+                pass
+        # No lock available: still write. An interleaved line is a far
+        # smaller problem than a dropped audit record.
+        self._locked_at = None
 
     def _release(self) -> None:
-        try:
-            import fcntl
-            fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)  # type: ignore[attr-defined]
-            return
-        except ImportError:
-            pass
+        if sys.platform != "win32":
+            try:
+                import fcntl
+
+                fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
+                return
+            except ImportError:
+                pass
         if self._locked_at is None:
             return
-        try:
-            import msvcrt
-            self._fh.seek(self._locked_at)
-            msvcrt.locking(self._fh.fileno(), msvcrt.LK_UNLCK, 1)
-            self._fh.seek(0, os.SEEK_END)
-        except (ImportError, OSError):
-            pass
-        finally:
-            self._locked_at = None
+        if sys.platform == "win32":
+            try:
+                import msvcrt
+
+                self._fh.seek(self._locked_at)
+                msvcrt.locking(self._fh.fileno(), msvcrt.LK_UNLCK, 1)
+                self._fh.seek(0, os.SEEK_END)
+            except (ImportError, OSError):
+                pass
+        self._locked_at = None
 
     def close(self) -> None:
         try:
@@ -272,13 +298,12 @@ class AuditLogger:
         stream: Where the stderr copy goes; resolved at call time when None.
     """
 
-    def __init__(self, config: AuditConfig | None = None,
-                 stream: TextIO | None = None) -> None:
+    def __init__(self, config: AuditConfig | None = None, stream: TextIO | None = None) -> None:
         self.config = config or AuditConfig()
         if self.config.level not in LEVELS:
             raise ValueError(
-                f"audit level must be one of {', '.join(LEVELS)}, "
-                f"got {self.config.level!r}")
+                f"audit level must be one of {', '.join(LEVELS)}, got {self.config.level!r}"
+            )
         self._stream = stream
         self._file = _LockedAppender(self.config.path) if self.config.path else None
 
@@ -294,10 +319,17 @@ class AuditLogger:
             return outcome != "success"
         return True
 
-    def record(self, tool: str, params: Any, identity: str = "anonymous",
-               outcome: str = "success", duration_ms: int = 0,
-               result_tokens: int = 0, error: str | None = None,
-               event: str = "tool_call") -> dict[str, Any] | None:
+    def record(
+        self,
+        tool: str,
+        params: Any,
+        identity: str = "anonymous",
+        outcome: str = "success",
+        duration_ms: int = 0,
+        result_tokens: int = 0,
+        error: str | None = None,
+        event: str = "tool_call",
+    ) -> dict[str, Any] | None:
         """Write one audit record.
 
         Args:
@@ -329,10 +361,17 @@ class AuditLogger:
         try:
             line = json.dumps(record, ensure_ascii=False, default=str)
         except (TypeError, ValueError):
-            record = {"ts": record["ts"], "event": event, "tool": tool,
-                      "params": {}, "identity": identity, "outcome": outcome,
-                      "duration_ms": int(duration_ms), "result_tokens": 0,
-                      "error": "audit record could not be serialised"}
+            record = {
+                "ts": record["ts"],
+                "event": event,
+                "tool": tool,
+                "params": {},
+                "identity": identity,
+                "outcome": outcome,
+                "duration_ms": int(duration_ms),
+                "result_tokens": 0,
+                "error": "audit record could not be serialised",
+            }
             line = json.dumps(record)
         write_safe(sys.stderr if self._stream is None else self._stream, line)
         if self._file is not None:
