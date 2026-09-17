@@ -117,6 +117,37 @@ def test_parse_extracts_symbols_calls_and_imports():
     assert pf.parse_errors == 0
 
 
+def test_parse_javascript_extracts_symbols_calls_and_imports():
+    source = b'''\
+import { helper } from "./helper.js";
+
+function greet(name) {
+    return helper(name);
+}
+
+class Runner {
+    run(value) {
+        return greet(value);
+    }
+}
+
+const wrap = (value) => helper(value);
+'''
+    pf = parse_source(source, "javascript")
+    kinds = {s.qualname: s.kind for s in pf.symbols}
+    assert kinds == {
+        "greet": "function",
+        "Runner": "class",
+        "Runner.run": "method",
+        "wrap": "function",
+    }
+    assert "helper" in next(s for s in pf.symbols if s.qualname == "greet").calls
+    assert "greet" in next(s for s in pf.symbols if s.qualname == "Runner.run").calls
+    assert "helper" in next(s for s in pf.symbols if s.qualname == "wrap").calls
+    assert pf.imports == ['import { helper } from "./helper.js";']
+    assert pf.parse_errors == 0
+
+
 def test_parse_bases_are_names_not_keywords():
     """Grammars wrap supertypes in clauses; 'extends B' is not a usable name."""
     for lang, src, expected in [
@@ -2114,6 +2145,5 @@ def test_pack_context_exclude_secrets(tmp_path):
     assert ".env" not in paths_clean
     assert "secret.json" not in paths_clean
     assert "main.py" in paths_clean
-
 
 
