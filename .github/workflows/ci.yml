@@ -31,7 +31,9 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
       - run: mypy repo2graph
-      - run: pytest -q
+      # Coverage is reported, not gated: no repo-wide baseline exists yet to
+      # gate against (docs/BACKLOG.md item 7).
+      - run: pytest -q --cov=repo2graph --cov-report=term-missing
 
   packaging:
     # Reproduces how third-party hosts install and start this server, which the
