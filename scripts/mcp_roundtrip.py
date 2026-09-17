@@ -15,6 +15,7 @@ and checks what a third-party host would actually see.
 Usage:
     python scripts/mcp_roundtrip.py [path-to-repo2graph-mcp]
 """
+
 import json
 import os
 import subprocess
@@ -28,9 +29,7 @@ TIMEOUT = 120
 SAMPLE = {
     "pkg/__init__.py": "VERSION = '1.0'\n",
     "pkg/service.py": (
-        "ROUTES = {'/health': 'ok'}\n\n\n"
-        "def handle(request):\n"
-        "    return ROUTES.get(request)\n"
+        "ROUTES = {'/health': 'ok'}\n\n\ndef handle(request):\n    return ROUTES.get(request)\n"
     ),
 }
 
@@ -58,12 +57,12 @@ class Session:
     """One stdio JSON-RPC session against the server process."""
 
     def __init__(self, executable: str, repo: str):
-        self.proc = subprocess.Popen([executable, repo], stdin=subprocess.PIPE,
-                                     stdout=subprocess.PIPE)
+        self.proc = subprocess.Popen(
+            [executable, repo], stdin=subprocess.PIPE, stdout=subprocess.PIPE
+        )
         self._id = 0
 
-    def send(self, method: str, params: dict | None = None,
-             notify: bool = False) -> dict | None:
+    def send(self, method: str, params: dict | None = None, notify: bool = False) -> dict | None:
         """Send one frame; return the parsed response unless it is a notification."""
         frame: dict = {"jsonrpc": "2.0", "method": method, "params": params or {}}
         if not notify:
@@ -79,7 +78,8 @@ class Session:
         if not line:
             raise SystemExit(
                 f"the server closed stdout without answering {method!r}; "
-                f"exit code {self.proc.poll()}")
+                f"exit code {self.proc.poll()}"
+            )
         return json.loads(line)
 
     def close(self) -> None:
@@ -100,9 +100,14 @@ def main(argv: list[str]) -> int:
 
     session = Session(executable, repo)
     try:
-        reply = session.send("initialize", {
-            "protocolVersion": "2024-11-05", "capabilities": {},
-            "clientInfo": {"name": "roundtrip", "version": "1"}})
+        reply = session.send(
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "roundtrip", "version": "1"},
+            },
+        )
         info = reply["result"]["serverInfo"]
         print("serverInfo:", info)
         if info["name"] != "repo2graph":
@@ -113,11 +118,14 @@ def main(argv: list[str]) -> int:
         # this in from its own package, so clients are told repo2graph is
         # whatever release of `mcp` happens to be installed.
         from importlib.metadata import version
+
         installed = version("repo2graph")
         if info.get("version") != installed:
-            print(f"::error::serverInfo.version is {info.get('version')!r} but "
-                  f"the installed package is {installed!r} -- the SDK version "
-                  f"is leaking through")
+            print(
+                f"::error::serverInfo.version is {info.get('version')!r} but "
+                f"the installed package is {installed!r} -- the SDK version "
+                f"is leaking through"
+            )
             return 1
 
         session.send("notifications/initialized", notify=True)
@@ -131,17 +139,21 @@ def main(argv: list[str]) -> int:
 
         # repo_map triggers the on-demand build, so this covers the one slow
         # path a host's first call actually takes.
-        text = session.send("tools/call", {
-            "name": "repo_map", "arguments": {}})["result"]["content"][0]["text"]
+        text = session.send("tools/call", {"name": "repo_map", "arguments": {}})["result"][
+            "content"
+        ][0]["text"]
         if not text.strip():
             print("::error::repo_map returned nothing")
             return 1
         print("repo_map:", text.splitlines()[0][:70])
 
-        found = session.send("tools/call", {
-            "name": "repo_search",
-            "arguments": {"query": "how is a request handled"},
-        })["result"]["content"][0]["text"]
+        found = session.send(
+            "tools/call",
+            {
+                "name": "repo_search",
+                "arguments": {"query": "how is a request handled"},
+            },
+        )["result"]["content"][0]["text"]
         if not found.strip():
             print("::error::repo_search returned nothing")
             return 1

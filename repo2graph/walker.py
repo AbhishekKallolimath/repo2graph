@@ -1,4 +1,5 @@
 """Compatibility shim — walker is merged into parse.py."""
+
 from .parse import (
     DEFAULT_SKIP_DIRS,
     MAX_BYTES,

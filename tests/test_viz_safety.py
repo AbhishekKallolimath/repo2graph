@@ -6,6 +6,7 @@ control at the moment the page is opened. Three of these properties were already
 true when this file was written; they are pinned here because nothing was
 asserting them, and an unasserted security property is one refactor from gone.
 """
+
 import json
 import re
 
@@ -19,8 +20,9 @@ class FakeGraph:
 
     def __init__(self, name, nodes=None, edges=None):
         self.name = name
-        self.nodes = nodes or {"file:a.py": {"id": "file:a.py", "type": "file",
-                                            "name": "a.py", "path": "a.py"}}
+        self.nodes = nodes or {
+            "file:a.py": {"id": "file:a.py", "type": "file", "name": "a.py", "path": "a.py"}
+        }
         self.edges = edges or []
 
 
@@ -33,10 +35,13 @@ def render(tmp_path, name, **kw):
 
 # ------------------------------------------------------------------ (a) ----
 
+
 def chrome(html):
     """The two HTML contexts the repo name is interpolated into."""
-    return (re.search(r"<title>(.*?)</title>", html, re.S).group(1),
-            re.search(r"<h1>(.*?)</h1>", html, re.S).group(1))
+    return (
+        re.search(r"<title>(.*?)</title>", html, re.S).group(1),
+        re.search(r"<h1>(.*?)</h1>", html, re.S).group(1),
+    )
 
 
 def test_a_script_tag_in_the_repo_name_is_escaped(tmp_path):
@@ -53,12 +58,15 @@ def test_a_script_tag_in_the_repo_name_is_escaped(tmp_path):
     assert "<script>alert(1)</script>" not in html
 
 
-@pytest.mark.parametrize("name", [
-    '"><img src=x onerror=alert(1)>',
-    "</title><script>alert(1)</script>",
-    "' onmouseover='alert(1)",
-    "</h1><iframe src=javascript:alert(1)>",
-])
+@pytest.mark.parametrize(
+    "name",
+    [
+        '"><img src=x onerror=alert(1)>',
+        "</title><script>alert(1)</script>",
+        "' onmouseover='alert(1)",
+        "</h1><iframe src=javascript:alert(1)>",
+    ],
+)
 def test_attribute_and_tag_breakouts_in_the_repo_name_are_escaped(tmp_path, name):
     """Neither the <title> nor the <h1> may be escaped out of."""
     html = render(tmp_path, name)
@@ -99,8 +107,14 @@ def test_the_payload_placeholder_still_receives_the_real_data(tmp_path):
 
 def test_angle_brackets_in_the_payload_cannot_close_the_script_block(tmp_path):
     """`</script>` inside indexed content must not terminate the block early."""
-    nodes = {"file:x.py": {"id": "file:x.py", "type": "file", "path": "x.py",
-                           "name": "</script><script>alert(1)</script>"}}
+    nodes = {
+        "file:x.py": {
+            "id": "file:x.py",
+            "type": "file",
+            "path": "x.py",
+            "name": "</script><script>alert(1)</script>",
+        }
+    }
     out = tmp_path / "g.html"
     write_html(FakeGraph("repo", nodes=nodes), out)
     html = out.read_text(encoding="utf8")
@@ -111,13 +125,14 @@ def test_angle_brackets_in_the_payload_cannot_close_the_script_block(tmp_path):
 
 # ------------------------------------------------------------------ (b) ----
 
+
 def test_viz_nodes_zero_renders_no_nodes(tmp_path):
     """0 means an empty graph, not every node."""
-    nodes = {f"file:{i}.py": {"id": f"file:{i}.py", "type": "file",
-                              "name": f"{i}.py", "path": f"{i}.py"}
-             for i in range(12)}
-    edges = [{"src": "file:0.py", "dst": f"file:{i}.py", "type": "IMPORTS"}
-             for i in range(1, 12)]
+    nodes = {
+        f"file:{i}.py": {"id": f"file:{i}.py", "type": "file", "name": f"{i}.py", "path": f"{i}.py"}
+        for i in range(12)
+    }
+    edges = [{"src": "file:0.py", "dst": f"file:{i}.py", "type": "IMPORTS"} for i in range(1, 12)]
 
     kept, kept_edges = select(nodes, edges, max_nodes=0)
     assert kept == [] and kept_edges == []
@@ -130,14 +145,16 @@ def test_viz_nodes_zero_renders_no_nodes(tmp_path):
 
 def test_viz_nodes_none_is_the_no_cap_spelling(tmp_path):
     """`all` on the CLI arrives here as None and keeps every node."""
-    nodes = {f"file:{i}.py": {"id": f"file:{i}.py", "type": "file",
-                              "name": f"{i}.py", "path": f"{i}.py"}
-             for i in range(12)}
+    nodes = {
+        f"file:{i}.py": {"id": f"file:{i}.py", "type": "file", "name": f"{i}.py", "path": f"{i}.py"}
+        for i in range(12)
+    }
     kept, _ = select(nodes, [], max_nodes=None)
     assert len(kept) == 12
 
 
 # ------------------------------------------------------------------ (c) ----
+
 
 def test_the_settle_loop_is_incremental_not_a_blocking_while(tmp_path):
     """Layout must yield to the browser between batches.
@@ -147,10 +164,10 @@ def test_the_settle_loop_is_incremental_not_a_blocking_while(tmp_path):
     bounds the freeze but does not remove it.
     """
     assert "requestAnimationFrame(settle)" in TEMPLATE
-    assert not re.search(r"while\s*\(\s*alpha\s*>", TEMPLATE), \
-        "the blocking settle loop is back"
-    assert "cancelAnimationFrame(settleRaf)" in TEMPLATE, \
+    assert not re.search(r"while\s*\(\s*alpha\s*>", TEMPLATE), "the blocking settle loop is back"
+    assert "cancelAnimationFrame(settleRaf)" in TEMPLATE, (
         "overlapping relayouts must not fight over alpha"
+    )
 
 
 def test_the_iteration_cap_is_configurable_from_the_container(tmp_path):
@@ -163,13 +180,15 @@ def test_the_iteration_cap_is_configurable_from_the_container(tmp_path):
 def test_a_progress_indicator_exists_and_is_hidden_when_idle(tmp_path):
     """The user must be able to tell a laying-out page from a frozen one."""
     html = render(tmp_path, "repo")
-    assert re.search(r'<div id="progress"[^>]*\bhidden\b', html), \
+    assert re.search(r'<div id="progress"[^>]*\bhidden\b', html), (
         "the progress indicator must start hidden"
+    )
     assert "progress.hidden = false" in TEMPLATE, "…and be shown while settling"
     assert "progress.hidden = true" in TEMPLATE, "…and hidden again when done"
 
 
 # ------------------------------------------------------------------ (d) ----
+
 
 def test_pointer_capture_is_released_on_both_pointerup_and_pointercancel():
     """A capture never released swallows every later pointer event on the page.
@@ -181,11 +200,11 @@ def test_pointer_capture_is_released_on_both_pointerup_and_pointercancel():
     one. Noted in DONE.md as the one untested-in-a-browser property here.
     """
     for event in ("pointerup", "pointercancel"):
-        handler = re.search(
-            r'svg\.addEventListener\("%s",.*?\n\}\);' % event, TEMPLATE, re.S)
+        handler = re.search(r'svg\.addEventListener\("%s",.*?\n\}\);' % event, TEMPLATE, re.S)
         assert handler, f"no {event} handler found"
-        assert "releasePointerCapture(ev.pointerId)" in handler.group(0), \
+        assert "releasePointerCapture(ev.pointerId)" in handler.group(0), (
             f"{event} never releases the pointer capture"
+        )
 
 
 def test_pointer_capture_release_is_guarded():
@@ -194,6 +213,7 @@ def test_pointer_capture_release_is_guarded():
 
 
 # --------------------------------------------------------------- shape ----
+
 
 def test_the_page_is_self_contained(tmp_path):
     """No network at render time and none at view time: one file, no fetches."""

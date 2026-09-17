@@ -13,6 +13,7 @@ character. Each cell asserts the same two things -- no exception, and something
 came out -- because a command that prints nothing is as broken as one that
 crashes, just quieter.
 """
+
 import io
 import json
 import sys
@@ -22,10 +23,10 @@ import pytest
 from repo2graph.events import SAFE_ERRORS, encodable, write_safe
 
 # Characters outside cp1252, each from a different failure report.
-ARROW = "→"          # U+2192, the one that started ISS-17
-ACCENT = "é"         # U+00E9, inside cp1252 -- the control case
-CJK = "中"            # U+4E2D, outside every single-byte codec
-LINE_SEP = " "       # the splitlines() hazard from AGENTS.md
+ARROW = "→"  # U+2192, the one that started ISS-17
+ACCENT = "é"  # U+00E9, inside cp1252 -- the control case
+CJK = "中"  # U+4E2D, outside every single-byte codec
+LINE_SEP = " "  # the splitlines() hazard from AGENTS.md
 LONE_SURROGATE = "\udce9"  # what surrogateescape produces from a stray byte
 
 TRICKY = (ARROW, ACCENT, CJK, LINE_SEP, LONE_SURROGATE)
@@ -64,22 +65,32 @@ class StrictStream(FakeStream):
     """
 
     def write(self, text):
-        text.encode(self.encoding, self.errors)    # raises exactly as the real one does
+        text.encode(self.encoding, self.errors)  # raises exactly as the real one does
         return super().write(text)
 
 
 # ------------------------------------------------------------ the matrix ----
 
+
 @pytest.mark.parametrize("encoding", ["cp1252", "ascii", "utf8", "cp932", "latin-1"])
-@pytest.mark.parametrize("errors", ["strict", "surrogateescape", "replace",
-                                    "backslashreplace", "xmlcharrefreplace",
-                                    "namereplace", "surrogatepass"])
+@pytest.mark.parametrize(
+    "errors",
+    [
+        "strict",
+        "surrogateescape",
+        "replace",
+        "backslashreplace",
+        "xmlcharrefreplace",
+        "namereplace",
+        "surrogatepass",
+    ],
+)
 @pytest.mark.parametrize("char", TRICKY)
 def test_encodable_output_is_always_writable(encoding, errors, char):
     """The core promise: whatever comes back, the real stream accepts it."""
     stream = StrictStream(encoding=encoding, errors=errors)
     safe = encodable(f"path/to/caf{char}.py", stream)
-    stream.write(safe)               # must not raise
+    stream.write(safe)  # must not raise
     assert stream.text.strip(), "the guard produced nothing at all"
 
 
@@ -107,10 +118,11 @@ def test_write_safe_never_raises_under_git_bash_surrogateescape(char):
 def test_emit_with_a_cp1252_surrogateescape_stdout(monkeypatch):
     """4.1(c): U+2192 through a mocked Git Bash stdout, no exception."""
     from repo2graph.cli import _emit
+
     stream = StrictStream("cp1252", "surrogateescape")
     monkeypatch.setattr(sys, "stdout", stream)
 
-    _emit(f"budget {ARROW} exceeded")        # must not raise
+    _emit(f"budget {ARROW} exceeded")  # must not raise
 
     out = stream.text
     assert out, "nothing was written"
@@ -122,6 +134,7 @@ def test_emit_with_a_cp1252_surrogateescape_stdout(monkeypatch):
 def test_emit_preserves_a_surrogate_escaped_path(monkeypatch):
     """S-13: a surrogateescape-decoded path stays byte-identical on the way out."""
     from repo2graph.cli import _emit
+
     stream = FakeStream("ascii", "surrogateescape")
     monkeypatch.setattr(sys, "stdout", stream)
     _emit("caf\udce9.py")
@@ -131,15 +144,18 @@ def test_emit_preserves_a_surrogate_escaped_path(monkeypatch):
 def test_emit_survives_an_encoding_python_does_not_have(monkeypatch):
     """S-12: Windows can report "cp0". That must not flatten ordinary text."""
     from repo2graph.cli import _emit
+
     stream = FakeStream("cp0", "strict")
     monkeypatch.setattr(sys, "stdout", stream)
     _emit("café.py")
     assert stream.text == "café.py\n", (
-        "an unknown encoding must not replace characters that were never a problem")
+        "an unknown encoding must not replace characters that were never a problem"
+    )
 
 
 def test_a_stream_with_no_encoding_attribute_at_all(monkeypatch):
     """Some wrappers report neither encoding nor errors."""
+
     class Bare:
         def __init__(self):
             self.buf = []
@@ -175,23 +191,24 @@ def test_write_safe_swallows_a_broken_pipe():
         def flush(self):
             pass
 
-    write_safe(Broken(), "anything")          # must not raise
+    write_safe(Broken(), "anything")  # must not raise
 
 
 def test_write_safe_swallows_a_closed_stream():
     stream = io.StringIO()
     stream.close()
-    write_safe(stream, "anything")            # must not raise
+    write_safe(stream, "anything")  # must not raise
 
 
 def test_a_stream_that_lies_about_its_encoding_still_does_not_crash():
     """encodable() cleared it, the stream rejects it anyway: still no traceback."""
+
     class Liar(StrictStream):
         def __init__(self):
             super().__init__("utf8", "strict")
 
         def write(self, text):
-            self.encoding = "ascii"           # changes its mind mid-write
+            self.encoding = "ascii"  # changes its mind mid-write
             return super().write(text)
 
     write_safe(Liar(), f"x {CJK} y")
@@ -199,18 +216,22 @@ def test_a_stream_that_lies_about_its_encoding_still_does_not_crash():
 
 # ------------------------------------------------------- audit + events ----
 
+
 @pytest.mark.parametrize("char", TRICKY)
 def test_an_audit_record_survives_an_unencodable_argument(char):
     """The audit line must be written even when the query cannot be rendered."""
     from repo2graph.audit import AuditConfig, AuditLogger
+
     stream = StrictStream("cp1252", "strict")
     AuditLogger(AuditConfig(), stream=stream).record(
-        "repo_search", {"query": f"find {char} handler"})
+        "repo_search", {"query": f"find {char} handler"}
+    )
     assert stream.text.strip(), "no audit record was emitted"
 
 
 def test_an_audit_file_sink_accepts_unencodable_text(tmp_path):
     from repo2graph.audit import AuditConfig, AuditLogger
+
     path = tmp_path / "audit.log"
     log = AuditLogger(AuditConfig(path=str(path)), stream=io.StringIO())
     log.record("repo_search", {"query": f"{ARROW}{CJK}{LINE_SEP}"})
@@ -221,6 +242,7 @@ def test_an_audit_file_sink_accepts_unencodable_text(tmp_path):
 @pytest.mark.parametrize("char", TRICKY)
 def test_a_structured_event_survives_an_unencodable_field(char):
     from repo2graph.events import emit
+
     stream = StrictStream("cp1252", "strict")
     record = emit("test_event", stream=stream, detail=f"x{char}y")
     assert record["event"] == "test_event"

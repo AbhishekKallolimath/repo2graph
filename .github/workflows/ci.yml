@@ -29,6 +29,8 @@ jobs:
 
       - run: pip install -e ".[dev,mcp]"
       - run: ruff check .
+      - run: ruff format --check .
+      - run: mypy repo2graph
       - run: pytest -q
 
   packaging:

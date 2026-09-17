@@ -1,4 +1,5 @@
 """Turn graph nodes into retrieval chunks: code text + graph context header."""
+
 from collections import Counter, defaultdict
 
 MAX_CHARS = 4000
@@ -42,13 +43,18 @@ def _keepends_lf(text: str) -> list[str]:
 def _split(text: str, max_chars: int = MAX_CHARS):
     if len(text) <= max_chars:
         return [text]
-    lines, out, buf, size = _keepends_lf(text), [], [], 0
+    lines = _keepends_lf(text)
+    out: list[str] = []
+    buf: list[str] = []
+    size = 0
     i = 0
     while i < len(lines):
         buf, size = [], 0
         start = i
         while i < len(lines) and size < max_chars:
-            buf.append(lines[i]); size += len(lines[i]); i += 1
+            buf.append(lines[i])
+            size += len(lines[i])
+            i += 1
         out.append("".join(buf))
         if i < len(lines):
             i = max(start + 1, i - OVERLAP_LINES)
@@ -107,14 +113,17 @@ def iter_chunks(g, include_files: bool = True):
             continue
         src = source_of(n["path"])
         lines = _lines(src)
-        body = "\n".join(lines[n["start_line"] - 1: n["end_line"]])
+        body = "\n".join(lines[n["start_line"] - 1 : n["end_line"]])
         covered[n["path"]].append((n["start_line"], n["end_line"]))
         call_out = [e for e in out_edges[nid] if e["type"] == "CALLS"][:MAX_CALLEES]
         call_in = [e for e in in_edges[nid] if e["type"] == "CALLS"][:MAX_CALLERS]
         callees = [label(e["dst"]) for e in call_out]
         callers = [label(e["src"]) for e in call_in]
-        ext = [g.nodes.get(e["dst"], {}).get("name", e["dst"])
-               for e in out_edges[nid] if e["type"] == "CALLS_EXTERNAL"][:MAX_EXT_CALLS]
+        ext = [
+            g.nodes.get(e["dst"], {}).get("name", e["dst"])
+            for e in out_edges[nid]
+            if e["type"] == "CALLS_EXTERNAL"
+        ][:MAX_EXT_CALLS]
         bases = [label(e["dst"]) for e in out_edges[nid] if e["type"] == "INHERITS"][:MAX_BASES]
         # a call to an overloaded name fans out to every candidate at 1/n
         # confidence; say so in the header, or a reader follows the wrong edge
@@ -142,16 +151,24 @@ def iter_chunks(g, include_files: bool = True):
         for i, part in enumerate(_split(body)):
             yield {
                 "id": f"{nid}#{i}" if i else nid,
-                "node_id": nid, "type": "symbol", "kind": n["kind"], "path": n["path"],
-                "lang": n["lang"], "name": n["name"], "qualname": n["qualname"],
-                "start_line": n["start_line"], "end_line": n["end_line"],
+                "node_id": nid,
+                "type": "symbol",
+                "kind": n["kind"],
+                "path": n["path"],
+                "lang": n["lang"],
+                "name": n["name"],
+                "qualname": n["qualname"],
+                "start_line": n["start_line"],
+                "end_line": n["end_line"],
                 "entrypoint": bool(n.get("entrypoint")),
-                "callers": callers, "callees": callees, "callees_external": ext,
+                "callers": callers,
+                "callees": callees,
+                "callees_external": ext,
                 "text": "\n".join(header) + "\n" + part,
             }
         pending[n["path"]] -= 1
         if pending[n["path"]] <= 0:
-            src_cache.pop(n["path"], None)   # file pass re-reads only if it needs to
+            src_cache.pop(n["path"], None)  # file pass re-reads only if it needs to
 
     if not include_files:
         return
@@ -160,21 +177,21 @@ def iter_chunks(g, include_files: bool = True):
         if n["type"] != "file":
             continue
         src = source_of(n["path"])
-        src_cache.pop(n["path"], None)       # nothing else reads this file's text
+        src_cache.pop(n["path"], None)  # nothing else reads this file's text
         if not src.strip():
             continue
         spans = sorted(covered.get(n["path"], []))
         lines = _lines(src)
         if spans:
             keep, cur = [], 1
-            line_indices = []
+            line_indices: list[int] = []
             for s, e in spans:
                 if s > cur:
-                    keep += lines[cur - 1: s - 1]
+                    keep += lines[cur - 1 : s - 1]
                     line_indices.extend(range(cur, s))
                 cur = max(cur, e + 1)
             if cur <= len(lines):
-                keep += lines[cur - 1:]
+                keep += lines[cur - 1 :]
                 line_indices.extend(range(cur, len(lines) + 1))
             body = "\n".join(keep).strip()
             if len(body) < 40:
@@ -186,9 +203,14 @@ def iter_chunks(g, include_files: bool = True):
         else:
             body, label_kind = src, "file"
             span_start, span_end = 1, n.get("lines", 0)
-        imports = [e.get("target", "") for e in out_edges[nid] if e["type"] == "IMPORTS"][:MAX_IMPORTS]
-        defines = [g.nodes.get(e["dst"], {}).get("qualname", e["dst"])
-                   for e in out_edges[nid] if e["type"] == "DEFINES"][:MAX_DEFINES]
+        imports = [e.get("target", "") for e in out_edges[nid] if e["type"] == "IMPORTS"][
+            :MAX_IMPORTS
+        ]
+        defines = [
+            g.nodes.get(e["dst"], {}).get("qualname", e["dst"])
+            for e in out_edges[nid]
+            if e["type"] == "DEFINES"
+        ][:MAX_DEFINES]
         header = [f"# file: {n['path']} ({n.get('lang')}, {n.get('lines')} lines)"]
         if imports:
             header.append(f"# imports: {', '.join(i for i in imports if i)}")
@@ -196,11 +218,19 @@ def iter_chunks(g, include_files: bool = True):
             header.append(f"# defines: {', '.join(defines)}")
         for i, part in enumerate(_split(body)):
             yield {
-                "id": f"{nid}#{i}", "node_id": nid, "type": label_kind,
-                "kind": n.get("file_type", "other"), "path": n["path"],
-                "lang": n.get("lang"), "name": n["name"], "qualname": n["path"],
-                "start_line": span_start, "end_line": span_end,
+                "id": f"{nid}#{i}",
+                "node_id": nid,
+                "type": label_kind,
+                "kind": n.get("file_type", "other"),
+                "path": n["path"],
+                "lang": n.get("lang"),
+                "name": n["name"],
+                "qualname": n["path"],
+                "start_line": span_start,
+                "end_line": span_end,
                 "entrypoint": False,
-                "callers": [], "callees": [], "callees_external": [],
+                "callers": [],
+                "callees": [],
+                "callees_external": [],
                 "text": "\n".join(header) + "\n" + part,
             }

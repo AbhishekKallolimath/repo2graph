@@ -1,18 +1,26 @@
 """repo2graph CLI: build a code graph, query it, export for RAG."""
+
 import argparse
 import json
 import math
 import sys
 from pathlib import Path
+from typing import cast
 
 from . import __version__
 from .chunks import iter_chunks
+
 # The name only: `default_embedder` is imported inside the functions that call
 # it, so the heavyweight sentence-transformers import stays off every path that
 # does not embed (and stays patchable through the module object).
 from .embed import DEFAULT_MODEL as EMBED_DEFAULT_MODEL
-from .export import (dump_all, load_parse_cache, make_path, path as artifact_path,
-                     rel as artifact_rel)
+from .export import (
+    dump_all,
+    load_parse_cache,
+    make_path,
+    path as artifact_path,
+    rel as artifact_rel,
+)
 from .events import SAFE_ERRORS, encodable, write_safe
 from .graph import build
 from .viz import MAX_NODES
@@ -25,7 +33,8 @@ def parse_formats(spec: str) -> set[str]:
     unknown = sorted(wanted - set(FORMATS))
     if unknown:
         raise SystemExit(
-            f"unknown format(s): {', '.join(unknown)}; choose from {', '.join(FORMATS)}")
+            f"unknown format(s): {', '.join(unknown)}; choose from {', '.join(FORMATS)}"
+        )
     return wanted
 
 
@@ -72,20 +81,27 @@ def _emit(text: str) -> None:
 def cmd_build(args):
     repo_path = Path(args.repo)
     if not repo_path.is_dir():
-        raise SystemExit(f"error: repository directory does not exist or is not a directory: {repo_path}")
+        raise SystemExit(
+            f"error: repository directory does not exist or is not a directory: {repo_path}"
+        )
     formats = parse_formats(args.formats)
     outdir = Path(args.out)
     # An absent or unreadable cache is an empty dict, which is exactly a full
     # build -- so `--incremental` against a directory with no index yet works,
     # it just has nothing to reuse on the first run.
     cache = load_parse_cache(outdir) if getattr(args, "incremental", False) else None
-    g = build(repo_path, include=args.include, exclude=args.exclude,
-              git_history=args.git_history, max_files=args.max_files, jobs=args.jobs,
-              cache=cache)
-    chunks = None if args.no_chunks else iter_chunks(g)   # a generator, streamed to disk
+    g = build(
+        repo_path,
+        include=args.include,
+        exclude=args.exclude,
+        git_history=args.git_history,
+        max_files=args.max_files,
+        jobs=args.jobs,
+        cache=cache,
+    )
+    chunks = None if args.no_chunks else iter_chunks(g)  # a generator, streamed to disk
     written, n_chunks = dump_all(g, chunks, outdir, formats, args.viz_nodes)
-    report = {"out": str(outdir), "written": written,
-              "stats": dict(g.stats), "chunks": n_chunks}
+    report = {"out": str(outdir), "written": written, "stats": dict(g.stats), "chunks": n_chunks}
     if g.incremental is not None:
         report["incremental"] = g.incremental
     _emit(json.dumps(report, indent=2))
@@ -93,13 +109,23 @@ def cmd_build(args):
 
 def cmd_github(args):
     from .fetch import index_github
+
     parse_formats(args.formats)  # fail before the clone, not after
     meta = index_github(
-        args.repo, Path(args.out), ref=args.ref, depth=args.depth,
-        git_history=args.git_history, formats=args.formats,
-        include=args.include, exclude=args.exclude, max_files=args.max_files,
-        keep_clone=args.keep_clone, token=args.token, viz_nodes=args.viz_nodes,
-        jobs=args.jobs)
+        args.repo,
+        Path(args.out),
+        ref=args.ref,
+        depth=args.depth,
+        git_history=args.git_history,
+        formats=args.formats,
+        include=args.include,
+        exclude=args.exclude,
+        max_files=args.max_files,
+        keep_clone=args.keep_clone,
+        token=args.token,
+        viz_nodes=args.viz_nodes,
+        jobs=args.jobs,
+    )
     _emit(json.dumps(meta, indent=2))
 
 
@@ -121,7 +147,8 @@ def _require_index(out: Path, name: str) -> Path:
     if name != "manifest.json" and not artifact_path(out, "manifest.json").exists():
         raise SystemExit(
             f"index at {out} has no manifest.json — the last build was interrupted "
-            f"and the index may be incomplete; rebuild it")
+            f"and the index may be incomplete; rebuild it"
+        )
     return path
 
 
@@ -148,9 +175,10 @@ def _resolve_vectors(idx, args, out=None):
     where = out if out is not None else getattr(args, "out", ".r2g")
     if idx.vectors is None:
         raise SystemExit(
-            f"no vectors in the index at {where}: run "
-            f"`repo2graph embed -o {where}` first")
+            f"no vectors in the index at {where}: run `repo2graph embed -o {where}` first"
+        )
     from .embed import default_embedder
+
     try:
         embedder = default_embedder(getattr(args, "embed_model", None))
     except RuntimeError as exc:
@@ -199,13 +227,22 @@ def cmd_embed(args):
         widths = {len(v) for v in vectors.values()}
     dim = widths.pop() if widths else 0
 
-    n = write_vectors(npy, vectors, model_id, dim, chunk_ids,
-                      [hashes[cid] for cid in chunk_ids])
+    n = write_vectors(npy, vectors, model_id, dim, chunk_ids, [hashes[cid] for cid in chunk_ids])
     register_written(out, [artifact_rel("vectors.npy"), artifact_rel("vectors.meta.json")])
     reused = len(set(reuse) & set(vectors))
-    _emit(json.dumps({"out": str(out), "vectors": n, "reused": reused,
-                      "embedded": n - reused, "model": model_id, "dim": dim},
-                     indent=2))
+    _emit(
+        json.dumps(
+            {
+                "out": str(out),
+                "vectors": n,
+                "reused": reused,
+                "embedded": n - reused,
+                "model": model_id,
+                "dim": dim,
+            },
+            indent=2,
+        )
+    )
 
 
 def _reusable_vectors(npy: Path, model_id: str, hashes: dict) -> dict:
@@ -216,6 +253,7 @@ def _reusable_vectors(npy: Path, model_id: str, hashes: dict) -> dict:
     graph, whose call confidences are global.
     """
     from .embed import load_vectors
+
     if not npy.exists():
         return {}
     try:
@@ -225,12 +263,16 @@ def _reusable_vectors(npy: Path, model_id: str, hashes: dict) -> dict:
     if not previous or meta.get("model_id") != model_id:
         return {}
     stored = dict(zip(meta.get("chunk_ids") or [], meta.get("text_hashes") or []))
-    return {cid: vec for cid, vec in previous.items()
-            if cid in hashes and stored.get(cid) == hashes[cid]}
+    return {
+        cid: vec
+        for cid, vec in previous.items()
+        if cid in hashes and stored.get(cid) == hashes[cid]
+    }
 
 
 def cmd_query(args):
     from .query import Index, format_pack
+
     out = Path(args.out)
     # Index reads all three, and `build --formats overview` writes chunks.jsonl
     # without the graph files -- checking only chunks turned that combination
@@ -243,9 +285,15 @@ def cmd_query(args):
     except ValueError as exc:
         raise SystemExit(f"error: corrupt index at {out}: {exc}") from None
     vectors, embedder = _resolve_vectors(idx, args)
-    res = idx.retrieve(args.query, k=args.k, hops=args.hops, budget_chars=args.budget,
-                       min_confidence=getattr(args, "min_conf", None),
-                       vectors=vectors, embedder=embedder)
+    res = idx.retrieve(
+        args.query,
+        k=args.k,
+        hops=args.hops,
+        budget_chars=args.budget,
+        min_confidence=getattr(args, "min_conf", None),
+        vectors=vectors,
+        embedder=embedder,
+    )
     if getattr(args, "format", "text") == "json" or args.json:
         _emit(json.dumps(res, indent=2))
     else:
@@ -255,7 +303,8 @@ def cmd_query(args):
 RAG_TARGET_HELP = (
     "expected one of: a repo2graph index directory (one holding "
     "agent/manifest.json), a source repository directory to index first, "
-    "or a GitHub spec such as owner/repo or https://github.com/owner/repo")
+    "or a GitHub spec such as owner/repo or https://github.com/owner/repo"
+)
 
 
 def _rag_index_dir(args) -> Path:
@@ -266,12 +315,13 @@ def _rag_index_dir(args) -> Path:
         return out
     tpath = Path(target)
     if artifact_path(tpath, "manifest.json").exists():
-        return tpath          # already an index: use it as it is, do not rebuild
+        return tpath  # already an index: use it as it is, do not rebuild
     if tpath.is_dir():
         g = build(tpath)
         dump_all(g, iter_chunks(g), out, {"jsonl", "overview"})
         return out
     from .fetch import index_github, parse_spec
+
     try:
         parse_spec(target)
     except ValueError:
@@ -314,16 +364,18 @@ def verify_rag(idx, out, embed_model=None) -> tuple[dict, str | None]:
     if not idx.vectors:
         return report, (
             f"no vectors in the index at {out}: dense retrieval is not "
-            f"available. Run `repo2graph embed -o {out}` to build them.")
+            f"available. Run `repo2graph embed -o {out}` to build them."
+        )
     meta = idx.vector_meta or {}
     report["model_id"] = meta.get("model_id")
     report["dim"] = meta.get("dim")
 
     # Chunk coverage: fuse_ok cannot see this, and it is the failure that makes
     # fusion abandon itself at query time with everything else looking healthy.
-    missing = report["unvectorised_chunks"]
+    missing = cast(int, report["unvectorised_chunks"])
 
     from .embed import default_embedder
+
     try:
         embedder = default_embedder(embed_model)
         report["rag_extra_installed"] = True
@@ -331,6 +383,7 @@ def verify_rag(idx, out, embed_model=None) -> tuple[dict, str | None]:
         report["rag_extra_installed"] = False
         return report, str(exc)
     from .embed import dim_of, model_id_of
+
     report["embedder_model_id"] = model_id_of(embedder)
     try:
         report["embedder_dim"] = dim_of(embedder)
@@ -343,13 +396,15 @@ def verify_rag(idx, out, embed_model=None) -> tuple[dict, str | None]:
         return report, (
             f"{missing} of {report['chunks']} chunks have no vector: a query "
             f"whose BM25 shortlist touches one of them falls back to lexical "
-            f"ranking. Re-run `repo2graph embed -o {out}`.")
+            f"ranking. Re-run `repo2graph embed -o {out}`."
+        )
     return report, None
 
 
 def cmd_verify_rag(args):
     """`--verify-rag`: report on the index's dense path, non-zero if broken."""
     from .query import Index
+
     out = Path(args.out)
     _require_index(out, "chunks.jsonl")
     try:
@@ -371,6 +426,7 @@ def cmd_verify_rag(args):
 def cmd_rag(args):
     """Pack an agent-ready, citation-carrying context for one question."""
     from .query import Index
+
     out = _rag_index_dir(args)
     _require_index(out, "chunks.jsonl")
     _require_index(out, "nodes.jsonl")
@@ -381,12 +437,20 @@ def cmd_rag(args):
         raise SystemExit(f"error: corrupt index at {out}: {exc}") from None
     vectors, embedder = _resolve_vectors(idx, args, out)
     pack = idx.pack_context(
-        args.query, k=args.k, hops=args.hops, budget_chars=args.budget,
-        min_confidence=args.min_conf, expand_graph=not args.no_expand,
-        exclude_secrets=args.answer, vectors=vectors, embedder=embedder,
-        budget_tokens=getattr(args, "budget_tokens", None))
+        args.query,
+        k=args.k,
+        hops=args.hops,
+        budget_chars=args.budget,
+        min_confidence=args.min_conf,
+        expand_graph=not args.no_expand,
+        exclude_secrets=args.answer,
+        vectors=vectors,
+        embedder=embedder,
+        budget_tokens=getattr(args, "budget_tokens", None),
+    )
     if args.answer:
         from .answer import stream_answer
+
         stream_answer(pack, model=args.model, provider=args.provider)
         return 0
     if args.format == "json":
@@ -404,9 +468,17 @@ def cmd_map(args):
     _require_index(out, "edges.jsonl")
     html = make_path(out, "graph.html")
     data = write_html(LoadedGraph(out), html, args.viz_nodes)
-    _emit(json.dumps({"html": str(html),
-                      "nodes": len(data["nodes"]), "edges": len(data["edges"]),
-                      "of": data["totals"]}, indent=2))
+    _emit(
+        json.dumps(
+            {
+                "html": str(html),
+                "nodes": len(data["nodes"]),
+                "edges": len(data["edges"]),
+                "of": data["totals"],
+            },
+            indent=2,
+        )
+    )
 
 
 def cmd_stats(args):
@@ -453,8 +525,7 @@ def _unit_float(value: str) -> float:
     except ValueError:
         raise argparse.ArgumentTypeError(f"expected a number, got {value!r}") from None
     if not math.isfinite(f):
-        raise argparse.ArgumentTypeError(
-            f"expected a finite number in [0.0, 1.0], got {value!r}")
+        raise argparse.ArgumentTypeError(f"expected a finite number in [0.0, 1.0], got {value!r}")
     if not 0.0 <= f <= 1.0:
         raise argparse.ArgumentTypeError(f"must be between 0.0 and 1.0, got {f}")
     return f
@@ -469,20 +540,33 @@ def _add_vector_flags(parser) -> None:
     sentence-transformers checkpoint (and vice versa).
     """
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("--vectors", dest="vectors", action="store_true", default=None,
-                       help="fuse the index's dense vectors into the ranking "
-                            "(error if they are missing or do not match)")
-    group.add_argument("--no-vectors", dest="vectors", action="store_false", default=None,
-                       help="lexical ranking only, even when the index has vectors")
-    parser.add_argument("--embed-model", dest="embed_model", default=None,
-                        help="sentence-transformers model used to embed the query for "
-                             f"--vectors; must match the index (default: {EMBED_DEFAULT_MODEL})")
+    group.add_argument(
+        "--vectors",
+        dest="vectors",
+        action="store_true",
+        default=None,
+        help="fuse the index's dense vectors into the ranking "
+        "(error if they are missing or do not match)",
+    )
+    group.add_argument(
+        "--no-vectors",
+        dest="vectors",
+        action="store_false",
+        default=None,
+        help="lexical ranking only, even when the index has vectors",
+    )
+    parser.add_argument(
+        "--embed-model",
+        dest="embed_model",
+        default=None,
+        help="sentence-transformers model used to embed the query for "
+        f"--vectors; must match the index (default: {EMBED_DEFAULT_MODEL})",
+    )
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(prog="repo2graph", description=__doc__)
-    p.add_argument("-v", "--version", action="version",
-                   version=f"%(prog)s {__version__}")
+    p.add_argument("-v", "--version", action="version", version=f"%(prog)s {__version__}")
     sub = p.add_subparsers(dest="cmd")
 
     effective_argv = sys.argv[1:] if argv is None else argv
@@ -495,41 +579,67 @@ def main(argv=None):
 
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("-o", "--out", default=".r2g")
-    common.add_argument("--formats", default="jsonl,graphml,cypher,overview,html",
-                        help="comma list: jsonl,graphml,cypher,overview,html")
-    common.add_argument("--viz-nodes", type=_viz_nodes, default=MAX_NODES,
-                        metavar="N|all",
-                        help=f"best-connected nodes to draw in graph.html "
-                             f"(default: {MAX_NODES}; 0 draws an empty graph; "
-                             f"'all' draws every node)")
+    common.add_argument(
+        "--formats",
+        default="jsonl,graphml,cypher,overview,html",
+        help="comma list: jsonl,graphml,cypher,overview,html",
+    )
+    common.add_argument(
+        "--viz-nodes",
+        type=_viz_nodes,
+        default=MAX_NODES,
+        metavar="N|all",
+        help=f"best-connected nodes to draw in graph.html "
+        f"(default: {MAX_NODES}; 0 draws an empty graph; "
+        f"'all' draws every node)",
+    )
     common.add_argument("--include", nargs="*", default=None, help="glob(s) to include")
     common.add_argument("--exclude", nargs="*", default=None, help="glob(s) to exclude")
-    common.add_argument("--git-history", type=_nonneg, default=0,
-                        help="add CO_CHANGE edges from the last N commits")
+    common.add_argument(
+        "--git-history", type=_nonneg, default=0, help="add CO_CHANGE edges from the last N commits"
+    )
     common.add_argument("--max-files", type=_nonneg, default=0)
-    common.add_argument("--jobs", type=_nonneg, default=0,
-                        help="parser processes; 0 = one per core (capped at 8), 1 = serial")
+    common.add_argument(
+        "--jobs",
+        type=_nonneg,
+        default=0,
+        help="parser processes; 0 = one per core (capped at 8), 1 = serial",
+    )
 
     b = sub.add_parser("build", parents=[common], help="parse a repo into a graph + RAG chunks")
     b.add_argument("repo")
     b.add_argument("--no-chunks", action="store_true")
-    b.add_argument("--incremental", action="store_true",
-                   help="reuse parse results for files whose content hash is "
-                        "unchanged since the last build in --out (default: off, "
-                        "full rebuild). Safe for edits, adds, deletes and "
-                        "renames; rerun without it after upgrading repo2graph "
-                        "or changing a language grammar")
+    b.add_argument(
+        "--incremental",
+        action="store_true",
+        help="reuse parse results for files whose content hash is "
+        "unchanged since the last build in --out (default: off, "
+        "full rebuild). Safe for edits, adds, deletes and "
+        "renames; rerun without it after upgrading repo2graph "
+        "or changing a language grammar",
+    )
     b.set_defaults(func=cmd_build)
 
-    gh = sub.add_parser("github", aliases=["gh"], parents=[common],
-                        help="clone a GitHub repo (owner/repo or URL) and index it")
+    gh = sub.add_parser(
+        "github",
+        aliases=["gh"],
+        parents=[common],
+        help="clone a GitHub repo (owner/repo or URL) and index it",
+    )
     gh.add_argument("repo", help="owner/repo, https://github.com/owner/repo or git@... remote")
     gh.add_argument("--ref", default=None, help="branch or tag (default: default branch)")
-    gh.add_argument("--depth", type=_nonneg, default=0,
-                    help="shallow clone depth; 0 = full history (needed for --git-history)")
+    gh.add_argument(
+        "--depth",
+        type=_nonneg,
+        default=0,
+        help="shallow clone depth; 0 = full history (needed for --git-history)",
+    )
     gh.add_argument("--keep-clone", default=None, help="clone here instead of a temp dir")
-    gh.add_argument("--token", default=None,
-                    help="GitHub token for private repos (else $GH_TOKEN/$GITHUB_TOKEN)")
+    gh.add_argument(
+        "--token",
+        default=None,
+        help="GitHub token for private repos (else $GH_TOKEN/$GITHUB_TOKEN)",
+    )
     gh.set_defaults(func=cmd_github)
 
     q = sub.add_parser("query", help="graph-aware retrieval over a built index")
@@ -538,33 +648,60 @@ def main(argv=None):
     q.add_argument("-k", type=_nonneg, default=8)
     q.add_argument("--hops", type=_nonneg, default=1)
     q.add_argument("--budget", type=_nonneg, default=24000)
-    q.add_argument("--min-conf", type=_unit_float, default=None,
-                   help="drop CALLS edges below this confidence (0.0-1.0)")
+    q.add_argument(
+        "--min-conf",
+        type=_unit_float,
+        default=None,
+        help="drop CALLS edges below this confidence (0.0-1.0)",
+    )
     q.add_argument("--format", choices=("text", "json"), default="text")
     q.add_argument("--json", action="store_true")
     _add_vector_flags(q)
     q.set_defaults(func=cmd_query)
 
     r = sub.add_parser("rag", help="pack a cited, graph-expanded context for a question")
-    r.add_argument("target", nargs="?", default=None,
-                   help="index dir, source repo dir or GitHub spec; omit to use -o")
+    r.add_argument(
+        "target",
+        nargs="?",
+        default=None,
+        help="index dir, source repo dir or GitHub spec; omit to use -o",
+    )
     r.add_argument("query")
     r.add_argument("-o", "--out", default=".r2g")
     r.add_argument("-k", type=_nonneg, default=8, help="lexical seed chunks")
     r.add_argument("--hops", type=_nonneg, default=1, help="graph expansion hops")
-    r.add_argument("--budget", type=_nonneg, default=24000,
-                   help="character budget for the whole pack, map and headers included")
-    r.add_argument("--budget-tokens", type=_nonneg, default=None,
-                   help="token budget for the whole pack; replaces --budget when given")
-    r.add_argument("--min-conf", type=_unit_float, default=1.0,
-                   help="drop CALLS edges below this confidence (0.0-1.0)")
+    r.add_argument(
+        "--budget",
+        type=_nonneg,
+        default=24000,
+        help="character budget for the whole pack, map and headers included",
+    )
+    r.add_argument(
+        "--budget-tokens",
+        type=_nonneg,
+        default=None,
+        help="token budget for the whole pack; replaces --budget when given",
+    )
+    r.add_argument(
+        "--min-conf",
+        type=_unit_float,
+        default=1.0,
+        help="drop CALLS edges below this confidence (0.0-1.0)",
+    )
     r.add_argument("--no-expand", action="store_true", help="lexical seeds only")
     r.add_argument("--format", choices=("markdown", "json"), default="markdown")
-    r.add_argument("--answer", action="store_true",
-                   help="stream a grounded answer from an LLM (needs a provider env var)")
+    r.add_argument(
+        "--answer",
+        action="store_true",
+        help="stream a grounded answer from an LLM (needs a provider env var)",
+    )
     r.add_argument("--model", default=None, help="model name for --answer")
-    r.add_argument("--provider", choices=("gemini", "openai", "anthropic", "ollama"),
-                   default=None, help="force a specific LLM provider for --answer")
+    r.add_argument(
+        "--provider",
+        choices=("gemini", "openai", "anthropic", "ollama"),
+        default=None,
+        help="force a specific LLM provider for --answer",
+    )
     _add_vector_flags(r)
     r.set_defaults(func=cmd_rag)
 
@@ -573,26 +710,41 @@ def main(argv=None):
     # --embed-model is the spelling action.yml uses: `--model` must not appear
     # in that file, because there it would mean `rag --answer`'s LLM model, the
     # one surface the Action deliberately does not expose.
-    e.add_argument("--model", "--embed-model", dest="model", default=None,
-                   help=f"sentence-transformers model (default: {EMBED_DEFAULT_MODEL})")
+    e.add_argument(
+        "--model",
+        "--embed-model",
+        dest="model",
+        default=None,
+        help=f"sentence-transformers model (default: {EMBED_DEFAULT_MODEL})",
+    )
     e.add_argument("--batch", type=_nonneg, default=64, help="texts per encode() call")
-    e.add_argument("--force", action="store_true",
-                   help="re-embed every chunk instead of reusing unchanged vectors")
-    e.add_argument("--verify-rag", action="store_true",
-                   help="self-test this index's dense-retrieval path instead of "
-                        "embedding: reports whether vectors are present, the "
-                        "model and dimension they were built with, and whether "
-                        "the active embedder matches. Exits 1 if the rag path "
-                        "is broken or misconfigured (default: off)")
+    e.add_argument(
+        "--force",
+        action="store_true",
+        help="re-embed every chunk instead of reusing unchanged vectors",
+    )
+    e.add_argument(
+        "--verify-rag",
+        action="store_true",
+        help="self-test this index's dense-retrieval path instead of "
+        "embedding: reports whether vectors are present, the "
+        "model and dimension they were built with, and whether "
+        "the active embedder matches. Exits 1 if the rag path "
+        "is broken or misconfigured (default: off)",
+    )
     e.set_defaults(func=cmd_embed)
 
     m = sub.add_parser("map", help="redraw the HTML graph map from a built index")
     m.add_argument("-o", "--out", default=".r2g")
-    m.add_argument("--viz-nodes", type=_viz_nodes, default=MAX_NODES,
-                   metavar="N|all",
-                   help=f"how many of the best-connected nodes to draw "
-                        f"(default: {MAX_NODES}; 0 draws an empty graph; "
-                        f"'all' draws every node)")
+    m.add_argument(
+        "--viz-nodes",
+        type=_viz_nodes,
+        default=MAX_NODES,
+        metavar="N|all",
+        help=f"how many of the best-connected nodes to draw "
+        f"(default: {MAX_NODES}; 0 draws an empty graph; "
+        f"'all' draws every node)",
+    )
     m.set_defaults(func=cmd_map)
 
     s = sub.add_parser("stats", help="print index stats")

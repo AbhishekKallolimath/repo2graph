@@ -11,6 +11,7 @@ the seam the bug lived in -- what `cmd_rag` actually hands to `score_rrf` -- and
 on the observable difference dense fusion makes, rather than on either side's
 internal agreement with itself.
 """
+
 import json
 
 import pytest
@@ -35,6 +36,7 @@ def embedded_index(tmp_path, monkeypatch):
 
 
 # ------------------------------------------------------------------ (b) ----
+
 
 def test_cmd_rag_hands_score_rrf_a_real_vectors_argument(embedded_index, monkeypatch, capsys):
     """The regression test for the original silent failure.
@@ -102,7 +104,8 @@ def test_dense_ranking_differs_from_bm25_only(embedded_index):
 
     fused = idx.score_rrf(MINI_QUERY, vectors=rigged)
     assert [i for _s, i in fused] != [i for _s, i in lexical], (
-        "fused ranking is identical to BM25 -- vectors never reached the ranker")
+        "fused ranking is identical to BM25 -- vectors never reached the ranker"
+    )
 
 
 def test_no_vectors_means_plain_bm25(embedded_index):
@@ -112,6 +115,7 @@ def test_no_vectors_means_plain_bm25(embedded_index):
 
 
 # ------------------------------------------------------------------ (d) ----
+
 
 def test_fusion_that_turns_itself_off_emits_a_structured_warning(embedded_index, capsys):
     """The silent degrade BACKLOG item 2 describes must now announce itself.
@@ -157,10 +161,10 @@ def test_successful_fusion_records_full_coverage(embedded_index, capsys):
 
 # ------------------------------------------------------------------ (c) ----
 
+
 def test_verify_rag_reports_a_healthy_index(embedded_index, monkeypatch, capsys):
     """--verify-rag exits 0 and names the model and dimension."""
-    monkeypatch.setattr(embed_mod, "default_embedder",
-                        lambda name=None: StubEmbedder())
+    monkeypatch.setattr(embed_mod, "default_embedder", lambda name=None: StubEmbedder())
     assert main(["embed", "-o", str(embedded_index), "--verify-rag"]) == 0
     report = json.loads(capsys.readouterr().out)
 
@@ -175,7 +179,7 @@ def test_verify_rag_fails_when_the_index_has_no_vectors(tmp_path, capsys):
     """No vectors is a non-zero exit with an actionable message."""
     repo = write_mini_repo(tmp_path)
     out = build_mini_index(repo, tmp_path / "idx")
-    capsys.readouterr()          # discard the build report
+    capsys.readouterr()  # discard the build report
     with pytest.raises(SystemExit) as exc:
         main(["embed", "-o", str(out), "--verify-rag"])
     assert exc.value.code == 1
@@ -218,17 +222,23 @@ def test_verify_rag_fails_on_a_dimension_mismatch(embedded_index, monkeypatch, c
 
 def test_verify_rag_reports_partial_chunk_coverage(embedded_index, monkeypatch, capsys):
     """The failure fuse_ok cannot see: some chunks have no vector at all."""
-    monkeypatch.setattr(embed_mod, "default_embedder",
-                        lambda name=None: StubEmbedder())
+    monkeypatch.setattr(embed_mod, "default_embedder", lambda name=None: StubEmbedder())
     # The real-world shape of this failure: chunks.jsonl is rebuilt (gaining a
     # chunk) without re-running `embed`, so the new chunk has no vector while
     # the model id and width still agree and fuse_ok still passes.
     chunks_path = make_paths(embedded_index, "chunks.jsonl")[0]
     with open(chunks_path, "a", encoding="utf8", newline="\n") as fh:
-        fh.write(json.dumps({"id": "chunk:added-after-embed",
-                             "node_id": "file:pkg/gateway.py",
-                             "path": "pkg/gateway.py",
-                             "text": "a chunk added after the embed ran"}) + "\n")
+        fh.write(
+            json.dumps(
+                {
+                    "id": "chunk:added-after-embed",
+                    "node_id": "file:pkg/gateway.py",
+                    "path": "pkg/gateway.py",
+                    "text": "a chunk added after the embed ran",
+                }
+            )
+            + "\n"
+        )
     capsys.readouterr()
 
     with pytest.raises(SystemExit) as exc:
@@ -256,13 +266,15 @@ def test_verify_rag_never_defaults_the_model_to_the_index_claim(embedded_index, 
     monkeypatch.setattr(embed_mod, "default_embedder", fake)
     main(["embed", "-o", str(embedded_index), "--verify-rag"])
 
-    index_model = json.loads(
-        make_paths(embedded_index, "vectors.meta.json")[0].read_text("utf8"))["model_id"]
+    index_model = json.loads(make_paths(embedded_index, "vectors.meta.json")[0].read_text("utf8"))[
+        "model_id"
+    ]
     assert names == [None], names
     assert index_model not in [n for n in names if n]
 
 
 # ------------------------------------------------------- no network -------
+
 
 def test_the_default_rag_path_opens_no_socket(embedded_index, monkeypatch, capsys):
     """A plain `rag` must not touch the network, with or without vectors on disk."""

@@ -8,6 +8,7 @@ No score value, rank number or float comparison is asserted. AC-21 proves
 fusion is live purely by chunk identity, with the dense ranking supplied
 explicitly by the test.
 """
+
 import json
 import math
 import sys
@@ -27,6 +28,7 @@ VEC_META = "vectors.meta.json"
 # --------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------
+
 
 def vec_paths(outdir: Path):
     agent = Path(outdir) / "agent"
@@ -50,8 +52,7 @@ def read_meta(outdir: Path) -> dict:
 
 
 def read_manifest(outdir: Path) -> dict:
-    with open(artifact_path(outdir, "manifest.json"),
-              encoding="utf8", newline="\n") as fh:
+    with open(artifact_path(outdir, "manifest.json"), encoding="utf8", newline="\n") as fh:
         return json.load(fh)
 
 
@@ -69,8 +70,7 @@ def rigged_order(candidates):
     outright, whatever the tie-break rule is.
     """
     assert len(candidates) >= 4, "the fixture must offer at least 4 candidates"
-    rest = [c for c in candidates if c not in (candidates[0], candidates[1],
-                                               candidates[2])]
+    rest = [c for c in candidates if c not in (candidates[0], candidates[1], candidates[2])]
     return [candidates[1], candidates[2], candidates[0], *rest]
 
 
@@ -85,8 +85,10 @@ def rigged_sims(candidates):
 # AC-10 / AC-11 -- the `embed` subcommand and its metadata
 # ==========================================================================
 
+
 def test_ac10_embed_writes_both_artifacts_and_reports_the_count(
-        mini_index, use_stub_embedder, capsys):
+    mini_index, use_stub_embedder, capsys
+):
     """AC-10: vectors.npy + vectors.meta.json, and `vectors` == chunk count."""
     npy, meta = vec_paths(mini_index)
     assert not npy.exists() and not meta.exists()
@@ -119,8 +121,7 @@ def test_ac11_vector_meta_fields(mini_index, use_stub_embedder, capsys):
     assert meta["count"] == len(chunk_records(mini_index))
 
 
-def test_ac11_text_hashes_track_the_chunk_text(mini_index, use_stub_embedder,
-                                               capsys):
+def test_ac11_text_hashes_track_the_chunk_text(mini_index, use_stub_embedder, capsys):
     """AC-11: text_hashes[row] is embed.text_hash of the chunk at that row."""
     from repo2graph import embed
 
@@ -197,8 +198,7 @@ def test_ac13_round_trip_works_with_numpy_unimportable(tmp_path, monkeypatch):
     assert meta["dim"] == 4
 
 
-def test_ac13_numpy_can_still_read_what_the_stdlib_writer_wrote(
-        tmp_path, monkeypatch):
+def test_ac13_numpy_can_still_read_what_the_stdlib_writer_wrote(tmp_path, monkeypatch):
     """AC-13 (b): the file stays a real .npy, not a private format."""
     from repo2graph import embed
 
@@ -220,8 +220,10 @@ def test_ac13_numpy_can_still_read_what_the_stdlib_writer_wrote(
 # AC-14 -- manifest registration
 # ==========================================================================
 
+
 def test_ac14_embed_appends_to_the_manifest_without_disturbing_it(
-        mini_index, use_stub_embedder, capsys):
+    mini_index, use_stub_embedder, capsys
+):
     """AC-14: the two artifacts appear in `written` and `files`; every other
     manifest key is byte-identical to what `build` wrote."""
     before = read_manifest(mini_index)
@@ -248,8 +250,8 @@ def test_ac14_embed_appends_to_the_manifest_without_disturbing_it(
 # AC-15 / AC-16 -- Index auto-load
 # ==========================================================================
 
-def test_ac15_index_loads_vectors_keyed_by_chunk_list_index(
-        mini_index, use_stub_embedder, capsys):
+
+def test_ac15_index_loads_vectors_keyed_by_chunk_list_index(mini_index, use_stub_embedder, capsys):
     """AC-15: idx.vectors keys are valid chunk list indices and the stored
     model id is reported on idx.vector_meta."""
     run_embed(mini_index, capsys)
@@ -289,8 +291,7 @@ CORRUPTIONS = {
 
 
 @pytest.mark.parametrize("corruption", sorted(CORRUPTIONS))
-def test_ac16_corrupt_vectors_degrade_silently(
-        mini_index, use_stub_embedder, capsys, corruption):
+def test_ac16_corrupt_vectors_degrade_silently(mini_index, use_stub_embedder, capsys, corruption):
     """AC-16: a bad pair leaves idx.vectors None, raises nothing, and
     pack_context still answers."""
     run_embed(mini_index, capsys)
@@ -303,8 +304,7 @@ def test_ac16_corrupt_vectors_degrade_silently(
     assert "### [cite:" in pack["markdown"], corruption
 
 
-def test_ac16_vectors_for_unknown_chunk_ids_are_dropped(
-        mini_index, use_stub_embedder, capsys):
+def test_ac16_vectors_for_unknown_chunk_ids_are_dropped(mini_index, use_stub_embedder, capsys):
     """AC-16 (b): ids that chunks.jsonl no longer holds must not become
     wrongly-aligned rows -- they are dropped, and the rest still load."""
     run_embed(mini_index, capsys)
@@ -324,6 +324,7 @@ def test_ac16_vectors_for_unknown_chunk_ids_are_dropped(
 # AC-17 / AC-18 / AC-19 / AC-20 -- the mismatch guard
 # ==========================================================================
 
+
 def test_ac17_model_id_of_reads_the_embedder(mini_index):
     """AC-17 (a): the identity fuse_ok compares comes off the embedder."""
     from repo2graph import embed
@@ -332,8 +333,7 @@ def test_ac17_model_id_of_reads_the_embedder(mini_index):
     assert embed.DEFAULT_MODEL == "sentence-transformers/all-MiniLM-L6-v2"
 
 
-def test_ac17_fuse_ok_rejects_a_model_mismatch(mini_index, use_stub_embedder,
-                                               capsys):
+def test_ac17_fuse_ok_rejects_a_model_mismatch(mini_index, use_stub_embedder, capsys):
     """AC-17 (b): (False, reason) naming the index model and the query model."""
     use_stub_embedder.model_id = "stub/alpha"
     run_embed(mini_index, capsys)
@@ -345,8 +345,7 @@ def test_ac17_fuse_ok_rejects_a_model_mismatch(mini_index, use_stub_embedder,
     assert "stub/beta" in reason, reason
 
 
-def test_ac17_fuse_ok_rejects_a_dim_mismatch(mini_index, use_stub_embedder,
-                                             capsys):
+def test_ac17_fuse_ok_rejects_a_dim_mismatch(mini_index, use_stub_embedder, capsys):
     """AC-17 (c): same model id, different width, still refused -- and the
     reason names both widths."""
     use_stub_embedder.model_id = "stub/alpha"
@@ -377,8 +376,7 @@ def mismatched_index(mini_index, use_stub_embedder, capsys):
     return mini_index
 
 
-def test_ac18_rag_vectors_on_a_mismatch_exits_and_emits_no_pack(
-        mismatched_index, capsys):
+def test_ac18_rag_vectors_on_a_mismatch_exits_and_emits_no_pack(mismatched_index, capsys):
     """AC-18: explicit --vectors fails loudly, names both model ids, and does
     not print a pack."""
     with pytest.raises(SystemExit) as exc:
@@ -390,8 +388,7 @@ def test_ac18_rag_vectors_on_a_mismatch_exits_and_emits_no_pack(
     assert "### [cite:" not in capsys.readouterr().out
 
 
-def test_ac19_rag_without_a_vector_flag_degrades_to_bm25(
-        mismatched_index, capsys):
+def test_ac19_rag_without_a_vector_flag_degrades_to_bm25(mismatched_index, capsys):
     """AC-19: auto mode exits 0, emits a pack, and does not fuse -- proved by
     the pack being identical to the same query with vectors switched off."""
     rc = main(["rag", MINI_QUERY, "-o", str(mismatched_index)])
@@ -405,7 +402,8 @@ def test_ac19_rag_without_a_vector_flag_degrades_to_bm25(
 
 
 def test_ac20_no_vectors_equals_an_index_with_the_files_deleted(
-        mini_index, use_stub_embedder, capsys):
+    mini_index, use_stub_embedder, capsys
+):
     """AC-20: `rag --no-vectors` against a *matching* vectorised index gives
     exactly what the same command gives once the two files are removed."""
     run_embed(mini_index, capsys)
@@ -422,8 +420,7 @@ def test_ac20_no_vectors_equals_an_index_with_the_files_deleted(
     assert "### [cite:" in with_files
 
 
-def test_ac20_no_vectors_matches_the_baseline_golden(mini_index,
-                                                     use_stub_embedder, capsys):
+def test_ac20_no_vectors_matches_the_baseline_golden(mini_index, use_stub_embedder, capsys):
     """AC-20 / AC-2: --no-vectors is the baseline BM25 pack, byte for byte."""
     from conftest import golden_text
 
@@ -435,6 +432,7 @@ def test_ac20_no_vectors_matches_the_baseline_golden(mini_index,
 # ==========================================================================
 # AC-21 -- fusion is live
 # ==========================================================================
+
 
 def test_ac21_a_rigged_dense_ranking_changes_the_top_chunk(big_index):
     """AC-21 (a): via the in-memory `vectors=` contract Index will populate.
@@ -477,8 +475,7 @@ def test_ac21_a_rigged_embedder_changes_the_top_chunk(big_index):
     assert idx.chunks[fused[0][1]]["id"] != idx.chunks[base[0][1]]["id"]
 
 
-def test_ac21_rag_vectors_uses_the_persisted_vectors(mini_index,
-                                                     use_stub_embedder, capsys):
+def test_ac21_rag_vectors_uses_the_persisted_vectors(mini_index, use_stub_embedder, capsys):
     """AC-21 (c): `rag --vectors` on a matching index succeeds and consults the
     embedder (so the flag is wired through, not silently a no-op)."""
     run_embed(mini_index, capsys)
@@ -495,8 +492,8 @@ def test_ac21_rag_vectors_uses_the_persisted_vectors(mini_index,
 # AC-36 / AC-37 / AC-38 -- vector reuse
 # ==========================================================================
 
-def test_ac36_second_embed_reuses_everything(mini_index, use_stub_embedder,
-                                             capsys):
+
+def test_ac36_second_embed_reuses_everything(mini_index, use_stub_embedder, capsys):
     """AC-36: reused == vectors, embedded == 0, and vectors.npy is byte-identical."""
     first = run_embed(mini_index, capsys)
     npy, _meta = vec_paths(mini_index)
@@ -509,12 +506,11 @@ def test_ac36_second_embed_reuses_everything(mini_index, use_stub_embedder,
     assert npy.read_bytes() == first_bytes
 
 
-def test_ac37_only_changed_chunks_are_re_embedded(mini_repo, tmp_path,
-                                                  use_stub_embedder, capsys):
+def test_ac37_only_changed_chunks_are_re_embedded(mini_repo, tmp_path, use_stub_embedder, capsys):
     """AC-37: embedded >= 1, reused >= 1, and `encode` saw only the texts of
     the chunks whose text actually changed."""
     out = build_mini_index(mini_repo, tmp_path / "reuse_idx")
-    capsys.readouterr()          # the build report is not ours to parse
+    capsys.readouterr()  # the build report is not ours to parse
     run_embed(out, capsys)
     before = {c["id"]: c.get("text") or "" for c in chunk_records(out)}
 
@@ -531,7 +527,7 @@ def test_ac37_only_changed_chunks_are_re_embedded(mini_repo, tmp_path,
     with open(target, "w", encoding="utf8", newline="\n") as fh:
         fh.write(edited)
     build_mini_index(mini_repo, out)
-    capsys.readouterr()          # ditto for the rebuild
+    capsys.readouterr()  # ditto for the rebuild
 
     after = {c["id"]: c.get("text") or "" for c in chunk_records(out)}
     changed = {text for cid, text in after.items() if before.get(cid) != text}
@@ -580,15 +576,16 @@ def test_ac10_embed_reports_model_and_dim(mini_index, use_stub_embedder, capsys)
 # it -- these assert the *resolved model name that reaches default_embedder*,
 # which is the observation the original suite never made.
 
-def test_r1_rag_embed_model_reaches_the_query_embedder(
-        mini_index, use_stub_embedder, capsys):
+
+def test_r1_rag_embed_model_reaches_the_query_embedder(mini_index, use_stub_embedder, capsys):
     """R-1: `rag --vectors --embed-model X` embeds the query with X."""
     run_embed(mini_index, capsys, "--embed-model", "stub/custom")
     assert read_meta(mini_index)["model_id"] == "stub/custom"
 
     use_stub_embedder.names.clear()
-    rc = main(["rag", MINI_QUERY, "-o", str(mini_index), "--vectors",
-               "--embed-model", "stub/custom"])
+    rc = main(
+        ["rag", MINI_QUERY, "-o", str(mini_index), "--vectors", "--embed-model", "stub/custom"]
+    )
     out = capsys.readouterr().out
     assert rc == 0
     assert "### [cite:" in out
@@ -597,21 +594,22 @@ def test_r1_rag_embed_model_reaches_the_query_embedder(
     assert use_stub_embedder.last.calls, "the query was never embedded"
 
 
-def test_r1_query_embed_model_reaches_the_query_embedder(
-        mini_index, use_stub_embedder, capsys):
+def test_r1_query_embed_model_reaches_the_query_embedder(mini_index, use_stub_embedder, capsys):
     """R-1 (b): the same on `query`, which shares the helper but not the test."""
     run_embed(mini_index, capsys, "--embed-model", "stub/custom")
 
     use_stub_embedder.names.clear()
-    rc = main(["query", MINI_QUERY, "-o", str(mini_index), "--vectors",
-               "--embed-model", "stub/custom"])
+    rc = main(
+        ["query", MINI_QUERY, "-o", str(mini_index), "--vectors", "--embed-model", "stub/custom"]
+    )
     capsys.readouterr()
     assert rc == 0
     assert use_stub_embedder.names == ["stub/custom"], use_stub_embedder.names
 
 
 def test_r2_without_embed_model_a_custom_model_index_is_refused(
-        mini_index, use_stub_embedder, capsys):
+    mini_index, use_stub_embedder, capsys
+):
     """R-2: the flag is load-bearing, not cosmetic -- omit it against an index
     embedded with a non-default model and the guard fires, naming both."""
     run_embed(mini_index, capsys, "--embed-model", "stub/custom")
@@ -623,8 +621,7 @@ def test_r2_without_embed_model_a_custom_model_index_is_refused(
     assert "### [cite:" not in capsys.readouterr().out
 
 
-def test_r3_rag_model_stays_the_llm_model(
-        mini_index, use_stub_embedder, monkeypatch, capsys):
+def test_r3_rag_model_stays_the_llm_model(mini_index, use_stub_embedder, monkeypatch, capsys):
     """R-3: `--model` and `--embed-model` are two dests, not one. The LLM name
     must never be handed to default_embedder, nor the checkpoint to the LLM."""
     import repo2graph.answer as answer_mod
@@ -632,20 +629,32 @@ def test_r3_rag_model_stays_the_llm_model(
     run_embed(mini_index, capsys)
     seen = {}
     monkeypatch.setattr(
-        answer_mod, "stream_answer",
-        lambda pack, model=None, provider=None: seen.update(
-            model=model, provider=provider))
+        answer_mod,
+        "stream_answer",
+        lambda pack, model=None, provider=None: seen.update(model=model, provider=provider),
+    )
 
     use_stub_embedder.names.clear()
-    rc = main(["rag", MINI_QUERY, "-o", str(mini_index), "--answer",
-               "--model", "gpt-4o", "--vectors", "--embed-model", "stub/mini-v1"])
+    rc = main(
+        [
+            "rag",
+            MINI_QUERY,
+            "-o",
+            str(mini_index),
+            "--answer",
+            "--model",
+            "gpt-4o",
+            "--vectors",
+            "--embed-model",
+            "stub/mini-v1",
+        ]
+    )
     assert rc == 0
     assert seen["model"] == "gpt-4o", seen
     assert use_stub_embedder.names == ["stub/mini-v1"], use_stub_embedder.names
 
 
-def test_r4_the_default_path_builds_no_embedder(
-        mini_index, use_stub_embedder, capsys):
+def test_r4_the_default_path_builds_no_embedder(mini_index, use_stub_embedder, capsys):
     """R-4: dense fusion is opt-in, so neither `rag` nor `query` constructs an
     embedder without the flag -- constructing one downloads ~90 MB on a cold
     cache, and the default path promises no network."""
@@ -660,8 +669,7 @@ def test_r4_the_default_path_builds_no_embedder(
     assert len(use_stub_embedder.made) == before, use_stub_embedder.names
 
 
-def test_r4_explicit_vectors_still_builds_one(
-        mini_index, use_stub_embedder, capsys):
+def test_r4_explicit_vectors_still_builds_one(mini_index, use_stub_embedder, capsys):
     """R-4 (b): the guard above must not pass by fusion being dead everywhere."""
     run_embed(mini_index, capsys)
     before = len(use_stub_embedder.made)

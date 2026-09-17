@@ -55,9 +55,9 @@ def test_prod_igy_workflow_structure():
         assert "@" in uses, f"Action must be pinned with @: {uses}"
         action, ref = uses.split("@", 1)
         sha = ref.split()[0]
-        assert len(sha) == 40 and all(
-            c in "0123456789abcdefABCDEF" for c in sha
-        ), f"Action {action} is not pinned to a 40-char commit SHA: {ref}"
+        assert len(sha) == 40 and all(c in "0123456789abcdefABCDEF" for c in sha), (
+            f"Action {action} is not pinned to a 40-char commit SHA: {ref}"
+        )
 
 
 def test_prod_igy_script_exists_and_exports():
@@ -195,7 +195,9 @@ def test_prod_igy_type_detection_regexes():
 def test_prod_igy_detect_areas_patterns():
     """Verify that detectAreas covers all critical repository subsystems."""
     content = "\n".join(_read_lines(SCRIPT_PATH))
-    match = re.search(r"function detectAreas\(changedFiles\)\s*\{([^}]+(?:\{[^}]+\}[^}]+)*)\}", content)
+    match = re.search(
+        r"function detectAreas\(changedFiles\)\s*\{([^}]+(?:\{[^}]+\}[^}]+)*)\}", content
+    )
     assert match, "detectAreas function not found"
     body = match.group(1)
 
@@ -215,7 +217,10 @@ def test_prod_igy_detect_areas_patterns():
 def test_prod_igy_issue_extraction_regex():
     """Verify the issue extraction regex matches action words and issue numbers."""
     content = "\n".join(_read_lines(SCRIPT_PATH))
-    assert r"(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\s+(?:#|gh-)(\d+)" in content
+    assert (
+        r"(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\s+(?:#|gh-)(\d+)"
+        in content
+    )
 
     issue_re = re.compile(
         r"(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\s+(?:#|gh-)(\d+)",
