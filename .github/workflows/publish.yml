@@ -228,7 +228,18 @@ jobs:
           python -m twine check dist/*
 
       - name: Publish to PyPI
+        # skip-existing: this workflow's own `release` job publishes a GitHub
+        # Release for the tag, which matches this workflow's `release:
+        # types: [published]` trigger and re-runs the whole pipeline for a tag
+        # already published a few minutes earlier. Without this, the re-run's
+        # upload always 400s ("File already exists") since PyPI rejects
+        # re-uploading identical filenames -- same idempotency idiom this file
+        # already uses for the release PR and the tag (see "Create PR if not
+        # already existing" and the `git rev-parse -q --verify refs/tags/...`
+        # check above).
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        with:
+          skip-existing: true
 
   mcp-registry:
     needs: [prepare-release, pypi]
