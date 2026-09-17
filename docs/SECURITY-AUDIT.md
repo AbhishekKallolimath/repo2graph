@@ -256,8 +256,8 @@ if an org-level "send secrets to fork PRs" setting is ever enabled.
    Tracked in `docs/BACKLOG.md`.
 6. **No `docs/PERFORMANCE.md` prior to this audit.** Fixed — see that file, now with real
    measurements rather than claims.
-7. **Release tag `@v1` is a moving pointer, not an integrity pin.** `release.yml`'s major-tag
-   job force-pushes `v1` to the latest release SHA — a deliberate, documented convenience so
+7. **Release tag `@v1` is a moving pointer, not an integrity pin.** `publish.yml`'s release
+   stage force-pushes `v1` to the latest release SHA — a deliberate, documented convenience so
    consumers can write `uses: .../repo2graph@v1`, but it means `@v1` itself carries no supply-chain
    integrity guarantee the way a SHA pin does. `SECURITY.md` now says so explicitly.
 8. **No explicit `attestations:` flag on the PyPI publish step.** OIDC Trusted Publishing is

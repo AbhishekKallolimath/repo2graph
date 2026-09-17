@@ -1,133 +1,122 @@
 name: Publish
 
-# Publishing a GitHub Release with tag `vX.Y.Z` ships the same version to both
-# places a user can install it from: PyPI (the artifact) and the MCP Registry
-# (the metadata that points at it). Neither step holds a long-lived credential —
-# PyPI uses Trusted Publishing and the registry uses `login github-oidc`, so both
-# mint a short-lived token from this workflow's OIDC identity.
+# Unified Release Pipeline:
+# 1. prepare-release: Bumps version across all files, commits, tags, and validates consistency.
+# 2. publish: Tests and publishes to PyPI via OIDC, waits for CDN, then publishes to the MCP Registry.
+# 3. release: Creates GitHub Release from CHANGELOG.md and advances the floating major tag (e.g. v1).
 #
-# `release.yml` moves the floating `vX` tag on the same event; the two are
-# independent on purpose, so a failed publish never leaves the major tag behind.
+# Can be triggered via:
+# - workflow_dispatch (Actions UI): provide version (e.g. 1.5.2) or bump keyword ('patch', 'minor', 'major').
+# - tag push (e.g. git push origin v1.5.2): validates consistency and runs publish + release.
+# - GitHub Release published event.
+
 on:
-  # A tag push is the whole release trigger: it creates the GitHub Release from
-  # CHANGELOG.md and then ships. A Release created by GITHUB_TOKEN does not
-  # itself start a workflow run, so the `release: published` trigger below
-  # cannot fire a second, duplicate publish off the back of this one.
+  workflow_dispatch:
   push:
     tags: ["v*.*.*"]
   release:
     types: [published]
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release tag to publish, e.g. v1.4.0"
-        required: true
 
 permissions:
   contents: read
 
 jobs:
-  # Stop before anything is published if the three places a version is written
-  # disagree. PyPI rejects a re-upload of an existing version, so a mismatch
-  # caught here is a retry and a mismatch caught later is a burnt version number.
-  check-version:
+  # --------------------------------------------------------------------------
+  # Stage 1: prepare-release
+  # --------------------------------------------------------------------------
+  prepare-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
-      version: ${{ steps.v.outputs.version }}
+      version: ${{ steps.prepare.outputs.version }}
+      tag: ${{ steps.prepare.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-
-      - name: Tag, pyproject.toml and server.json must agree
-        id: v
-        env:
-          TAG: ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
-        run: |
-          set -euo pipefail
-          case "$TAG" in
-            v[0-9]*) ;;
-            *) echo "::error::Tag '$TAG' is not of the form vX.Y.Z"; exit 1 ;;
-          esac
-          version="${TAG#v}"
-          pyproject=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          server=$(python -c "import json;print(json.load(open('server.json'))['version'])")
-          pkg=$(python -c "import json;print(json.load(open('server.json'))['packages'][0]['version'])")
-          echo "tag=$version pyproject=$pyproject server.json=$server package=$pkg"
-          for got in "$pyproject" "$server" "$pkg"; do
-            if [ "$got" != "$version" ]; then
-              echo "::error::version mismatch: tag says $version, found $got"
-              exit 1
-            fi
-          done
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: server.json must carry the ownership marker the registry looks for
-        run: |
-          set -euo pipefail
-          name=$(python -c "import json;print(json.load(open('server.json'))['name'])")
-          # The registry proves you own the PyPI package by finding this exact
-          # string in the README, which setuptools ships as the package
-          # description. Without it `mcp-publisher publish` fails after PyPI has
-          # already been written to — the one ordering we cannot undo.
-          if ! grep -qF "mcp-name: $name" README.md; then
-            echo "::error::README.md is missing the line 'mcp-name: $name'"
-            exit 1
-          fi
-
-  github-release:
-    # Only on a tag push. When the maintainer created the Release by hand, it
-    # already exists and there is nothing to cut.
-    if: github.event_name == 'push'
-    needs: check-version
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write        # creating a Release is a write to the repository
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-
-      - name: Extract this version's CHANGELOG section
-        env:
-          VERSION: ${{ needs.check-version.outputs.version }}
-        run: |
-          set -euo pipefail
-          python - <<'PY' > release-notes.md
-          import os, re, sys, pathlib
-          version = os.environ["VERSION"]
-          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf8")
-          # Keep everything between this version's heading and the next one.
-          pattern = re.compile(
-              r"^## \[?" + re.escape(version) + r"\]?.*?$(.*?)(?=^## |\Z)",
-              re.M | re.S)
-          match = pattern.search(text)
-          if not match or not match.group(1).strip():
-              print(f"::error::CHANGELOG.md has no section for {version}",
-                    file=sys.stderr)
-              raise SystemExit(1)
-          print(match.group(1).strip())
-          PY
-          test -s release-notes.md
-
-      - name: Create the Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" --title "$TAG" --notes-file release-notes.md --verify-tag
-
-  pypi:
-    needs: check-version
-    runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/p/repo2graph
-    permissions:
-      id-token: write        # mints the short-lived Trusted Publishing token
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.12"
 
-      - name: Run the tests before shipping them to anyone
+      - name: Install uv and tooling
+        run: pip install uv
+
+      - name: Prepare release version and tag
+        id: prepare
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "Scanning changes and determining version bump automatically..."
+            python scripts/bump_version.py auto
+            version=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+            tag="v$version"
+
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add pyproject.toml server.json repo2graph/__init__.py CHANGELOG.md uv.lock
+
+            if ! git diff --cached --quiet; then
+              git commit -m "chore(release): bump version to $version"
+              git push origin "HEAD:${{ github.ref_name }}"
+            fi
+
+            if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+              git tag -a "$tag" -m "Release $tag"
+              git push origin "refs/tags/$tag"
+            fi
+          else
+            RAW_TAG="${RELEASE_TAG:-$REF_NAME}"
+            case "$RAW_TAG" in
+              v[0-9]*) ;;
+              *) echo "::error::Tag '$RAW_TAG' is not of the form vX.Y.Z"; exit 1 ;;
+            esac
+            version="${RAW_TAG#v}"
+            tag="$RAW_TAG"
+          fi
+
+          # Assert version consistency across pyproject.toml, server.json, and repo2graph/__init__.py
+          python scripts/check_version.py
+
+          # Verify server.json carries ownership marker in README.md
+          name=$(python -c "import json;print(json.load(open('server.json'))['name'])")
+          if ! grep -qF "mcp-name: $name" README.md; then
+            echo "::error::README.md is missing the line 'mcp-name: $name'"
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  # --------------------------------------------------------------------------
+  # Stage 2: publish (PyPI + MCP Registry)
+  # --------------------------------------------------------------------------
+  pypi:
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/repo2graph
+    permissions:
+      id-token: write        # mints short-lived Trusted Publishing token
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.prepare-release.outputs.tag }}
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Run test suite before building
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev,mcp]"
@@ -138,7 +127,7 @@ jobs:
           python -m pip install --upgrade build
           python -m build
 
-      - name: Check the metadata PyPI will render
+      - name: Check metadata PyPI will render
         run: |
           python -m pip install --upgrade twine
           python -m twine check dist/*
@@ -147,22 +136,21 @@ jobs:
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
 
   mcp-registry:
-    needs: [check-version, pypi]
+    needs: [prepare-release, pypi]
     runs-on: ubuntu-latest
     permissions:
-      id-token: write        # `mcp-publisher login github-oidc` needs this
+      id-token: write        # mcp-publisher login github-oidc needs this
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.prepare-release.outputs.tag }}
 
       - name: Wait for PyPI to serve the new version
         env:
-          VERSION: ${{ needs.check-version.outputs.version }}
+          VERSION: ${{ needs.prepare-release.outputs.version }}
         run: |
           set -euo pipefail
-          # The registry fetches the package's description from PyPI to verify
-          # ownership, so publishing the instant the upload returns can race the
-          # CDN and fail a release that is otherwise fine.
           for attempt in $(seq 1 30); do
             if curl -sf "https://pypi.org/pypi/repo2graph/$VERSION/json" > /dev/null; then
               echo "repo2graph $VERSION is live on PyPI"
@@ -189,15 +177,76 @@ jobs:
       - name: Publish to the MCP Registry
         run: ./mcp-publisher publish
 
-      - name: Summary
+  # --------------------------------------------------------------------------
+  # Stage 3: release (GitHub Release + Floating Major Tag)
+  # --------------------------------------------------------------------------
+  release:
+    needs: [prepare-release, pypi, mcp-registry]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.prepare-release.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Extract this version's CHANGELOG section
         env:
-          VERSION: ${{ needs.check-version.outputs.version }}
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          python - <<'PY' > release-notes.md
+          import os, re, sys, pathlib
+          version = os.environ["VERSION"]
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf8")
+          pattern = re.compile(
+              r"^## \[?" + re.escape(version) + r"\]?.*?$(.*?)(?=^## |\Z)",
+              re.M | re.S)
+          match = pattern.search(text)
+          if not match or not match.group(1).strip():
+              print(f"::error::CHANGELOG.md has no section for {version}",
+                    file=sys.stderr)
+              raise SystemExit(1)
+          print(match.group(1).strip())
+          PY
+          test -s release-notes.md
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare-release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, updating notes..."
+            gh release edit "$TAG" --notes-file release-notes.md
+          else
+            gh release create "$TAG" --title "$TAG" --notes-file release-notes.md --verify-tag
+          fi
+
+      - name: Advance floating major tag
+        env:
+          TAG: ${{ needs.prepare-release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          major="${TAG%%.*}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "$major" "$TAG"
+          git push -f origin "refs/tags/$major"
+          echo "Advanced floating tag $major to $TAG" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Release summary
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.version }}
         run: |
           {
-            echo "### Published repo2graph $VERSION"
+            echo "### Published and Released repo2graph $VERSION"
             echo
-            echo "- PyPI: https://pypi.org/project/repo2graph/$VERSION/"
-            echo "- MCP Registry: \`io.github.Srinivasan-78/repo2graph\`"
+            echo "- **PyPI**: https://pypi.org/project/repo2graph/$VERSION/"
+            echo "- **MCP Registry**: \`io.github.Srinivasan-78/repo2graph\`"
+            echo "- **GitHub Release**: https://github.com/Srinivasan-78/repo2graph/releases/tag/v$VERSION"
             echo
             echo '```bash'
             echo "uvx --from 'repo2graph[mcp]' repo2graph-mcp /path/to/project"
