@@ -71,7 +71,7 @@ or a released package, independent of anything the tool does at runtime:
 - **GitHub Actions are pinned to full commit SHAs, not tags**, across every workflow in
   `.github/workflows/`, so a compromised or re-tagged upstream action can't silently change what CI
   runs. The reverse is not true for consumers of *this* repository's own Action: `@v1` is a moving
-  convenience pointer (`release.yml` force-pushes it to the latest release on every tag), not an
+  convenience pointer (`publish.yml` force-pushes it to the latest release on every tag), not an
   integrity pin — enterprise consumers who want a SHA-level guarantee should pin
   `Srinivasan-78/repo2graph@<commit-sha>` rather than `@v1`, the same way this repo's own workflows
   pin their dependencies.
