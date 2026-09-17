@@ -4,6 +4,7 @@ Optional by design: nothing here is imported unless `repo2graph rag --answer`
 asks for it, and no provider SDK is used — stdlib `urllib.request` only, so the
 core install stays pure Python. The provider is chosen from the environment.
 """
+
 import json
 import os
 import sys
@@ -12,8 +13,8 @@ import urllib.parse
 import urllib.request
 
 HTTP_TIMEOUT = 300
-ERROR_SNIFF_LINES = 8          # unparsable lines kept, to explain an empty answer
-ERROR_SNIPPET = 400            # chars of a provider error body echoed to the user
+ERROR_SNIFF_LINES = 8  # unparsable lines kept, to explain an empty answer
+ERROR_SNIPPET = 400  # chars of a provider error body echoed to the user
 PROVIDER_MAP = {
     "gemini": "GEMINI_API_KEY",
     "openai": "OPENAI_API_KEY",
@@ -43,6 +44,7 @@ SYSTEM_PROMPT = (
 
 class _WriterError(Exception):
     """Wraps an exception from the stdout writer to isolate it from network errors."""
+
     def __init__(self, exc: Exception):
         super().__init__(str(exc))
         self.exc = exc
@@ -69,9 +71,11 @@ def pick_provider(env=None, provider=None) -> dict | None:
     google_key = (env.get("GOOGLE_API_KEY") or "").strip()
     if google_key:
         return {"name": "gemini", "env": "GOOGLE_API_KEY", "value": google_key}
-    for name, var in (("openai", "OPENAI_API_KEY"),
-                      ("anthropic", "ANTHROPIC_API_KEY"),
-                      ("ollama", "OLLAMA_HOST")):
+    for name, var in (
+        ("openai", "OPENAI_API_KEY"),
+        ("anthropic", "ANTHROPIC_API_KEY"),
+        ("ollama", "OLLAMA_HOST"),
+    ):
         value = (env.get(var) or "").strip()
         if value:
             return {"name": name, "env": var, "value": value}
@@ -82,10 +86,12 @@ def build_prompt(pack) -> tuple[str, str]:
     """(system, user). The user turn carries the whole pack, verbatim."""
     markdown = (pack or {}).get("markdown") or ""
     question = (pack or {}).get("query") or ""
-    user = (f"Question: {question}\n\n"
-            f"Repository map and code chunks:\n\n{markdown}\n\n"
-            f"Answer the question using only the material above, and cite every "
-            f"claim as [path/file.py:start-end].")
+    user = (
+        f"Question: {question}\n\n"
+        f"Repository map and code chunks:\n\n{markdown}\n\n"
+        f"Answer the question using only the material above, and cite every "
+        f"claim as [path/file.py:start-end]."
+    )
     return SYSTEM_PROMPT, user
 
 
@@ -94,19 +100,34 @@ def _request(spec: dict, model: str | None, system: str, user: str):
     name = spec["name"]
     model = model or DEFAULT_MODELS[name]
     if name == "openai":
-        return ("https://api.openai.com/v1/chat/completions",
-                {"Content-Type": "application/json",
-                 "Authorization": f"Bearer {spec['value']}"},
-                {"model": model, "stream": True,
-                 "messages": [{"role": "system", "content": system},
-                              {"role": "user", "content": user}]})
+        return (
+            "https://api.openai.com/v1/chat/completions",
+            {"Content-Type": "application/json", "Authorization": f"Bearer {spec['value']}"},
+            {
+                "model": model,
+                "stream": True,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            },
+        )
     if name == "anthropic":
-        return ("https://api.anthropic.com/v1/messages",
-                {"Content-Type": "application/json", "x-api-key": spec["value"],
-                 "anthropic-version": ANTHROPIC_VERSION},
-                {"model": model, "stream": True, "max_tokens": MAX_TOKENS,
-                 "system": system,
-                 "messages": [{"role": "user", "content": user}]})
+        return (
+            "https://api.anthropic.com/v1/messages",
+            {
+                "Content-Type": "application/json",
+                "x-api-key": spec["value"],
+                "anthropic-version": ANTHROPIC_VERSION,
+            },
+            {
+                "model": model,
+                "stream": True,
+                "max_tokens": MAX_TOKENS,
+                "system": system,
+                "messages": [{"role": "user", "content": user}],
+            },
+        )
     if name == "gemini":
         # The key goes in x-goog-api-key, never in the query string: a `?key=`
         # lands in proxy/CDN access logs, in Request.full_url and in
@@ -115,18 +136,26 @@ def _request(spec: dict, model: str | None, system: str, user: str):
         if ".." in clean_model:
             raise SystemExit(f"invalid model name {model!r}")
         model_path = clean_model if clean_model.startswith("models/") else f"models/{clean_model}"
-        return (f"https://generativelanguage.googleapis.com/v1beta/"
-                f"{urllib.parse.quote(model_path, safe='/')}:streamGenerateContent?alt=sse",
-                {"Content-Type": "application/json", "x-goog-api-key": spec["value"]},
-                {"systemInstruction": {"parts": [{"text": system}]},
-                 "contents": [{"role": "user", "parts": [{"text": user}]}]})
+        return (
+            f"https://generativelanguage.googleapis.com/v1beta/"
+            f"{urllib.parse.quote(model_path, safe='/')}:streamGenerateContent?alt=sse",
+            {"Content-Type": "application/json", "x-goog-api-key": spec["value"]},
+            {
+                "systemInstruction": {"parts": [{"text": system}]},
+                "contents": [{"role": "user", "parts": [{"text": user}]}],
+            },
+        )
     ollama_ctx = max(4096, int(len(user) / 2.5))
-    return (_ollama_base(spec["value"]) + "/api/chat",
-            {"Content-Type": "application/json"},
-            {"model": model, "stream": True,
-             "options": {"num_ctx": ollama_ctx},
-             "messages": [{"role": "system", "content": system},
-                          {"role": "user", "content": user}]})
+    return (
+        _ollama_base(spec["value"]) + "/api/chat",
+        {"Content-Type": "application/json"},
+        {
+            "model": model,
+            "stream": True,
+            "options": {"num_ctx": ollama_ctx},
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        },
+    )
 
 
 def _ollama_base(value: str) -> str:
@@ -142,8 +171,7 @@ def _ollama_base(value: str) -> str:
         base = "http://" + base
     parts = urllib.parse.urlsplit(base)
     if parts.scheme not in ("http", "https") or not parts.netloc:
-        raise SystemExit(
-            f"OLLAMA_HOST must be an http(s) URL or host:port, got {value!r}")
+        raise SystemExit(f"OLLAMA_HOST must be an http(s) URL or host:port, got {value!r}")
     return base
 
 
@@ -151,13 +179,13 @@ def _delta(name: str, raw: bytes) -> str:
     """One streamed line -> the text it carries, or '' if it carries none."""
     line = raw.decode("utf8", "replace").strip()
     if line.startswith("data:"):
-        line = line[len("data:"):].strip()
+        line = line[len("data:") :].strip()
     if not line or line == "[DONE]":
         return ""
     try:
         d = json.loads(line)
     except ValueError:
-        return ""          # keep-alives and comment lines are not fatal
+        return ""  # keep-alives and comment lines are not fatal
     try:
         if name == "openai":
             return d["choices"][0]["delta"].get("content") or ""
@@ -183,12 +211,14 @@ def _writer(out=None):
     stream = sys.stdout if out is None else out
     buffer = getattr(stream, "buffer", None) if out is None else None
     if buffer is not None:
-        def write(chunk: str) -> None:
+
+        def write_bytes(chunk: str) -> None:
             buffer.write(chunk.encode("utf8", "replace"))
             _flush(buffer)
-        return write
 
-    def write(chunk: str) -> None:
+        return write_bytes
+
+    def write_text(chunk: str) -> None:
         enc = getattr(stream, "encoding", None) or "utf8"
         try:
             chunk.encode(enc)
@@ -198,7 +228,8 @@ def _writer(out=None):
             chunk = chunk.encode("utf8", "replace").decode("utf8", "replace")
         stream.write(chunk)
         _flush(stream)
-    return write
+
+    return write_text
 
 
 def _flush(stream) -> None:
@@ -233,7 +264,7 @@ def _empty_answer(spec: dict, raw_tail: list) -> str:
     for raw in raw_tail:
         line = raw.decode("utf8", "replace").strip()
         if line.startswith("data:"):
-            line = line[len("data:"):].strip()
+            line = line[len("data:") :].strip()
         try:
             d = json.loads(line)
         except ValueError:
@@ -243,8 +274,9 @@ def _empty_answer(spec: dict, raw_tail: list) -> str:
             err = err.get("message") or json.dumps(err)
         if err:
             return f"{spec['name']} returned an error: {err}"
-    return (f"{spec['name']} returned no answer text; check the model name and "
-            f"the {spec['env']} value")
+    return (
+        f"{spec['name']} returned no answer text; check the model name and the {spec['env']} value"
+    )
 
 
 def _disclose(name: str, env: str, url: str, n_chars: int) -> None:
@@ -271,9 +303,12 @@ def _disclose(name: str, env: str, url: str, n_chars: int) -> None:
     # write_safe, not print: a hostname from an IDN or a non-ASCII OLLAMA_HOST
     # must not make the disclosure itself the thing that crashes the command.
     from .events import write_safe
-    write_safe(sys.stderr,
-               f"repo2graph: sending {n_chars} chars of repository context to "
-               f"provider {name} at {host} (selected by {env})")
+
+    write_safe(
+        sys.stderr,
+        f"repo2graph: sending {n_chars} chars of repository context to "
+        f"provider {name} at {host} (selected by {env})",
+    )
     _flush(sys.stderr)
 
 
@@ -283,14 +318,18 @@ def stream_answer(pack, model=None, env=None, out=None, provider=None) -> str:
     if spec is None:
         raise SystemExit(
             "no LLM provider configured: set one of "
-            + ", ".join(PROVIDER_ENV[:-1]) + f" or {PROVIDER_ENV[-1]}")
+            + ", ".join(PROVIDER_ENV[:-1])
+            + f" or {PROVIDER_ENV[-1]}"
+        )
     system, user = build_prompt(pack)
     url, headers, payload = _request(spec, model, system, user)
     req = urllib.request.Request(
-        url, data=json.dumps(payload).encode("utf8"), headers=headers, method="POST")
+        url, data=json.dumps(payload).encode("utf8"), headers=headers, method="POST"
+    )
     _disclose(str(spec["name"]), str(spec["env"]), url, len(user))
     write = _writer(out)
-    parts, raw_tail = [], []
+    parts: list[str] = []
+    raw_tail: list[bytes] = []
     # urlopen is looked up on the module at call time, so a test can swap it.
     try:
         with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:

@@ -3,6 +3,7 @@
 No score, rank or float comparison is asserted anywhere here; every assertion
 is a length, a key or an equality between two runs of the same code.
 """
+
 import json
 
 import pytest
@@ -35,6 +36,7 @@ def test_ac22_token_budget_binds_on_the_big_fixture(big_index, budget):
     idx = Index(big_index)
     unbounded = idx.pack_context(MINI_QUERY, k=20, budget_chars=0)
     from repo2graph.query import count_tokens
+
     assert count_tokens(unbounded["markdown"]) > budget
 
 
@@ -71,8 +73,7 @@ def test_ac24_a_custom_count_tokens_drives_all_accounting(big_index):
     just for the reported total."""
     idx = Index(big_index)
     for budget in (500, 2000, 8000):
-        res = idx.pack_context(MINI_QUERY, k=20, budget_tokens=budget,
-                               count_tokens=len)
+        res = idx.pack_context(MINI_QUERY, k=20, budget_tokens=budget, count_tokens=len)
         assert len(res["markdown"]) <= budget, (budget, len(res["markdown"]))
         assert res["tokens_budget"] == budget
         assert res["tokens_used"] == len(res["markdown"])
@@ -83,8 +84,7 @@ def test_ac24_custom_measure_is_not_ignored(big_index):
     than the default measure at the same budget, or it was never consulted."""
     idx = Index(big_index)
     default = idx.pack_context(MINI_QUERY, k=20, budget_tokens=2000)
-    custom = idx.pack_context(MINI_QUERY, k=20, budget_tokens=2000,
-                              count_tokens=len)
+    custom = idx.pack_context(MINI_QUERY, k=20, budget_tokens=2000, count_tokens=len)
     assert len(custom["markdown"]) < len(default["markdown"])
 
 
@@ -101,8 +101,7 @@ def test_ac25_budget_tokens_wins_over_budget(big_index, capsys):
     """AC-25 (b): passing both gives the same result as --budget-tokens alone."""
     main(["rag", MINI_QUERY, "-o", str(big_index), "--budget-tokens", "200"])
     alone = capsys.readouterr().out
-    main(["rag", MINI_QUERY, "-o", str(big_index),
-          "--budget", "24000", "--budget-tokens", "200"])
+    main(["rag", MINI_QUERY, "-o", str(big_index), "--budget", "24000", "--budget-tokens", "200"])
     both = capsys.readouterr().out
     assert both == alone
 
@@ -114,8 +113,7 @@ def test_ac25_budget_tokens_wins_over_budget(big_index, capsys):
 
 def test_ac25_budget_tokens_reaches_the_json_form(big_index, capsys):
     """AC-25 (c): the JSON pack reports the token budget it was given."""
-    main(["rag", MINI_QUERY, "-o", str(big_index), "--budget-tokens", "200",
-          "--format", "json"])
+    main(["rag", MINI_QUERY, "-o", str(big_index), "--budget-tokens", "200", "--format", "json"])
     payload = json.loads(capsys.readouterr().out)
     assert payload["tokens_budget"] == 200
     assert payload["tokens_used"] <= 200

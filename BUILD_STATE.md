@@ -768,9 +768,16 @@ sibling assertion `sorted(out.iterdir()) == ["agent", "human"]` rules out reloca
 expected list is the thing that is stale. One line, in sorted position:
 
 ```python
-    assert sorted(p.name for p in (out / "agent").iterdir()) == [
-        "chunks.jsonl", "edges.jsonl", "graph.cypher", "index.state.json",
-        "manifest.json", "nodes.jsonl", "overview.md", "stats.json"]
+assert sorted(p.name for p in (out / "agent").iterdir()) == [
+    "chunks.jsonl",
+    "edges.jsonl",
+    "graph.cypher",
+    "index.state.json",
+    "manifest.json",
+    "nodes.jsonl",
+    "overview.md",
+    "stats.json",
+]
 ```
 
 Kept as an exact equality, deliberately — this test's job is to characterise the artifact set,
@@ -977,8 +984,14 @@ is stale — it predates an artifact this run deliberately adds.**
 
 ```python
 assert sorted(p.name for p in (out / "agent").iterdir()) == [
-    "chunks.jsonl", "edges.jsonl", "graph.cypher", "manifest.json",
-    "nodes.jsonl", "overview.md", "stats.json"]
+    "chunks.jsonl",
+    "edges.jsonl",
+    "graph.cypher",
+    "manifest.json",
+    "nodes.jsonl",
+    "overview.md",
+    "stats.json",
+]
 ```
 
 Plan task 13 and AC-34 require `build` to write `<idx>/agent/index.state.json`, and

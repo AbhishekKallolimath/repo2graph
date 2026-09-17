@@ -8,6 +8,7 @@ that has already proved it cannot succeed.
 Builders here are injected stubs. A real tree-sitter build would make these
 tests slow and would test `graph.build`, which has its own suite.
 """
+
 import json
 import threading
 import time
@@ -32,6 +33,7 @@ class Builder:
         if self.fail:
             raise self.fail
         from pathlib import Path
+
         Path(out).mkdir(parents=True, exist_ok=True)
 
 
@@ -46,11 +48,11 @@ def wait_for(predicate, timeout=5.0):
 
 
 def manager(builder=None, estimate=1.0):
-    return TaskManager(builder=builder or Builder(),
-                       estimator=lambda repo: estimate)
+    return TaskManager(builder=builder or Builder(), estimator=lambda repo: estimate)
 
 
 # ---------------------------------------------------------------- state ----
+
 
 def test_a_new_task_starts_building_and_then_becomes_ready(tmp_path):
     builder = Builder(block=True)
@@ -88,7 +90,7 @@ def test_a_systemexit_inside_a_build_still_marks_it_failed(tmp_path):
 def test_progress_never_reaches_100_while_still_building(tmp_path):
     """A bar that hits 100 and keeps going is worse than one that admits it guesses."""
     builder = Builder(block=True)
-    tasks = manager(builder, estimate=0.001)     # guarantees an overrun
+    tasks = manager(builder, estimate=0.001)  # guarantees an overrun
     task = tasks.start(tmp_path / "repo", tmp_path / "out")
 
     time.sleep(0.05)
@@ -146,13 +148,15 @@ def test_the_estimator_failing_does_not_stop_the_build(tmp_path):
 
 # ------------------------------------------------------------- dispatch ----
 
+
 def test_repo_build_status_reports_a_live_task(tmp_path):
     builder = Builder(block=True)
     tasks = manager(builder)
     task = tasks.start(tmp_path / "repo", tmp_path / "out")
 
-    got = json.loads(mcp.dispatch(None, "repo_build_status",
-                                  {"task_id": task.task_id}, tasks=tasks))
+    got = json.loads(
+        mcp.dispatch(None, "repo_build_status", {"task_id": task.task_id}, tasks=tasks)
+    )
     assert got["status"] == BUILDING
     assert got["task_id"] == task.task_id
     assert isinstance(got["progress_pct"], int)
@@ -160,14 +164,14 @@ def test_repo_build_status_reports_a_live_task(tmp_path):
 
     builder.release.set()
     assert wait_for(lambda: task.status == READY)
-    got = json.loads(mcp.dispatch(None, "repo_build_status",
-                                  {"task_id": task.task_id}, tasks=tasks))
+    got = json.loads(
+        mcp.dispatch(None, "repo_build_status", {"task_id": task.task_id}, tasks=tasks)
+    )
     assert got["status"] == READY and got["error"] is None
 
 
 def test_repo_build_status_for_an_unknown_id_is_a_clean_answer(tmp_path):
-    got = json.loads(mcp.dispatch(None, "repo_build_status",
-                                  {"task_id": "nope"}, tasks=manager()))
+    got = json.loads(mcp.dispatch(None, "repo_build_status", {"task_id": "nope"}, tasks=manager()))
     assert got["status"] == "unknown"
     assert "no build task" in got["error"]
 
@@ -181,6 +185,7 @@ def test_repo_build_status_without_async_build_says_so(mini_index):
 def test_repo_build_status_is_never_cached(tmp_path):
     """A cached progress report is the one answer guaranteed to be out of date."""
     from repo2graph.cache import ResultCache
+
     builder = Builder(block=True)
     tasks = manager(builder)
     task = tasks.start(tmp_path / "repo", tmp_path / "out")
@@ -190,8 +195,7 @@ def test_repo_build_status_is_never_cached(tmp_path):
     mcp.dispatch(None, "repo_build_status", args, cache=cache, tasks=tasks)
     builder.release.set()
     assert wait_for(lambda: task.status == READY)
-    after = json.loads(mcp.dispatch(None, "repo_build_status", args,
-                                    cache=cache, tasks=tasks))
+    after = json.loads(mcp.dispatch(None, "repo_build_status", args, cache=cache, tasks=tasks))
     assert after["status"] == READY, "a stale status was served from the cache"
 
 
@@ -202,11 +206,11 @@ def test_build_status_is_in_the_published_tool_set():
 
 # --------------------------------------------------------- open_or_task ----
 
+
 def test_a_missing_index_returns_a_building_message_not_a_block(tmp_path):
     builder = Builder(block=True)
     tasks = manager(builder)
-    index, pending = mcp.open_index_or_task(
-        tmp_path / "out", tmp_path / "repo", None, tasks)
+    index, pending = mcp.open_index_or_task(tmp_path / "out", tmp_path / "repo", None, tasks)
 
     assert index is None
     assert pending and "repo_build_status" in pending
@@ -252,8 +256,7 @@ def test_async_build_is_off_by_default(mini_repo, monkeypatch):
     whose tool-call timeout no single build can fit inside.
     """
     seen = {}
-    monkeypatch.setattr(mcp, "serve",
-                        lambda out, repo=None, **kw: seen.update(kw))
+    monkeypatch.setattr(mcp, "serve", lambda out, repo=None, **kw: seen.update(kw))
 
     mcp.main([str(mini_repo)])
     assert seen["tasks"] is None, "background builds are on by default"

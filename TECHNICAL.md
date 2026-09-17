@@ -77,11 +77,15 @@ from repo2graph.export import dump_all
 from repo2graph.query import Index
 
 g = build(Path("."), git_history=200)
-dump_all(g, chunks=iter_chunks(g), outdir=Path(".r2g"),
-         formats={"jsonl", "overview", "html"}, viz_nodes=300)
+dump_all(
+    g,
+    chunks=iter_chunks(g),
+    outdir=Path(".r2g"),
+    formats={"jsonl", "overview", "html"},
+    viz_nodes=300,
+)
 
-pack = Index(".r2g").pack_context("how does session auth work?", k=8, hops=1,
-                                  budget_chars=24000)
+pack = Index(".r2g").pack_context("how does session auth work?", k=8, hops=1, budget_chars=24000)
 print(pack["markdown"])
 ```
 
