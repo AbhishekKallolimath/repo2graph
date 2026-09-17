@@ -1670,6 +1670,34 @@ def test_ruby_call_resolves_to_method_not_receiver():
     assert "logger" not in calls and "User" not in calls
 
 
+def test_parse_source_swift_symbols_calls_and_imports():
+    """Swift LANG_CFG had zero direct parse_source coverage (kind_map/calls/imports)."""
+    src = b"""import Foundation
+
+class Greeter {
+    func greet(name: String) -> String {
+        print(name)
+        return helper(name)
+    }
+}
+
+protocol Named {
+    func label() -> String
+}
+"""
+    pf = parse_source(src, "swift")
+    if not pf.symbols:
+        pytest.skip("swift grammar unavailable")
+    kinds = {s.qualname: s.kind for s in pf.symbols}
+    assert kinds["Greeter"] == "class"
+    assert kinds["Greeter.greet"] == "function"
+    assert kinds["Named"] == "protocol"
+    greet = next(s for s in pf.symbols if s.qualname == "Greeter.greet")
+    assert "print" in greet.calls and "helper" in greet.calls
+    assert any(i.startswith("import Foundation") for i in pf.imports)
+    assert pf.parse_errors == 0
+
+
 def test_glob_re_tolerates_malformed_bracket_classes():
     """A stray/empty bracket in --include/--exclude must not raise re.error."""
     from repo2graph.walker import _glob_re
