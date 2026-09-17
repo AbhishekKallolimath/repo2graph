@@ -1,0 +1,45 @@
+name: Feature request
+description: Propose a new capability, CLI flag, MCP tool, or language.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: [docs/BACKLOG.md](../../docs/BACKLOG.md) tracks known, deliberately
+        deferred work — check there first in case this is already scoped out, with the
+        reasoning for why it was deferred.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: What are you trying to do that repo2graph can't currently help with?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: >
+        A new CLI flag, MCP tool, output format, or supported language — whatever shape
+        the change takes. Concrete is better than abstract: a sample command or a sketch
+        of the output is more useful than a general description.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any existing flag/workaround you tried, and why it wasn't enough.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and docs/BACKLOG.md for a duplicate.
+          required: true

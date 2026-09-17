@@ -1,0 +1,110 @@
+name: Bug report
+description: Something in repo2graph is broken or behaves unexpectedly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file this. The more of the fields below you can fill
+        in, the faster it is to reproduce and fix.
+
+  - type: input
+    id: version
+    attributes:
+      label: repo2graph version
+      description: Output of `repo2graph --version`, or the pinned version in your lockfile.
+      placeholder: "1.5.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: python-version
+    attributes:
+      label: Python version
+      options:
+        - "3.10"
+        - "3.11"
+        - "3.12"
+        - "3.13"
+        - Other (say which, below)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which surface were you using?
+      description: The bug report needs different detail depending on which one you hit.
+      options:
+        - CLI (repo2graph build / query / rag / ...)
+        - MCP server (repo2graph-mcp)
+        - GitHub Action
+        - Python API
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mcp-client
+    attributes:
+      label: MCP client (only if the bug is in the MCP server)
+      options:
+        - Not applicable
+        - Claude Desktop
+        - Claude Code
+        - Cursor
+        - Windsurf
+        - Other MCP client
+    validations:
+      required: false
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: >
+        The exact command(s) you ran, and — if the bug depends on the source being indexed —
+        a link to a public repo/commit or a minimal snippet that reproduces it. Issues we
+        cannot reproduce take much longer to fix.
+      placeholder: |
+        repo2graph build . -o .r2g --git-history 200
+        repo2graph query "how does routing match a path" -o .r2g
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Full error output / traceback if there is one. Paste as text, not a screenshot.
+      render: shell
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and didn't find a duplicate.
+          required: true
+        - label: I'm on the latest release of repo2graph (or can confirm the bug reproduces there).
+          required: false

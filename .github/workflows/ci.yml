@@ -17,8 +17,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ["3.10", "3.12"]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -29,7 +29,9 @@ jobs:
 
       - run: pip install -e ".[dev,mcp]"
       - run: ruff check .
-      - run: pytest -q
+      # Coverage is reported, not gated: no repo-wide baseline exists yet to
+      # gate against (docs/BACKLOG.md item 7).
+      - run: pytest -q --cov=repo2graph --cov-report=term-missing
 
   packaging:
     # Reproduces how third-party hosts install and start this server, which the

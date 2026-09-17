@@ -1,0 +1,196 @@
+<div align="center">
+
+# repo2graph
+
+**面向 AI 编程智能体与开发者的 AST 驱动代码图谱与零依赖 GraphRAG**
+
+<p align="center">
+  <a href="../../README.md">English</a> ·
+  <a href="README_zh-CN.md">简体中文</a> ·
+  <a href="README_ja.md">日本語</a> ·
+  <a href="README_fr.md">Français</a> ·
+  <a href="README_es.md">Español</a> ·
+  <a href="README_de.md">Deutsch</a>
+</p>
+
+<p align="center">
+  <a href="https://glama.ai/mcp/servers/Srinivasan-78/repo2graph"><img src="https://glama.ai/mcp/servers/Srinivasan-78/repo2graph/badges/score.svg" alt="Glama MCP server score" /></a>
+  <a href="https://pypi.org/project/repo2graph/"><img src="https://img.shields.io/pypi/v/repo2graph.svg?color=blue" alt="PyPI version" /></a>
+  <a href="https://pypi.org/project/repo2graph/"><img src="https://img.shields.io/pypi/pyversions/repo2graph.svg" alt="Python versions" /></a>
+  <a href="../../LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
+  <a href="https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml"><img src="https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml/badge.svg" alt="CI status" /></a>
+  <img src="https://img.shields.io/badge/MCP-Compatible-purple.svg" alt="MCP Compatible" />
+  <a href="https://github.com/Srinivasan-78/repo2graph/stargazers"><img src="https://img.shields.io/github/stars/Srinivasan-78/repo2graph?style=social" alt="GitHub stars" /></a>
+</p>
+
+<p align="center">
+  <img src="../images/demo.gif" alt="repo2graph 在终端中构建仓库地图并回答相关问题" width="850" />
+</p>
+
+</div>
+
+<!-- mcp-name: io.github.Srinivasan-78/repo2graph -->
+
+> 本文档由英文原版 [README.md](../../README.md) 翻译而来。如有出入，以英文版为准。
+
+---
+
+## ⚡ repo2graph 是什么？
+
+当 AI 编程智能体用 grep 或纯关键字匹配搜索代码库时,要么把整份匹配文件塞进上下文——浪费 token 预算又丢失结构信息,要么因为搜索词与代码用词不同而彻底找不到实现。
+
+**repo2graph** 使用 [tree-sitter](https://tree-sitter.github.io/tree-sitter/) 将源码解析为**抽象语法树 (AST)**,并在此基础上构建真实代码关系图——`CALLS`(调用)、`IMPORTS`(导入)、`INHERITS`(继承)、`DEFINES`(定义)、`CO_CHANGE`(共同变更)。这张图既可以通过 **Model Context Protocol (MCP)** 直接提供给智能体查询**符号调用层次**,也可以被打包为带有严格**上下文上限**的 Markdown,供任意 LLM 使用。每一段返回内容都带有精确的 `[cite: 路径:起始行-结束行]` 引用锚点,答案可追溯到源码,而不是靠猜测转述。
+
+```mermaid
+flowchart LR
+    A[你的代码] --> B[tree-sitter<br/>解析代码]
+    B --> C[代码图谱<br/>节点 + 边]
+    C --> D[graph.html<br/>可视化图形]
+    C --> E[chunks.jsonl<br/>供 AI 使用的片段]
+    C -->|MCP stdio| F[Claude / Cursor /<br/>任意 MCP 客户端]
+```
+
+无需项目配置,无需语言服务器,无需构建步骤——指向一个文件夹即可工作。
+
+<p align="center">
+  <img src="../images/graph-overview.png" alt="repo2graph 生成的项目交互式代码图谱" width="850" />
+</p>
+
+| 交互式画布(放大) | 筛选与检查器面板 |
+| :---: | :---: |
+| <img src="../images/graph-zoom.png" alt="放大查看代码地图:函数、文件与库之间的连线" /> | <img src="../images/graph-sidebar.png" alt="带搜索框、节点类型与关系类型的侧边栏" /> |
+
+`graph.html` 是单个自包含文件——无需服务器、无需联网,拖拽平移、滚轮缩放,点击节点即可查看其代码与邻居节点。
+
+## 🚀 30 秒内快速开始
+
+需要 Python 3.10 及以上版本。通过 [uv](https://docs.astral.sh/uv/) 运行,无需安装:
+
+```bash
+uvx repo2graph build . -o .r2g && open .r2g/human/graph.html
+```
+
+或正式安装:
+
+```bash
+pip install repo2graph
+repo2graph build /path/to/project -o .r2g --git-history 200
+repo2graph query "how does routing match a path" -o .r2g
+```
+
+## 🔌 MCP 客户端配置
+
+`repo2graph-mcp` 是一个基于 stdio 的 **MCP 服务器**。如果索引尚不存在,首次调用时会自动构建——无需提前运行任何命令。
+
+**Claude Code**
+
+```bash
+claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp /path/to/project
+```
+
+**Claude Desktop**(`claude_desktop_config.json`)与 **Cursor**(`.cursor/mcp.json`)——使用同一段配置:
+
+```json
+{
+  "mcpServers": {
+    "repo2graph": {
+      "command": "uvx",
+      "args": ["--from", "repo2graph[mcp]", "repo2graph-mcp", "/path/to/project"]
+    }
+  }
+}
+```
+
+其他基于 stdio 的 MCP 客户端(Windsurf、Zed 及通用客户端)使用相同的 `command`/`args` 组合——各平台与客户端的配置文件路径详见 **[docs/mcp.md](../mcp.md)**(英文)。
+
+## ✨ 核心特性
+
+| | |
+|---|---|
+| **确定性图谱,而非纯向量检索** | 调用者、被调用者、导入关系与类继承关系均从真实 AST 解析得出——而非最近邻猜测。 |
+| **混合检索** | 默认使用 BM25 + 图邻居扩展;可选的稠密向量融合(`repo2graph embed`)无需任何必装的额外依赖。 |
+| **双重强制的 token 上限** | `pack_context()` 的预算约束的是*整份*渲染后的 Markdown,而不仅是片段文本;MCP 服务器还会二次裁剪并重新计量后再返回。 |
+| **15 种语言,完整支持** | Python、JS/TS/TSX、Go、Rust、Java、Ruby、C、C++、C#、PHP、Kotlin、Swift、Scala、Bash 均支持函数/类/调用解析。其余语言的文件仍会出现在地图上。 |
+| **原生支持 CI** | 已发布为 GitHub Action——每次 push 都能在代码旁提交最新图谱。 |
+| **默认本地运行** | `build`、`query`、`rag` 与 MCP 服务器均不发起任何网络请求。唯一的可选例外(`rag --answer`)会在发送前打印所用的服务商与主机名。 |
+| **导出至主流图谱工具** | 每次构建都会生成 `graph.graphml`(yEd、Gephi、NetworkX)与 `graph.cypher`(Neo4j、Memgraph),无需额外步骤。 |
+
+## 🛠️ 暴露的 MCP 工具
+
+| 工具 | 参数 | 返回内容 |
+|---|---|---|
+| `repo_map` | 无 | 语言构成、核心文件与主要入口点。多次调用结果稳定,建议首先调用。 |
+| `repo_search` | `query`,可选 `k`(默认 8,最大 50)、`hops`(默认 1,最大 4)、`budget_tokens`(默认 6000,最大 12000) | 检索到的种子片段及其图邻居,每段均带有 `[cite: 路径:起始-结束]` 头部。 |
+| `repo_neighbours` | `node_id`,可选 `hops`(最大 4)、`limit`(默认 20,最大 50) | 从某个符号/文件/目录节点出发的一跳邻居:调用者、被调用者、基类、所在文件。 |
+
+每次工具调用都会无条件排除疑似密钥的文件——没有任何开关可以关闭该行为。完整协议说明(含两个用于长期运行部署的诊断工具 `repo_cache_stats`、`repo_build_status`):**[docs/mcp.md](../mcp.md)**(英文)。
+
+## 📐 架构与 Token 经济学
+
+- **节点类型**:`repo`(仓库)、`dir`(目录)、`file`(文件)、`symbol`(函数/方法/类/结构体/trait/接口/类型)、`module`(外部依赖)、`external`(未能解析的调用目标)。
+- **边类型**:`CONTAINS`(包含)、`DEFINES`(定义)、`IMPORTS`(导入)、`CALLS`(调用,携带 `count` 与 `confidence`)、`CALLS_EXTERNAL`(外部调用)、`INHERITS`(继承)、`CO_CHANGE`(共同变更,来自 `--git-history`,需至少共同修改 3 次)。
+- **调用解析基于名称而非类型**——这是刻意的取舍,使 repo2graph 保持语言无关、免配置。存在歧义的调用最多会展开为 5 条候选边,每条 `confidence = 1/n`;如需确定性而非召回率,请仅保留 `confidence == 1.0` 的边。
+- **两套预算模型,刻意为之**:`Index.retrieve()` 的 `budget_chars` 只约束片段自身文本(向后兼容接口);`Index.pack_context()` 的 `budget_chars` 约束*整份*渲染后的 Markdown——引用头、分隔符,一切都算在内。新的检索代码应构建在 `pack_context()` 之上。
+- **切片方式**:大致每个函数/类一个片段,约 4000 字符处切分,保留 8 行重叠以避免在接缝处丢失信息;每个片段的头部都列出了其调用者与被调用者,这正是图扩展检索优于纯 top-k 文本搜索的原因。
+
+每种节点/边类型与片段格式的完整说明:**[docs/reference.md](../reference.md)**(英文)。完整流水线、Python API 与图谱的猜测边界(及其原因):**[TECHNICAL.md](../../TECHNICAL.md)**(英文)。
+
+## 📊 在真实仓库上的表现
+
+不是玩具级演示——五个真实、大型、公开的仓库,每个都在固定的提交点上被索引,生成的图谱已提交,复现命令也已记录。所有数字均来自 [`benchmarks/results.json`](../../benchmarks/results.json) 的实测结果,而非估算。
+
+| 仓库 | 语言 | 范围 | 节点数 | 边数 |
+|---|---|---|---:|---:|
+| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | 限定范围(controllers、scheduler、API server) | 14,197 | 83,525 |
+| [TensorFlow](https://github.com/tensorflow/tensorflow) | C++ / Python | 限定范围(Python/C++ 边界) | 20,641 | 96,013 |
+| [Django](https://github.com/django/django) | Python | 完整仓库 | 54,544 | 228,461 |
+| [VS Code](https://github.com/microsoft/vscode) | TypeScript | 限定范围(`src/vs/`) | 113,115 | 431,453 |
+| [Linux kernel](https://github.com/torvalds/linux) | C | 限定范围(极大规模) | 136,182 | 257,655 |
+
+完整列表与复现命令见 **[examples/README.md](../../examples/README.md)**,测试方法见 **[docs/benchmarks.md](../benchmarks.md)**,针对五个真实仓库运行后暴露出的实际问题(宏密集型 C/C++ 的解析错误率、调用名歧义、跨语言解析限制)见 **[docs/limitations.md](../limitations.md)**(均为英文)。
+
+## 📖 CLI 与服务器参考
+
+| 命令 | 作用 |
+|---|---|
+| `repo2graph build <path> -o .r2g [--git-history N]` | 解析本地仓库,生成图谱与片段。 |
+| `repo2graph github <owner/repo> -o <dir>` | 拉取、构建并自动清理——无需本地克隆。 |
+| `repo2graph query "<question>" -o .r2g` | 关键字检索 + 一跳图扩展。 |
+| `repo2graph rag "<question>" -o .r2g [--vectors] [--answer]` | 带预算上限的 GraphRAG 打包;`--answer` 会将内容发送给 LLM(可选,涉及联网)。 |
+| `repo2graph embed -o .r2g [--verify-rag]` | 计算/校验用于混合检索的稠密向量。 |
+| `repo2graph map -o .r2g [--viz-nodes N]` | 以不同节点上限重新生成 `graph.html`。 |
+| `repo2graph stats -o .r2g` | 输出现有索引的节点/边/函数统计。 |
+| `repo2graph-mcp <path> [--no-auto-build] [--async-build]` | 基于 `.r2g` 的 stdio MCP 服务器。 |
+
+**环境变量**(仅被 `rag --answer` 读取,按以下优先级):`GEMINI_API_KEY` → `OPENAI_API_KEY` → `ANTHROPIC_API_KEY` → `OLLAMA_HOST`。其余命令均不读取这些变量,也不会发起网络请求。完整参数表与预算核算方式:**[docs/cli.md](../cli.md)**(英文)。
+
+## 🔐 安全性
+
+`build`、`query`、`rag` 与 MCP 服务器均不会发起任何网络请求。`rag --answer` 是唯一的可选例外——它会把打包好的内容发送给 LLM 服务商,并在发送前打印所用的服务商与主机名。MCP 服务器会无条件排除疑似密钥的文件,没有任何开关可以关闭该行为。详情见 **[SECURITY.md](../../SECURITY.md)**(英文)。
+
+## 🤝 贡献与社区
+
+```bash
+git clone https://github.com/Srinivasan-78/repo2graph
+cd repo2graph
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+make lint test   # 或者: ruff check . && pytest
+```
+
+- **[.github/CONTRIBUTING.md](../../.github/CONTRIBUTING.md)**(英文)——完整的本地开发环境搭建、代码风格与注册表/Glama 发布流程。
+- **[docs/BACKLOG.md](../BACKLOG.md)**(英文)——被刻意推迟的工作及原因;最接近路线图的文档,其中也包含"适合新手的第一个 issue"部分。
+- **[AGENTS.md](../../AGENTS.md)**(英文)——在修改 `repo2graph/` 之前,请先了解本代码库中不易察觉的约定(Windows 编码、文本切片、两套预算模型)。
+- **[CODE_OF_CONDUCT.md](../../CODE_OF_CONDUCT.md)**(英文)——采用 Contributor Covenant v2.1 行为准则。
+- 发现 bug 或有功能建议?[提交 issue](https://github.com/Srinivasan-78/repo2graph/issues/new/choose)。
+
+## 许可证
+
+MIT 许可证。详见 **[LICENSE](../../LICENSE)**。
+
+---
+
+<div align="center">
+
+觉得 repo2graph 有用?[为仓库点个 star](https://github.com/Srinivasan-78/repo2graph)——这是帮助更多人发现它的最简单方式。
+
+</div>
