@@ -151,6 +151,7 @@ runtime argument — see [`server.json`](../server.json).
 | `repo_cache_stats` | none | JSON object with cache metrics (hits, misses, size, etc.). |
 | `repo_build_status` | `task_id` | JSON object with build task status, progress, and error details. |
 
+
 `repo_neighbours` takes ids in the same shape the rest of the project uses:
 `file:<path>`, `sym:<path>::<qualname>`, `dir:<path>`. Hand it something else and
 it says so instead of returning nothing.
