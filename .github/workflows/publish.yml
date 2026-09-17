@@ -34,10 +34,21 @@ jobs:
       version: ${{ steps.prepare.outputs.version }}
       tag: ${{ steps.prepare.outputs.tag }}
     steps:
+      - name: Generate prod-igy token
+        id: app-token
+        if: ${{ env.HAS_APP_ID != '' && env.HAS_PRIVATE_KEY != '' }}
+        uses: actions/create-github-app-token@136412a57a7081aa63c935a2cc2918f76c34f514  # v1.11.2
+        with:
+          app-id: ${{ secrets.PRODIGY_APP_ID }}
+          private-key: ${{ secrets.PRODIGY_PRIVATE_KEY }}
+        env:
+          HAS_APP_ID: ${{ secrets.PRODIGY_APP_ID }}
+          HAS_PRIVATE_KEY: ${{ secrets.PRODIGY_PRIVATE_KEY }}
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
@@ -49,7 +60,9 @@ jobs:
       - name: Prepare release version and tag
         id: prepare
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          APP_ID: ${{ secrets.PRODIGY_APP_ID }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
@@ -63,8 +76,14 @@ jobs:
             tag="v$version"
             branch="release/v$version"
 
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            bot_name="${APP_SLUG:-prod-igy}[bot]"
+            if [ -n "${APP_ID:-}" ]; then
+              bot_email="${APP_ID}+${bot_name}@users.noreply.github.com"
+            else
+              bot_email="41898282+github-actions[bot]@users.noreply.github.com"
+            fi
+            git config user.name "$bot_name"
+            git config user.email "$bot_email"
 
             # Create and push release branch
             git checkout -B "$branch"
@@ -248,10 +267,22 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Generate prod-igy token
+        id: app-token
+        if: ${{ env.HAS_APP_ID != '' && env.HAS_PRIVATE_KEY != '' }}
+        uses: actions/create-github-app-token@136412a57a7081aa63c935a2cc2918f76c34f514  # v1.11.2
+        with:
+          app-id: ${{ secrets.PRODIGY_APP_ID }}
+          private-key: ${{ secrets.PRODIGY_PRIVATE_KEY }}
+        env:
+          HAS_APP_ID: ${{ secrets.PRODIGY_APP_ID }}
+          HAS_PRIVATE_KEY: ${{ secrets.PRODIGY_PRIVATE_KEY }}
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ needs.prepare-release.outputs.tag }}
           fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
 
       - name: Extract this version's CHANGELOG section
         env:
@@ -276,7 +307,7 @@ jobs:
 
       - name: Create or update GitHub Release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           TAG: ${{ needs.prepare-release.outputs.tag }}
         run: |
           set -euo pipefail
@@ -289,12 +320,21 @@ jobs:
 
       - name: Advance floating major tag
         env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          APP_ID: ${{ secrets.PRODIGY_APP_ID }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
           TAG: ${{ needs.prepare-release.outputs.tag }}
         run: |
           set -euo pipefail
           major="${TAG%%.*}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bot_name="${APP_SLUG:-prod-igy}[bot]"
+          if [ -n "${APP_ID:-}" ]; then
+            bot_email="${APP_ID}+${bot_name}@users.noreply.github.com"
+          else
+            bot_email="41898282+github-actions[bot]@users.noreply.github.com"
+          fi
+          git config user.name "$bot_name"
+          git config user.email "$bot_email"
           git tag -f "$major" "$TAG"
           git push -f origin "refs/tags/$major"
           echo "Advanced floating tag $major to $TAG" >> "$GITHUB_STEP_SUMMARY"
