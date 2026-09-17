@@ -216,49 +216,59 @@ class _LockedAppender:
                 return
 
     def _acquire(self) -> None:
-        try:
-            import fcntl
+        # sys.platform branches, not a bare try/except ImportError: mypy checks
+        # each platform's CI job against that job's own sys.platform, so it
+        # statically knows the other branch is unreachable there and needs no
+        # ignore comment on either platform.
+        if sys.platform != "win32":
+            try:
+                import fcntl
 
-            fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)  # type: ignore[attr-defined]
-            return
-        except ImportError:
-            pass
-        try:
-            import msvcrt
+                fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)
+                return
+            except ImportError:
+                pass
+        if sys.platform == "win32":
+            try:
+                import msvcrt
 
-            # msvcrt.locking locks a byte range starting at the *current*
-            # position, so the offset has to be remembered: the write moves the
-            # file pointer, and unlocking at the new position would leave the
-            # original byte locked forever -- which on Windows makes the file
-            # unreadable by every other process, including the one auditing it.
-            self._fh.seek(0, os.SEEK_END)
-            self._locked_at = self._fh.tell()
-            msvcrt.locking(self._fh.fileno(), msvcrt.LK_LOCK, 1)
-        except (ImportError, OSError):
-            # No lock available: still write. An interleaved line is a far
-            # smaller problem than a dropped audit record.
-            self._locked_at = None
+                # msvcrt.locking locks a byte range starting at the *current*
+                # position, so the offset has to be remembered: the write moves
+                # the file pointer, and unlocking at the new position would
+                # leave the original byte locked forever -- which on Windows
+                # makes the file unreadable by every other process, including
+                # the one auditing it.
+                self._fh.seek(0, os.SEEK_END)
+                self._locked_at = self._fh.tell()
+                msvcrt.locking(self._fh.fileno(), msvcrt.LK_LOCK, 1)
+                return
+            except (ImportError, OSError):
+                pass
+        # No lock available: still write. An interleaved line is a far
+        # smaller problem than a dropped audit record.
+        self._locked_at = None
 
     def _release(self) -> None:
-        try:
-            import fcntl
+        if sys.platform != "win32":
+            try:
+                import fcntl
 
-            fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)  # type: ignore[attr-defined]
-            return
-        except ImportError:
-            pass
+                fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
+                return
+            except ImportError:
+                pass
         if self._locked_at is None:
             return
-        try:
-            import msvcrt
+        if sys.platform == "win32":
+            try:
+                import msvcrt
 
-            self._fh.seek(self._locked_at)
-            msvcrt.locking(self._fh.fileno(), msvcrt.LK_UNLCK, 1)
-            self._fh.seek(0, os.SEEK_END)
-        except (ImportError, OSError):
-            pass
-        finally:
-            self._locked_at = None
+                self._fh.seek(self._locked_at)
+                msvcrt.locking(self._fh.fileno(), msvcrt.LK_UNLCK, 1)
+                self._fh.seek(0, os.SEEK_END)
+            except (ImportError, OSError):
+                pass
+        self._locked_at = None
 
     def close(self) -> None:
         try:
