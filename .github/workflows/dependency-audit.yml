@@ -48,7 +48,11 @@ jobs:
         # --strict makes a failure to resolve an advisory an error rather than a
         # silent pass: an audit that cannot reach its database must not report
         # "no vulnerabilities found".
-        run: pip-audit --strict --progress-spinner off
+        # --skip-editable: repo2graph itself is installed editable (`pip install -e`),
+        # so pip-audit would otherwise try to resolve this package's own in-repo
+        # version against PyPI -- which fails on a release PR, where the version is
+        # bumped locally before it's published. Only third-party deps need auditing.
+        run: pip-audit --strict --skip-editable --progress-spinner off
 
       - name: Severity gate (high and critical only)
         # pip-audit exits non-zero on *any* advisory. The step above is the
