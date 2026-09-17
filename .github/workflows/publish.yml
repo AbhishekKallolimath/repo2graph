@@ -85,11 +85,25 @@ jobs:
             git config user.name "$bot_name"
             git config user.email "$bot_email"
 
-            # Create and push release branch
-            git checkout -B "$branch"
-            git add pyproject.toml server.json repo2graph/__init__.py CHANGELOG.md uv.lock
-            git commit -m "chore(release): bump version to $version"
-            git push -f origin "$branch"
+            # Create the release commit via the GitHub API instead of `git commit` +
+            # push: a runner-made commit is never marked Verified even when pushed
+            # with an authenticated App token, and main requires signed commits.
+            # An unsigned bump commit here blocks every auto-merge attempt below
+            # until someone with branch-protection bypass merges it by hand.
+            commit_sha=$(python scripts/commit_release_via_api.py \
+              --repo "$GITHUB_REPOSITORY" \
+              --branch "$branch" \
+              --base main \
+              --message "chore(release): bump version to $version" \
+              --files pyproject.toml server.json repo2graph/__init__.py CHANGELOG.md uv.lock)
+            echo "Created verified commit $commit_sha on $branch"
+
+            # bump_version.py's edits are already captured in the commit created
+            # above via the API; discard them from the local worktree so the
+            # `git pull origin main` after merge below (which re-fetches the
+            # bumped content properly, via the merge) doesn't fail with "local
+            # changes would be overwritten".
+            git checkout -- pyproject.toml server.json repo2graph/__init__.py CHANGELOG.md uv.lock
 
             # Create PR if not already existing
             pr_url=$(gh pr list --head "$branch" --base main --json url -q '.[0].url' || true)
