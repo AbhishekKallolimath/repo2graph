@@ -229,3 +229,46 @@ def test_payload_is_valid_json(tmp_path):
     blob = re.search(r"const DATA = (\{.*?\});", html, re.S).group(1)
     parsed = json.loads(blob.replace("\\u003c", "<"))
     assert "nodes" in parsed and "edges" in parsed
+
+
+def test_search_focus_and_legend_ui_are_present(tmp_path):
+    """Presence check for the search box, focus mode and the legend panel.
+
+    Not a browser test (this repo has no Node/jsdom toolchain in its dev
+    extra, same limitation noted for the pointer-capture tests above) -- just
+    confirms the three new pieces of UI actually landed in the rendered page
+    and in TEMPLATE's script, rather than a full DOM/interaction check.
+    """
+    html = render(tmp_path, "repo")
+
+    # capability 1: search box, its dropdown, and the Ctrl/Cmd+F shortcut
+    assert '<input id="search"' in html
+    assert 'id="search-results"' in html
+    assert "search.select()" in TEMPLATE
+    assert 'ev.key.toLowerCase() === "f"' in TEMPLATE
+    assert "ev.preventDefault()" in TEMPLATE
+
+    # capability 2: multi-hop focus mode, distinct from the search dim level
+    assert ".node.focused" in TEMPLATE
+    assert 'id="btn-clear-focus"' in html
+    assert "computeFocusDistances" in TEMPLATE
+    assert "FOCUS_OPACITY" in TEMPLATE
+
+    # capability 3: collapsible legend panel, persisted across a refresh
+    assert 'id="legend-toggle"' in html
+    assert 'id="legend-body"' in html
+    assert "localStorage.setItem(LEGEND_COLLAPSE_KEY" in TEMPLATE
+    assert "localStorage.getItem(LEGEND_COLLAPSE_KEY" in TEMPLATE
+    # node colours and edge descriptions come from the shared constants, not
+    # a second hardcoded list
+    assert '"nodeDesc"' in html and '"edgeDesc"' in html
+    for edge_type in (
+        "CONTAINS",
+        "DEFINES",
+        "IMPORTS",
+        "CALLS",
+        "CALLS_EXTERNAL",
+        "INHERITS",
+        "CO_CHANGE",
+    ):
+        assert edge_type in html
