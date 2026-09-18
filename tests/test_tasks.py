@@ -137,6 +137,55 @@ def test_a_task_is_retrievable_by_id(tmp_path):
     assert tasks.get("not-a-real-id") is None
 
 
+class RecordingLock:
+    """A drop-in for threading.Lock (which rejects attribute assignment,
+    ISS-109's test can't monkeypatch its bound methods) that counts how many
+    times it was actually held."""
+
+    def __init__(self):
+        self._real = threading.Lock()
+        self.acquisitions = 0
+
+    def acquire(self, *a, **k):
+        self.acquisitions += 1
+        return self._real.acquire(*a, **k)
+
+    def release(self):
+        self._real.release()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.release()
+
+
+def test_run_success_writes_task_state_under_the_lock(tmp_path):
+    """ISS-109: task.status/finished_at on the success path must be set while
+    holding self._lock, like every other mutator in TaskManager."""
+    builder = Builder(block=True)
+    tasks = manager(builder)
+    task = tasks.start(tmp_path / "repo", tmp_path / "out")
+    recorder = tasks._lock = RecordingLock()
+
+    builder.release.set()
+    assert wait_for(lambda: task.status == READY)
+    assert recorder.acquisitions >= 1, "task.status/finished_at were set without self._lock"
+
+
+def test_run_failure_writes_task_state_under_the_lock(tmp_path):
+    """ISS-109: same for the except branch -- task.error/status/finished_at."""
+    builder = Builder(fail=RuntimeError("boom"), block=True)
+    tasks = manager(builder)
+    task = tasks.start(tmp_path / "repo", tmp_path / "out")
+    recorder = tasks._lock = RecordingLock()
+
+    builder.release.set()
+    assert wait_for(lambda: task.status == FAILED)
+    assert recorder.acquisitions >= 1, "task.error/status/finished_at were set without self._lock"
+
+
 def test_the_estimator_failing_does_not_stop_the_build(tmp_path):
     def boom(repo):
         raise OSError("cannot walk")

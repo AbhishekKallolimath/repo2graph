@@ -5,6 +5,7 @@ import itertools
 import os
 import re
 import subprocess
+import sys
 from collections import Counter, defaultdict
 from dataclasses import asdict
 from pathlib import Path
@@ -17,6 +18,17 @@ PARALLEL_MIN_FILES = 64
 # commits would buffer gigabytes. Co-change signal saturates long before this,
 # so cap the window and record when we did.
 MAX_COCHANGE_COMMITS = 5000
+# Independent of MAX_COCHANGE_COMMITS (ISS-82): that bounds how many commits
+# are requested, but a single pathological commit -- a vendor import touching
+# hundreds of thousands of files -- can still emit an unbounded blob of paths
+# within that commit count. Enforced during the read, not after a full
+# capture_output() buffer has already grown past it.
+MAX_COCHANGE_BYTES = 10 * 1024 * 1024  # 10 MB
+# max_files bounds file count and is opt-in; nobody has to remember to pass
+# it. This is not a hard cap (ISS-85 asks for a soft one) -- past this many
+# nodes or edges a build just tells the operator on stderr, once, that memory
+# use is growing unbounded and how to bound it.
+LARGE_GRAPH_WARN_THRESHOLD = 50_000
 
 
 class Graph:
@@ -39,6 +51,7 @@ class Graph:
         # incremental build must produce byte-identical artifacts to a full one,
         # and a hit/miss count differs by construction between the two.
         self.incremental: dict[str, int] | None = None
+        self._warned_large = False
 
     def add_node(self, nid: str, **attrs):
         if nid in self.nodes:
@@ -54,6 +67,7 @@ class Graph:
             )
         else:
             self.nodes[nid] = dict(id=nid, **attrs)
+        self._warn_if_large()
         return nid
 
     def add_edge(self, src: str, dst: str, etype: str, **attrs):
@@ -63,6 +77,22 @@ class Graph:
         self._edge_seen.add(key)
         self.edges.append(dict(src=src, dst=dst, type=etype, **attrs))
         self.stats[f"edge:{etype}"] += 1
+        self._warn_if_large()
+
+    def _warn_if_large(self) -> None:
+        if self._warned_large:
+            return
+        if (
+            len(self.nodes) > LARGE_GRAPH_WARN_THRESHOLD
+            or len(self.edges) > LARGE_GRAPH_WARN_THRESHOLD
+        ):
+            self._warned_large = True
+            print(
+                f"repo2graph: warning: graph has grown past {LARGE_GRAPH_WARN_THRESHOLD} "
+                f"nodes/edges ({len(self.nodes)} nodes, {len(self.edges)} edges) with no "
+                "size limit set; pass max_files= to build() to bound memory use.",
+                file=sys.stderr,
+            )
 
 
 # ---------- import parsing ----------
@@ -805,12 +835,21 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
             return
     except (OSError, subprocess.SubprocessError):
         return
+    stdout = out.stdout
+    # ISS-82: MAX_COCHANGE_COMMITS bounds how many commits are requested, not
+    # how many bytes a single pathological commit's file list can still emit
+    # within that count. Bound what gets decoded and processed independently
+    # of the commit count, and record it -- same "cap and record when we did"
+    # idiom as MAX_COCHANGE_COMMITS above.
+    if len(stdout) > MAX_COCHANGE_BYTES:
+        g.stats["cochange_output_capped"] = len(stdout)
+        stdout = stdout[:MAX_COCHANGE_BYTES]
     pairs: Counter = Counter()
     current: list[str] = []
     # split("\n"), not splitlines(): with core.quotepath=false git emits paths
     # containing U+2028/U+2029/U+0085 raw, and splitlines() would cut such a path
     # in two so it never matches file_index (same bug class as ISS-22).
-    for line in out.stdout.decode("utf8", "surrogateescape").split("\n") + [""]:
+    for line in stdout.decode("utf8", "surrogateescape").split("\n") + [""]:
         line = line.rstrip("\r")
         if not line:
             if 1 < len(current) <= 25:

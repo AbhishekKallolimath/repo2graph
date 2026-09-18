@@ -67,6 +67,21 @@ def _conf(text: str, edge: dict) -> str:
     return text if c >= 1.0 else f"{text} (confidence {c})"
 
 
+def _neighbour_edge(target: str, edge: dict, direction: str) -> dict:
+    """Structured form of a callers/callees/bases entry.
+
+    Additive sibling of the callers/callees/callees_external string lists --
+    same targets, plus the edge type, direction and (only when < 1.0, to keep
+    the common case small) confidence. IMPORTS/DEFINES/INHERITS edges carry no
+    confidence key, so they fall through the 1.0 default and are never flagged.
+    """
+    d = {"target": target, "edge_type": edge["type"], "edge_direction": direction}
+    c = edge.get("confidence", 1.0)
+    if c < 1.0:
+        d["confidence"] = c
+    return d
+
+
 def build_chunks(g, include_files: bool = True) -> list[dict]:
     """All retrieval chunks as a list (stable public API)."""
     return list(iter_chunks(g, include_files))
@@ -124,7 +139,8 @@ def iter_chunks(g, include_files: bool = True):
             for e in out_edges[nid]
             if e["type"] == "CALLS_EXTERNAL"
         ][:MAX_EXT_CALLS]
-        bases = [label(e["dst"]) for e in out_edges[nid] if e["type"] == "INHERITS"][:MAX_BASES]
+        base_out = [e for e in out_edges[nid] if e["type"] == "INHERITS"][:MAX_BASES]
+        bases = [label(e["dst"]) for e in base_out]
         # a call to an overloaded name fans out to every candidate at 1/n
         # confidence; say so in the header, or a reader follows the wrong edge
         # believing it is the only one.
@@ -132,6 +148,15 @@ def iter_chunks(g, include_files: bool = True):
         # above, so a length mismatch is a bug, not something to silently truncate.
         out_conf = [_conf(t, e) for t, e in zip(callees, call_out, strict=True)]
         in_conf = [_conf(t, e) for t, e in zip(callers, call_in, strict=True)]
+        callee_edges = [
+            _neighbour_edge(t, e, "outbound") for t, e in zip(callees, call_out, strict=True)
+        ]
+        caller_edges = [
+            _neighbour_edge(t, e, "inbound") for t, e in zip(callers, call_in, strict=True)
+        ]
+        base_edges = [
+            _neighbour_edge(t, e, "outbound") for t, e in zip(bases, base_out, strict=True)
+        ]
         header = [
             f"# file: {n['path']}",
             f"# {n['kind']}: {n['qualname']}  (lines {n['start_line']}-{n['end_line']}, {n['lang']})",
@@ -164,6 +189,9 @@ def iter_chunks(g, include_files: bool = True):
                 "callers": callers,
                 "callees": callees,
                 "callees_external": ext,
+                "caller_edges": caller_edges,
+                "callee_edges": callee_edges,
+                "base_edges": base_edges,
                 "text": "\n".join(header) + "\n" + part,
             }
         pending[n["path"]] -= 1
@@ -232,5 +260,8 @@ def iter_chunks(g, include_files: bool = True):
                 "callers": [],
                 "callees": [],
                 "callees_external": [],
+                "caller_edges": [],
+                "callee_edges": [],
+                "base_edges": [],
                 "text": "\n".join(header) + "\n" + part,
             }
