@@ -46,6 +46,31 @@ workflow's OIDC token, so there is no account to create and no secret to store.
 The namespace `io.github.Srinivasan-78/*` is yours automatically because it
 matches the repo owner.
 
+### 4. GitHub Marketplace listing is manual, and does not survive automation
+
+`publish.yml`'s `release` job creates every GitHub Release via `gh release
+create`. Neither the GitHub REST API nor the `gh` CLI exposes the "Publish
+this Action to the GitHub Marketplace" flag — that checkbox exists only on
+GitHub's own **Draft a new release** web page. An automated release can never
+create or renew a Marketplace listing, no matter how `publish.yml` is
+written; this is a GitHub platform limitation, not a bug in this repo's
+pipeline.
+
+Practical consequence: if `repo2graph` needs to be (re-)listed on the
+Marketplace, do it by hand, once, against whatever tag is current:
+
+1. Go to **Releases** → find the release for the current tag (e.g. the
+   latest `vX.Y.Z` `publish.yml` created) → **Edit release** (pencil icon).
+2. Check **"Publish this Action to the GitHub Marketplace"**.
+3. Pick a primary category (and a second one if relevant) — required the
+   first time a listing is created.
+4. Save. This re-publishes the *existing* release; it does not create a new
+   tag or trigger `publish.yml`, so it's safe to do at any time independent
+   of a version bump.
+
+There is no way to script step 2 onward; it requires being logged in as the
+repo owner (or an org member with the right role) in a browser.
+
 ---
 
 ## Cutting a release
