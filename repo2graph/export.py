@@ -4,6 +4,7 @@ import json
 import math
 import os
 import random
+import subprocess
 import threading
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
@@ -507,6 +508,146 @@ def write_overview(g, path: Path, top: int = 25):
         fh.write("\n".join(out))
 
 
+def _git_short_sha(root) -> str | None:
+    """The short commit `root` was built at, or None outside a git repo.
+
+    Same subprocess pattern as graph.add_cochange / walker._git_files (see
+    AGENTS.md): quotepath=false, bytes decoded with surrogateescape (never
+    text=True -- a Windows cp1252 locale raises UnicodeDecodeError on any
+    non-ASCII byte), stdin closed, bounded timeout. Any failure -- not a repo,
+    no git on PATH, a slow filesystem -- just omits the "Built at" row.
+    """
+    try:
+        out = subprocess.run(
+            [
+                "git",
+                "-c",
+                "core.quotepath=false",
+                "-C",
+                str(root),
+                "rev-parse",
+                "--short",
+                "HEAD",
+            ],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    sha = out.stdout.decode("utf8", "surrogateescape").split("\n")[0].strip()
+    return sha or None
+
+
+_SKIP_STAT_LABELS = (
+    ("skipped_binary", "binary files"),
+    ("skipped_too_large", "files over 1.5 MB"),
+    ("skipped_vendor", "vendor/build folders"),
+    ("skipped_dotfile", "dotfiles"),
+    ("skipped_gitignore", ".gitignore entries"),
+)
+
+
+def write_overview_human(g, path: Path, top: int = 25):
+    """Structured, scannable repo map for `human/overview.md`.
+
+    Unlike `write_overview` (still the agent/overview.md prose, unchanged),
+    this reads edge-type and symbol-kind counts straight out of `g.stats`
+    rather than rescanning `g.nodes`/`g.edges`, per the repo convention that
+    `g.stats` is the single source of truth for those counts.
+    """
+    files = [n for n in g.nodes.values() if n["type"] == "file"]
+    langs = Counter(n.get("lang") for n in files)
+
+    indeg: Counter[str] = Counter()
+    dominant: dict[str, Counter[str]] = defaultdict(Counter)
+    for e in g.edges:
+        dst = e["dst"]
+        if g.nodes.get(dst, {}).get("type") == "file":
+            indeg[dst] += 1
+            dominant[dst][e["type"]] += 1
+
+    out = [f"# Repo overview: {g.name}", ""]
+
+    out += ["## At a glance", "", "| Metric | Value |", "| --- | --- |"]
+    out.append(f"| Files indexed | {len(files)} |")
+    out.append(f"| Functions | {g.stats.get('symbol:function', 0)} |")
+    out.append(f"| Classes | {g.stats.get('symbol:class', 0)} |")
+    out.append(f"| Total edges | {g.stats.get('edges', len(g.edges))} |")
+    lang_str = ", ".join(f"{k}={v}" for k, v in langs.most_common(12) if k) or "none detected"
+    out.append(f"| Languages | {lang_str} |")
+    sha = _git_short_sha(g.root)
+    if sha:
+        out.append(f"| Built at | {sha} |")
+    out.append("")
+
+    out.append("## Top 10 most-connected files (by in-degree)")
+    out.append("")
+    hubs = sorted((n for n in files if indeg[n["id"]]), key=lambda n: -indeg[n["id"]])[:10]
+    if hubs:
+        out += ["| Rank | File | In-degree | Dominant edge type |", "| --- | --- | --- | --- |"]
+        for i, n in enumerate(hubs, 1):
+            dom_type, _ = dominant[n["id"]].most_common(1)[0]
+            out.append(f"| {i} | {n['path']} | {indeg[n['id']]} | {dom_type} |")
+    else:
+        out.append("No file has an incoming edge yet.")
+    out.append("")
+
+    cochange = [e for e in g.edges if e["type"] == "CO_CHANGE"]
+    if cochange:
+        out.append("## CO_CHANGE hotspots")
+        out.append("")
+        out.append(
+            "These files are frequently edited together — treat as implicit "
+            "dependencies even if no CALLS edge exists."
+        )
+        out.append("")
+        out += ["| File A | File B | Co-change count |", "| --- | --- | --- |"]
+        for e in sorted(cochange, key=lambda e: -e.get("count", 0))[:5]:
+            a = g.nodes.get(e["src"], {}).get("path", e["src"])
+            b = g.nodes.get(e["dst"], {}).get("path", e["dst"])
+            out.append(f"| {a} | {b} | {e.get('count', 0)} |")
+        out.append("")
+
+    out.append("## Edge type breakdown")
+    out.append("")
+    edge_counts = sorted(
+        ((k[len("edge:") :], v) for k, v in g.stats.items() if k.startswith("edge:")),
+        key=lambda kv: -kv[1],
+    )
+    total_edges = sum(v for _, v in edge_counts)
+    if edge_counts:
+        out += ["| Edge type | Count | % of total |", "| --- | --- | --- |"]
+        for etype, count in edge_counts:
+            pct = (count / total_edges * 100) if total_edges else 0.0
+            out.append(f"| {etype} | {count} | {pct:.1f}% |")
+    else:
+        out.append("No edges were recorded.")
+    out.append("")
+
+    skip_bullets = [
+        f"- {label}: {g.stats[key]}" for key, label in _SKIP_STAT_LABELS if g.stats.get(key)
+    ]
+    if skip_bullets:
+        out.append("## What was skipped")
+        out.append("")
+        out += skip_bullets
+        out.append("")
+
+    out.append("## How to explore")
+    out.append("")
+    out.append("```")
+    out.append("open .r2g/human/graph.html        # interactive picture")
+    out.append('repo2graph query -o .r2g "your question here"   # ask a question')
+    out.append("repo2graph stats -o .r2g          # full stats")
+    out.append("```")
+
+    with atomic_write(path, "w", encoding="utf8", newline="\n") as fh:
+        fh.write("\n".join(out) + "\n")
+
+
 NODE_TYPES = {
     "repo": "the repository itself; one per index",
     "dir": "a directory",
@@ -744,12 +885,14 @@ def dump_all(g, chunks, outdir: Path, formats: set[str], viz_nodes: int = MAX_NO
     if "cypher" in formats:
         write_cypher(g, out("graph.cypher")[0])
     if "overview" in formats:
-        first, *copies = out("overview.md")
-        write_overview(g, first)
-        text = first.read_text(encoding="utf8")
-        for extra in copies:  # the same map, one per section
-            with atomic_write(extra, "w", encoding="utf8", newline="\n") as fh:
-                fh.write(text)
+        # SECTIONS["overview.md"] = (HUMAN_DIR, AGENT_DIR): human/ gets the
+        # structured, scannable map for a person; agent/ keeps the terse prose
+        # write_overview has always produced -- GraphRAG's repo-map protocol
+        # (query.Index.overview / pack_context) reads the agent copy and must
+        # not see the new tables.
+        human, agent = out("overview.md")
+        write_overview_human(g, human)
+        write_overview(g, agent)
     if "html" in formats:
         write_html(g, out("graph.html")[0], viz_nodes)
     with atomic_write(out("stats.json")[0], "w", encoding="utf8", newline="\n") as fh:

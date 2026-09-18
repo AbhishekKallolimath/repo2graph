@@ -335,6 +335,43 @@ def is_binary(path: Path) -> bool:
         return True
 
 
+def _count_gitignored(root: Path) -> int:
+    """How many untracked files .gitignore (or another exclude-standard rule)
+    kept out of _git_files' listing.
+
+    Purely a count for the human overview's "what was skipped" section --
+    `_git_files` already applies `--exclude-standard` itself, so these files
+    never reach `discover()`'s loop below and this never changes what is
+    yielded. Same subprocess pattern as `_git_files`: quotepath=false, bytes
+    decoded with surrogateescape (never text=True -- see AGENTS.md), bounded
+    timeout.
+    """
+    try:
+        out = subprocess.run(
+            [
+                "git",
+                "-c",
+                "core.quotepath=false",
+                "-C",
+                str(root),
+                "ls-files",
+                "-z",
+                "--others",
+                "--ignored",
+                "--exclude-standard",
+            ],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=60,
+        )
+        if out.returncode != 0:
+            return 0
+        names = out.stdout.decode("utf8", "surrogateescape").split("\0")
+        return sum(1 for n in names if n)
+    except (OSError, subprocess.SubprocessError):
+        return 0
+
+
 def discover(
     root: Path,
     include_globs=None,
@@ -354,6 +391,7 @@ def discover(
     if files is not None:
         if stats is not None:
             stats["discovery"] = "git"
+            stats["skipped_gitignore"] = _count_gitignored(root)
     else:
         files = _walk_files(root, skip_dirs=skip_dirs)
         if stats is not None:
@@ -363,7 +401,15 @@ def discover(
             rel = abspath.relative_to(root)
         except ValueError:
             continue
-        if any(part in skip_dirs for part in rel.parts):
+        # A skip_dirs hit is either a hidden/dot directory (.git, .idea, ...)
+        # or a vendor/build directory (node_modules, dist, target, ...); tell
+        # the two apart for the human overview's "what was skipped" section,
+        # without changing which paths get skipped.
+        skip_part = next((part for part in rel.parts if part in skip_dirs), None)
+        if skip_part is not None:
+            if stats is not None:
+                key = "skipped_dotfile" if skip_part.startswith(".") else "skipped_vendor"
+                stats[key] += 1
             continue
         try:
             st = abspath.lstat()
@@ -373,6 +419,8 @@ def discover(
             if st.st_size > config.max_file_bytes and config.chunk_large_files:
                 pass
             else:
+                if stats is not None and st.st_size > config.max_file_bytes:
+                    stats["skipped_too_large"] += 1
                 continue
         rp = rel.as_posix()
         if include_globs and not matches_any(rp, include_globs):
@@ -380,6 +428,8 @@ def discover(
         if exclude_globs and matches_any(rp, exclude_globs):
             continue
         if is_binary(abspath):
+            if stats is not None:
+                stats["skipped_binary"] += 1
             continue
         yield rp, abspath
 

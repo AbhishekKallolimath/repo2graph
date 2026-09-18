@@ -313,7 +313,12 @@ def test_ac1_adjacency_entries_are_four_tuples_with_edge_records(rag_index):
 
 def test_ac2_overview_is_loaded_and_absence_is_graceful(rag_out, bare_out):
     """AC-2: Index.overview mirrors agent/overview.md; missing file -> ""."""
-    with open(artifact_path(rag_out, "overview.md"), encoding="utf8", newline="\n") as fh:
+    # human/overview.md and agent/overview.md now carry different content (the
+    # human copy is the structured table view, the agent copy is the prose
+    # GraphRAG's protocol is built around) -- read the agent copy explicitly,
+    # matching what Index.overview is documented to mirror.
+    agent_overview = artifact_paths(rag_out, "overview.md")[1]
+    with open(agent_overview, encoding="utf8", newline="\n") as fh:
         on_disk = fh.read()
     assert Index(rag_out).overview.strip() == on_disk.strip()
     assert not artifact_path(bare_out, "overview.md").exists()

@@ -299,8 +299,19 @@ class Index:
         newline="\n" for the same reason read_jsonl uses it: universal-newline
         mode rewrites U+2028/U+2029/U+0085 line ends and would desync the text
         from what was written.
+
+        overview.md is the one artifact split across two sections with
+        different content: human/overview.md is the structured table view for
+        a person, agent/overview.md is the terse prose the GraphRAG protocol
+        (and this repo map) are built around. Try the agent copy first so
+        pack_context/rag output keeps reading the prose; fall back to human/
+        only when agent/overview.md is missing, e.g. a hand-built fixture that
+        writes just one copy.
         """
-        for p in artifact_paths(self.dir, name):
+        paths = artifact_paths(self.dir, name)
+        if name == "overview.md" and len(paths) > 1:
+            paths = list(reversed(paths))
+        for p in paths:
             try:
                 with open(p, encoding="utf8", newline="\n") as fh:
                     return fh.read()
