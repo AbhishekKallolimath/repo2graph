@@ -538,6 +538,10 @@ def test_manifest_usage_hints_are_present_and_non_empty(tmp_path, sample_repo):
     }
     assert "1.0" in hints["confidence_semantics"]
     assert "lt_1.0" in hints["confidence_semantics"]
+    node_id_format = hints["tool_decision_tree"]["node_id_format"]
+    assert "base_edges" in node_id_format
+    assert "caller_edges/callee_edges/base_edges target" in node_id_format
+    assert "prefix 'sym:'" in node_id_format
 
 
 def test_chunks_separate_in_repo_and_external_calls(tmp_path, sample_repo):
@@ -655,6 +659,30 @@ def test_stats_json_carries_hub_nodes_languages_and_schema_version(tmp_path, sam
     degrees = [n["in_degree"] for n in stats["top_hub_nodes"]]
     assert degrees == sorted(degrees, reverse=True)
     assert "co_change_hotspots" not in stats  # no --git-history: nothing to report
+
+
+def test_stats_json_top_hub_nodes_excludes_external_modules():
+    from repo2graph.export import _stats_extra
+    from repo2graph.graph import Graph
+
+    g = Graph(Path("."), "x")
+    g.add_node("file:app.py", type="file", path="app.py")
+    g.add_node("file:utils.py", type="file", path="utils.py")
+    g.add_node("module:json", type="module", name="json", external=True)
+    g.add_node("module:os", type="module", name="os", external=True)
+
+    for i in range(5):
+        fid = f"file:src{i}.py"
+        g.add_node(fid, type="file", path=f"src{i}.py")
+        g.add_edge(fid, "module:json", "IMPORTS")
+        if i < 4:
+            g.add_edge(fid, "module:os", "IMPORTS")
+        if i < 2:
+            g.add_edge(fid, "file:utils.py", "IMPORTS")
+
+    extra = _stats_extra(g)
+    hub_ids = [n["node_id"] for n in extra["top_hub_nodes"]]
+    assert hub_ids == ["file:utils.py"]
 
 
 def test_stats_json_cochange_hotspots_and_built_at_commit(tmp_path):
@@ -2174,6 +2202,34 @@ def test_add_cochange_no_stat_when_output_is_within_the_byte_cap(monkeypatch):
     assert "cochange_output_capped" not in g.stats
 
 
+def test_add_cochange_byte_cap_drops_trailing_partial_commit(monkeypatch):
+    """When stdout exceeds MAX_COCHANGE_BYTES, the cut truncates the oldest
+    commit block. If that commit originally touched > 25 files (a noise commit),
+    truncating it must not leave a surviving slice (<= 25 files) that emits
+    spurious CO_CHANGE pairs."""
+    import repo2graph.graph as graphmod
+    from repo2graph.graph import Graph, add_cochange
+
+    c1 = b"H1\nf0.py\nf1.py\n\n"
+    noise_files = [f"noise{i}.py" for i in range(30)]
+    c2 = b"H2\n" + b"\n".join(f.encode() for f in noise_files) + b"\n\n"
+    cap = len(c1) + 40
+    monkeypatch.setattr(graphmod, "MAX_COCHANGE_BYTES", cap)
+
+    class _Res:
+        returncode = 0
+        stdout = c1 + c2
+
+    monkeypatch.setattr(graphmod.subprocess, "run", lambda *a, **k: _Res())
+    g = Graph(Path("."), "x")
+    add_cochange(g, Path("."), 1, {"f0.py", "f1.py", *noise_files}, min_pairs=1)
+
+    co_edges = [e for e in g.edges if e["type"] == "CO_CHANGE"]
+    assert len(co_edges) == 1
+    assert co_edges[0]["src"] == "file:f0.py"
+    assert co_edges[0]["dst"] == "file:f1.py"
+
+
 def test_graph_warns_once_past_the_large_graph_threshold(monkeypatch, capsys):
     """ISS-85: no hard cap (max_files stays opt-in), but a build nobody bounded
     gets exactly one stderr warning once it grows past the threshold."""
@@ -2185,6 +2241,19 @@ def test_graph_warns_once_past_the_large_graph_threshold(monkeypatch, capsys):
         g.add_node(f"file:{i}", type="file")
     err = capsys.readouterr().err
     assert err.count("warning: graph has grown past") == 1
+    assert "with no size limit set; pass max_files= to build() to bound memory use." in err
+
+
+def test_graph_warns_with_max_files_context(monkeypatch, capsys):
+    from repo2graph.graph import Graph
+
+    monkeypatch.setattr("repo2graph.graph.LARGE_GRAPH_WARN_THRESHOLD", 5)
+    g = Graph(Path("."), "x", max_files=100)
+    for i in range(10):
+        g.add_node(f"file:{i}", type="file")
+    err = capsys.readouterr().err
+    assert "(max_files=100)." in err
+    assert "no size limit set" not in err
 
 
 def test_graph_stays_quiet_under_the_large_graph_threshold(capsys):
