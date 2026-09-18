@@ -32,8 +32,9 @@ LARGE_GRAPH_WARN_THRESHOLD = 50_000
 
 
 class Graph:
-    def __init__(self, root: Path, name: str):
+    def __init__(self, root: Path, name: str, max_files: int = 0):
         self.root, self.name = root, name
+        self.max_files = max_files
         self.nodes: dict[str, dict] = {}
         self.edges: list[dict] = []
         self._edge_seen: set[tuple] = set()
@@ -87,12 +88,15 @@ class Graph:
             or len(self.edges) > LARGE_GRAPH_WARN_THRESHOLD
         ):
             self._warned_large = True
-            print(
+            msg = (
                 f"repo2graph: warning: graph has grown past {LARGE_GRAPH_WARN_THRESHOLD} "
-                f"nodes/edges ({len(self.nodes)} nodes, {len(self.edges)} edges) with no "
-                "size limit set; pass max_files= to build() to bound memory use.",
-                file=sys.stderr,
+                f"nodes/edges ({len(self.nodes)} nodes, {len(self.edges)} edges)"
             )
+            if self.max_files > 0:
+                msg += f" (max_files={self.max_files})."
+            else:
+                msg += " with no size limit set; pass max_files= to build() to bound memory use."
+            print(msg, file=sys.stderr)
 
 
 # ---------- import parsing ----------
@@ -545,7 +549,7 @@ def build(
     """
     max_call_candidates = max(1, max_call_candidates)
     root = Path(root).resolve()
-    g = Graph(root, root.name)
+    g = Graph(root, root.name, max_files=max_files)
     repo_id = f"repo:{root.name}"
     g.add_node(repo_id, type="repo", name=root.name, path=".")
 
@@ -843,7 +847,12 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
     # idiom as MAX_COCHANGE_COMMITS above.
     if len(stdout) > MAX_COCHANGE_BYTES:
         g.stats["cochange_output_capped"] = len(stdout)
-        stdout = stdout[:MAX_COCHANGE_BYTES]
+        # Drop the trailing partial commit: git log delimits commits with a blank
+        # line ("\n\n"). Truncating at an arbitrary byte count cuts into the oldest
+        # commit block, and flushing whatever is in current at end-of-input can turn
+        # a >25 file noise commit into a small (<25) co-change signal.
+        cutoff = stdout.rfind(b"\n\n", 0, MAX_COCHANGE_BYTES)
+        stdout = stdout[: cutoff + 2] if cutoff != -1 else b""
     pairs: Counter = Counter()
     current: list[str] = []
     # split("\n"), not splitlines(): with core.quotepath=false git emits paths

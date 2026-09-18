@@ -723,8 +723,9 @@ TOOL_DECISION_TREE = {
     ),
     "node_id_format": (
         "sym:pkg/relative/path.py::function_name -- read the 'id' field off "
-        "nodes.jsonl, or a chunk's node_id/caller_edges/callee_edges target, "
-        "to construct one."
+        "nodes.jsonl or a chunk's node_id directly; or take a chunk's "
+        "caller_edges/callee_edges/base_edges target (which is a bare "
+        "path::qualname) and prefix 'sym:' to construct one."
     ),
 }
 
@@ -841,9 +842,10 @@ def _stats_extra(g) -> dict:
     for e in g.edges:
         if e["type"] in ("IMPORTS", "CALLS"):
             indeg[e["dst"]] += 1
-    hubs = sorted((n for n in g.nodes.values() if indeg[n["id"]]), key=lambda n: -indeg[n["id"]])[
-        :10
-    ]
+    hubs = sorted(
+        (n for n in g.nodes.values() if n["type"] in ("file", "symbol") and indeg[n["id"]]),
+        key=lambda n: -indeg[n["id"]],
+    )[:10]
     extra: dict = {
         "top_hub_nodes": [
             {
