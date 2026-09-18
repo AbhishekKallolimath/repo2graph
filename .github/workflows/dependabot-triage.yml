@@ -1,0 +1,26 @@
+name: Dependabot triage
+
+# Used to auto-merge minor/patch dependabot PRs with no human review -- main's
+# branch protection requires only the `reuse` license-compliance check, so
+# "auto-merge" here meant zero eyes on the diff before it landed. This now
+# only labels and flags the update type; a human decides whether to merge.
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  triage:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98  # v3.1.0
+        id: meta
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+      - run: |
+          gh pr edit "$PR_URL" --add-label needs-review
+          gh pr comment "$PR_URL" --body "dependabot update-type: \`$UPDATE_TYPE\`. Auto-merge is disabled -- please review and merge manually."
+        env:
+          GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
