@@ -96,6 +96,17 @@ def cmd_build(args):
     )
     cache = load_parse_cache(outdir) if getattr(args, "incremental", False) else None
 
+    # Snapshot the previous build's nodes/edges before dump_all overwrites
+    # them below -- CHANGELOG.md (written after dump_all, when "overview" is
+    # requested) diffs the graph just built against this.
+    from .changelog import previous_state, resolve_shas, write_changelog
+
+    prev_state = previous_state(outdir)
+    write_human_changelog = "overview" in formats
+    short_sha = prev_short_sha = None
+    if write_human_changelog:
+        short_sha, prev_short_sha = resolve_shas(repo_path, outdir)
+
     g = build(
         repo_path,
         include=args.include,
@@ -109,6 +120,10 @@ def cmd_build(args):
     )
     chunks = None if args.no_chunks else iter_chunks(g)
     written, n_chunks = dump_all(g, chunks, outdir, formats, args.viz_nodes)
+    if write_human_changelog:
+        from datetime import date
+
+        write_changelog(outdir, g, prev_state, short_sha, prev_short_sha, date.today().isoformat())
     report = {"out": str(outdir), "written": written, "stats": dict(g.stats), "chunks": n_chunks}
     if g.incremental is not None:
         report["incremental"] = g.incremental

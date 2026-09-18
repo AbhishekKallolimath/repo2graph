@@ -463,6 +463,7 @@ def test_output_is_split_into_human_and_agent_sections(tmp_path, sample_repo, ca
     out = tmp_path / "idx"
     main(["build", str(sample_repo), "-o", str(out)])
     assert sorted(p.name for p in (out / "human").iterdir()) == [
+        "CHANGELOG.md",
         "graph.graphml",
         "graph.html",
         "overview.md",
@@ -557,11 +558,58 @@ def test_graphml_carries_yfiles_layout(tmp_path, sample_repo):
 
 
 def test_overview_lists_hubs(tmp_path, sample_repo):
+    """human/overview.md gets the new structured map (artifact_path resolves human/)."""
     out = tmp_path / "idx"
     main(["build", str(sample_repo), "-o", str(out), "--formats", "overview"])
     text = (artifact_path(out, "overview.md")).read_text()
-    assert "# Repo map:" in text
+    assert "# Repo overview:" in text
+    assert "## At a glance" in text
     assert "pkg/util.py" in text
+
+
+def test_write_overview_human_at_a_glance_matches_graph_stats(tmp_path, sample_graph):
+    """New human/overview.md: structured sections whose numbers come from g.stats."""
+    from repo2graph.export import write_overview_human
+
+    out_path = tmp_path / "overview.md"
+    write_overview_human(sample_graph, out_path)
+    text = out_path.read_text(encoding="utf8")
+
+    assert "## At a glance" in text
+    assert "| Metric | Value |" in text
+    files = [n for n in sample_graph.nodes.values() if n["type"] == "file"]
+    assert f"| Files indexed | {len(files)} |" in text
+    assert f"| Functions | {sample_graph.stats.get('symbol:function', 0)} |" in text
+    assert f"| Classes | {sample_graph.stats.get('symbol:class', 0)} |" in text
+    total_edges = sample_graph.stats.get("edges", len(sample_graph.edges))
+    assert f"| Total edges | {total_edges} |" in text
+
+    assert "## Top 10 most-connected files (by in-degree)" in text
+    # helper() is imported and called from main.py, so util.py has incoming edges
+    assert "pkg/util.py" in text.split("## Top 10 most-connected files")[1]
+
+
+def test_agent_overview_keeps_the_old_prose_format(tmp_path, sample_repo, sample_graph):
+    """agent/overview.md must stay byte-for-byte what write_overview() produces today."""
+    from repo2graph.export import write_overview
+
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out), "--formats", "overview"])
+    agent_text = (out / "agent" / "overview.md").read_text(encoding="utf8")
+    human_text = (out / "human" / "overview.md").read_text(encoding="utf8")
+
+    assert agent_text.startswith("# Repo map:")
+    assert "## Most depended-on files" in agent_text
+    assert "## Most called symbols" in agent_text
+    assert "## At a glance" not in agent_text
+
+    assert human_text.startswith("# Repo overview:")
+    assert "## At a glance" in human_text
+    assert agent_text != human_text
+
+    direct_path = tmp_path / "direct_overview.md"
+    write_overview(sample_graph, direct_path)
+    assert agent_text == direct_path.read_text(encoding="utf8")
 
 
 # ---------- html map ----------
@@ -1214,8 +1262,16 @@ def test_action_yml_and_ci_artifact_paths_match_the_layout():
     assert f"{HUMAN_DIR}/overview.md" in rels("overview.md")
     assert f"{AGENT_DIR}/chunks.jsonl" in rels("chunks.jsonl")
     assert f"{HUMAN_DIR}/graph.html" in rels("graph.html")
+    assert f"{AGENT_DIR}/stats.json" in rels("stats.json")
+    assert f"{AGENT_DIR}/nodes.jsonl" in rels("nodes.jsonl")
+    assert f"{AGENT_DIR}/edges.jsonl" in rels("edges.jsonl")
 
-    assert '"$R2G_OUT/human/overview.md"' in action
+    # the "Write job summary" step feeds .github/scripts/summary.py the agent
+    # artifacts, not overview.md -- that hand-off is now index-repo.yml's alone
+    assert '"$R2G_OUT/agent/stats.json"' in action
+    assert '"$R2G_OUT/agent/nodes.jsonl"' in action
+    assert '"$R2G_OUT/agent/edges.jsonl"' in action
+    assert '"$R2G_OUT/human/CHANGELOG.md"' in action
     assert '"out/$slug/human/overview.md"' in index_repo
     assert ".r2g/human/graph.html" in ci
     assert ".r2g/agent/chunks.jsonl" in ci

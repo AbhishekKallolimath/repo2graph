@@ -181,18 +181,27 @@ runs:
         print(f"edges={s.get('edges', 0)}")
         print(f"chunks={d.get('chunks', 0)}")
         PY
-        {
-          echo "### repo2graph"
-          echo
-          # overview.md only exists when 'overview' is one of the formats
-          if [ -f "$R2G_OUT/human/overview.md" ]; then
-            sed -n '1,40p' "$R2G_OUT/human/overview.md"
-          else
-            echo '```json'
-            cat "$SUMMARY_FILE"
-            echo '```'
-          fi
-        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Write job summary
+      shell: bash
+      # A small stdlib-only script, not inlined here, so it stays unit-testable
+      # on its own (tests/test_summary_script.py runs it directly against mock
+      # artifacts). It reads agent/{stats.json,nodes.jsonl,edges.jsonl} and the
+      # optional human/CHANGELOG.md and prints Markdown to stdout; this step is
+      # the only thing that redirects that output into $GITHUB_STEP_SUMMARY, so
+      # the script itself never has to know it is running in CI.
+      env:
+        R2G_OUT: ${{ inputs.out }}
+        R2G_ARTIFACT_NAME: ${{ inputs.artifact-name }}
+      run: |
+        set -euo pipefail
+        python "$GITHUB_ACTION_PATH/.github/scripts/summary.py" \
+          --stats "$R2G_OUT/agent/stats.json" \
+          --nodes "$R2G_OUT/agent/nodes.jsonl" \
+          --edges "$R2G_OUT/agent/edges.jsonl" \
+          --changelog "$R2G_OUT/human/CHANGELOG.md" \
+          --artifact-name "$R2G_ARTIFACT_NAME" \
+          >> "$GITHUB_STEP_SUMMARY"
 
     - name: Embed the chunks
       if: ${{ inputs.embed == 'true' }}
