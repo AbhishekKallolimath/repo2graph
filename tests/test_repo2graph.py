@@ -2230,6 +2230,31 @@ def test_add_cochange_byte_cap_drops_trailing_partial_commit(monkeypatch):
     assert co_edges[0]["dst"] == "file:f1.py"
 
 
+def test_add_cochange_byte_cap_drops_trailing_partial_commit_crlf(monkeypatch):
+    """Ensure the cochange byte cap correctly handles Windows CRLF output (\r\n\r\n)."""
+    import repo2graph.graph as graphmod
+    from repo2graph.graph import Graph, add_cochange
+
+    c1 = b"H1\r\nf0.py\r\nf1.py\r\n\r\n"
+    noise_files = [f"noise{i}.py" for i in range(30)]
+    c2 = b"H2\r\n" + b"\r\n".join(f.encode() for f in noise_files) + b"\r\n\r\n"
+    cap = len(c1) + 40
+    monkeypatch.setattr(graphmod, "MAX_COCHANGE_BYTES", cap)
+
+    class _Res:
+        returncode = 0
+        stdout = c1 + c2
+
+    monkeypatch.setattr(graphmod.subprocess, "run", lambda *a, **k: _Res())
+    g = Graph(Path("."), "x")
+    add_cochange(g, Path("."), 1, {"f0.py", "f1.py", *noise_files}, min_pairs=1)
+
+    co_edges = [e for e in g.edges if e["type"] == "CO_CHANGE"]
+    assert len(co_edges) == 1
+    assert co_edges[0]["src"] == "file:f0.py"
+    assert co_edges[0]["dst"] == "file:f1.py"
+
+
 def test_graph_warns_once_past_the_large_graph_threshold(monkeypatch, capsys):
     """ISS-85: no hard cap (max_files stays opt-in), but a build nobody bounded
     gets exactly one stderr warning once it grows past the threshold."""

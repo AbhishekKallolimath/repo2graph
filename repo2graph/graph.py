@@ -848,11 +848,13 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
     if len(stdout) > MAX_COCHANGE_BYTES:
         g.stats["cochange_output_capped"] = len(stdout)
         # Drop the trailing partial commit: git log delimits commits with a blank
-        # line ("\n\n"). Truncating at an arbitrary byte count cuts into the oldest
+        # line ("\n\n" or "\r\n\r\n"). Truncating at an arbitrary byte count cuts into the oldest
         # commit block, and flushing whatever is in current at end-of-input can turn
         # a >25 file noise commit into a small (<25) co-change signal.
-        cutoff = stdout.rfind(b"\n\n", 0, MAX_COCHANGE_BYTES)
-        stdout = stdout[: cutoff + 2] if cutoff != -1 else b""
+        m = None
+        for m in re.finditer(rb"(\r?\n){2}", stdout[:MAX_COCHANGE_BYTES]):
+            pass
+        stdout = stdout[: m.end()] if m else b""
     pairs: Counter = Counter()
     current: list[str] = []
     # split("\n"), not splitlines(): with core.quotepath=false git emits paths
