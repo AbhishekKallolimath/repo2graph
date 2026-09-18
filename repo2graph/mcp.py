@@ -30,6 +30,7 @@ other call worth serving first. It happens once per process, and once on disk.
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 from . import __version__
 from .cache import DEFAULT_MAX_SIZE, DEFAULT_TTL, ResultCache
@@ -744,8 +745,10 @@ def serve(out, repo=None, cache=None, tasks=None) -> None:
         text = dispatch(index, name, arguments or {}, cache=cache, tasks=tasks)
         return [TextContent(type="text", text=text)]
 
+    server_cls: Any = Server
+    mcp_server: Any = None
     if supports_decorators:
-        mcp_server = Server(server.name, version=server.version)
+        mcp_server = server_cls(server.name, version=server.version)
         mcp_server.list_tools()(list_tools_handler)
         mcp_server.call_tool()(call_tool_handler)
     else:
@@ -758,14 +761,14 @@ def serve(out, repo=None, cache=None, tasks=None) -> None:
             return mcp.types.CallToolResult(content=content)
 
         try:
-            mcp_server = Server(
+            mcp_server = server_cls(
                 server.name,
-                version=server.version,  # type: ignore[call-arg]
+                version=server.version,
                 on_list_tools=list_tools_2x,
                 on_call_tool=call_tool_2x,
             )
         except TypeError:
-            mcp_server = Server(server.name, version=server.version)
+            mcp_server = server_cls(server.name, version=server.version)
 
     async def _run():
         async with stdio_server() as (read_stream, write_stream):
