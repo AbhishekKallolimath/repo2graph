@@ -1262,8 +1262,16 @@ def test_action_yml_and_ci_artifact_paths_match_the_layout():
     assert f"{HUMAN_DIR}/overview.md" in rels("overview.md")
     assert f"{AGENT_DIR}/chunks.jsonl" in rels("chunks.jsonl")
     assert f"{HUMAN_DIR}/graph.html" in rels("graph.html")
+    assert f"{AGENT_DIR}/stats.json" in rels("stats.json")
+    assert f"{AGENT_DIR}/nodes.jsonl" in rels("nodes.jsonl")
+    assert f"{AGENT_DIR}/edges.jsonl" in rels("edges.jsonl")
 
-    assert '"$R2G_OUT/human/overview.md"' in action
+    # the "Write job summary" step feeds .github/scripts/summary.py the agent
+    # artifacts, not overview.md -- that hand-off is now index-repo.yml's alone
+    assert '"$R2G_OUT/agent/stats.json"' in action
+    assert '"$R2G_OUT/agent/nodes.jsonl"' in action
+    assert '"$R2G_OUT/agent/edges.jsonl"' in action
+    assert '"$R2G_OUT/human/CHANGELOG.md"' in action
     assert '"out/$slug/human/overview.md"' in index_repo
     assert ".r2g/human/graph.html" in ci
     assert ".r2g/agent/chunks.jsonl" in ci
