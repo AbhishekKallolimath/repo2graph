@@ -157,8 +157,10 @@ class LoadedGraph:
         self.edges = read_jsonl(artifact_path(outdir, "edges.jsonl"))
         overview = artifact_path(outdir, "overview.md")
         if overview.exists():
+            # artifact_path resolves to human/overview.md, whose first line is
+            # write_overview_human's "# Repo overview: <name>" heading.
             first = overview.read_text(encoding="utf8").split("\n", 1)[0]
-            self.name = first.removeprefix("# Repo map:").strip() or self.name
+            self.name = first.removeprefix("# Repo overview:").strip() or self.name
         index = artifact_path(outdir, "index.json")
         if index.exists():
             try:
