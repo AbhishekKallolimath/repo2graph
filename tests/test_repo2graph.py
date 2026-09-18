@@ -2139,6 +2139,63 @@ def test_add_cochange_caps_the_history_window(monkeypatch):
     assert g.stats["cochange_history_capped"] == 10**9
 
 
+def test_add_cochange_caps_output_bytes_independent_of_commit_count(monkeypatch):
+    """ISS-82: MAX_COCHANGE_COMMITS bounds the commit count, not how many
+    bytes a single pathological commit's file list can still emit. A run that
+    returns a giant stdout must be truncated before it is decoded/processed,
+    and the truncation recorded."""
+    import repo2graph.graph as graphmod
+    from repo2graph.graph import MAX_COCHANGE_BYTES, Graph, add_cochange
+
+    huge = b"H1\n" + b"\n".join(f"f{i}.py".encode() for i in range(3)) + b"\n\n"
+    huge += b"pad " * (MAX_COCHANGE_BYTES // 4 + 1024)  # push stdout past the cap
+
+    class _Res:
+        returncode = 0
+        stdout = huge
+
+    monkeypatch.setattr(graphmod.subprocess, "run", lambda *a, **k: _Res())
+    g = Graph(Path("."), "x")
+    add_cochange(g, Path("."), 1, {"f0.py", "f1.py", "f2.py"})
+    assert g.stats["cochange_output_capped"] == len(huge)
+
+
+def test_add_cochange_no_stat_when_output_is_within_the_byte_cap(monkeypatch):
+    import repo2graph.graph as graphmod
+    from repo2graph.graph import Graph, add_cochange
+
+    class _Res:
+        returncode = 0
+        stdout = b"H1\nf0.py\nf1.py\n\n" * 3
+
+    monkeypatch.setattr(graphmod.subprocess, "run", lambda *a, **k: _Res())
+    g = Graph(Path("."), "x")
+    add_cochange(g, Path("."), 1, {"f0.py", "f1.py"})
+    assert "cochange_output_capped" not in g.stats
+
+
+def test_graph_warns_once_past_the_large_graph_threshold(monkeypatch, capsys):
+    """ISS-85: no hard cap (max_files stays opt-in), but a build nobody bounded
+    gets exactly one stderr warning once it grows past the threshold."""
+    from repo2graph.graph import Graph
+
+    monkeypatch.setattr("repo2graph.graph.LARGE_GRAPH_WARN_THRESHOLD", 5)
+    g = Graph(Path("."), "x")
+    for i in range(10):
+        g.add_node(f"file:{i}", type="file")
+    err = capsys.readouterr().err
+    assert err.count("warning: graph has grown past") == 1
+
+
+def test_graph_stays_quiet_under_the_large_graph_threshold(capsys):
+    from repo2graph.graph import Graph
+
+    g = Graph(Path("."), "x")
+    for i in range(5):
+        g.add_node(f"file:{i}", type="file")
+    assert capsys.readouterr().err == ""
+
+
 def test_read_jsonl_reports_file_and_line_on_bad_json(tmp_path):
     from repo2graph.query import read_jsonl
 
