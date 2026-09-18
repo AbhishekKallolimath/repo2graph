@@ -31,6 +31,7 @@ Usage:
 Requires PyYAML (`pip install pyyaml`) — a dev-only tool dependency, not a
 repo2graph runtime dependency.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -89,7 +90,9 @@ def load_registry() -> list[dict]:
 def _run_git(args: list[str], cwd: Path | None = None, timeout: int = GIT_TIMEOUT) -> str:
     proc = subprocess.run(
         ["git", "-c", "core.quotepath=false", *args],
-        cwd=cwd, capture_output=True, timeout=timeout,
+        cwd=cwd,
+        capture_output=True,
+        timeout=timeout,
     )
     out = proc.stdout.decode("utf8", "surrogateescape")
     err = proc.stderr.decode("utf8", "surrogateescape")
@@ -118,7 +121,8 @@ def clone_scoped(entry: dict, dest: Path) -> str:
     if sparse_paths:
         _run_git(["sparse-checkout", "init", "--no-cone"], cwd=dest)
         (dest / ".git" / "info" / "sparse-checkout").write_text(
-            "\n".join(sparse_paths) + "\n", encoding="utf8")
+            "\n".join(sparse_paths) + "\n", encoding="utf8"
+        )
     _run_git(["checkout", "--quiet", ref], cwd=dest, timeout=CLONE_TIMEOUT)
     sha = _run_git(["rev-parse", "HEAD"], cwd=dest).strip()
     return sha
@@ -139,10 +143,17 @@ def run_queries(index_dir: Path, queries: list[str]) -> list[dict]:
     for q in queries:
         picked = idx.retrieve(q, k=6, hops=1, budget_chars=8000)
         results = [
-            {"node_id": c.get("node_id"), "path": c.get("path"), "lang": c.get("lang"),
-             "kind": c.get("kind"), "name": c.get("qualname") or c.get("name"),
-             "start_line": c.get("start_line"), "end_line": c.get("end_line"),
-             "why": c.get("why"), "score": c.get("score")}
+            {
+                "node_id": c.get("node_id"),
+                "path": c.get("path"),
+                "lang": c.get("lang"),
+                "kind": c.get("kind"),
+                "name": c.get("qualname") or c.get("name"),
+                "start_line": c.get("start_line"),
+                "end_line": c.get("end_line"),
+                "why": c.get("why"),
+                "score": c.get("score"),
+            }
             for c in picked
         ]  # deliberately excludes `text` — no source excerpt in the committed flow
         flows.append({"query": q, "results": results})
@@ -193,6 +204,7 @@ def validate_example(repo_dir: Path, meta: dict, workdir: Path) -> list[str]:
     # things like "C:\\Windows" in docstrings and test fixtures, and a bare
     # substring check flags that real content as a false positive.
     import os as _os
+
     suspicious = [str(workdir), str(workdir.resolve())]
     home = _os.path.expanduser("~")
     if home and home not in ("~", "/"):
@@ -206,7 +218,9 @@ def validate_example(repo_dir: Path, meta: dict, workdir: Path) -> list[str]:
             text = f.read_text(encoding="utf8", errors="replace")
         for s in suspicious:
             if s and s in text:
-                problems.append(f"{f.relative_to(repo_dir)}: contains this machine's scratch/home path {s!r}")
+                problems.append(
+                    f"{f.relative_to(repo_dir)}: contains this machine's scratch/home path {s!r}"
+                )
     return problems
 
 
@@ -219,8 +233,8 @@ def write_readme(entry: dict, meta: dict, repo_dir: Path) -> None:
     query_list = "\n".join(f"- {q}" for q in entry["queries"])
     scope_note = (
         "The full repository at the pinned commit was indexed — no `--include`/`--exclude` narrowing."
-        if entry["scope"] == "full" else
-        "Only the subtrees listed below were cloned and indexed (a **scoped benchmark**, "
+        if entry["scope"] == "full"
+        else "Only the subtrees listed below were cloned and indexed (a **scoped benchmark**, "
         "not the whole repository) — see [docs/limitations.md](../../docs/limitations.md#extreme-scale)."
     )
     include_block = ""
@@ -238,19 +252,19 @@ def write_readme(entry: dict, meta: dict, repo_dir: Path) -> None:
             f"therefore a subset of even the scoped paths, not their complete contents.\n"
         )
 
-    readme = f"""# {entry['name']} graph example
+    readme = f"""# {entry["name"]} graph example
 
 ## Repository
 
-[{entry['url']}]({entry['url']})
+[{entry["url"]}]({entry["url"]})
 
 ## Revision
 
-Commit `{meta['commit']}` on `{entry['ref']}`, analyzed {meta['generated_at']}.
+Commit `{meta["commit"]}` on `{entry["ref"]}`, analyzed {meta["generated_at"]}.
 
 ## Why this repository?
 
-{entry['why'].strip()}
+{entry["why"].strip()}
 
 ## Why this scope
 
@@ -260,25 +274,25 @@ Commit `{meta['commit']}` on `{entry['ref']}`, analyzed {meta['generated_at']}.
 
 | Metric | Value |
 |---|---:|
-| Files indexed | {_n(meta['stats'].get('files', 'n/a'))} |
-| Files parsed (code) | {_n(meta['stats'].get('parsed', 'n/a'))} |
-| Parse errors | {_n(meta['stats'].get('parse_errors', 0))} |
+| Files indexed | {_n(meta["stats"].get("files", "n/a"))} |
+| Files parsed (code) | {_n(meta["stats"].get("parsed", "n/a"))} |
+| Parse errors | {_n(meta["stats"].get("parse_errors", 0))} |
 
 ## Graph statistics
 
 | Metric | Value |
 |---|---:|
-| Nodes | {_n(meta['nodes'])} |
-| Edges | {_n(meta['edges'])} |
-| Symbols (functions) | {_n(meta['stats'].get('symbol:function', 0))} |
-| Symbols (classes) | {_n(meta['stats'].get('symbol:class', 0))} |
-| CALLS edges | {_n(meta['stats'].get('edge:CALLS', 0))} |
-| CALLS_EXTERNAL edges | {_n(meta['stats'].get('edge:CALLS_EXTERNAL', 0))} |
-| IMPORTS edges | {_n(meta['stats'].get('edge:IMPORTS', 0))} |
-| INHERITS edges | {_n(meta['stats'].get('edge:INHERITS', 0))} |
-| DEFINES edges | {_n(meta['stats'].get('edge:DEFINES', 0))} |
-| Ambiguous calls (name matched >1 candidate) | {_n(meta['stats'].get('ambiguous_calls', 0))} |
-| Entrypoints | {_n(meta['stats'].get('entrypoints', 0))} |
+| Nodes | {_n(meta["nodes"])} |
+| Edges | {_n(meta["edges"])} |
+| Symbols (functions) | {_n(meta["stats"].get("symbol:function", 0))} |
+| Symbols (classes) | {_n(meta["stats"].get("symbol:class", 0))} |
+| CALLS edges | {_n(meta["stats"].get("edge:CALLS", 0))} |
+| CALLS_EXTERNAL edges | {_n(meta["stats"].get("edge:CALLS_EXTERNAL", 0))} |
+| IMPORTS edges | {_n(meta["stats"].get("edge:IMPORTS", 0))} |
+| INHERITS edges | {_n(meta["stats"].get("edge:INHERITS", 0))} |
+| DEFINES edges | {_n(meta["stats"].get("edge:DEFINES", 0))} |
+| Ambiguous calls (name matched >1 candidate) | {_n(meta["stats"].get("ambiguous_calls", 0))} |
+| Entrypoints | {_n(meta["stats"].get("entrypoints", 0))} |
 
 ## Supported languages
 
@@ -296,10 +310,10 @@ i.e. one that still has `chunks.jsonl` and can return actual source text — clo
 the commit above and build it directly:
 
 ```bash
-git clone --filter=blob:none {entry['url']} /tmp/{entry['id']}
-cd /tmp/{entry['id']} && git checkout {meta['commit']}
+git clone --filter=blob:none {entry["url"]} /tmp/{entry["id"]}
+cd /tmp/{entry["id"]} && git checkout {meta["commit"]}
 repo2graph build . -o .r2g{(" --include " + " ".join(entry["include"])) if entry.get("include") else ""}
-repo2graph query "{entry['queries'][0]}" -o .r2g
+repo2graph query "{entry["queries"][0]}" -o .r2g
 ```
 
 ## Generated graph
@@ -308,7 +322,7 @@ repo2graph query "{entry['queries'][0]}" -o .r2g
   source text), gzipped — JSON lines compress 4-9x and there is no reason to commit that redundancy
   raw; `gunzip -k nodes.jsonl.gz` to read it
 - `graph.html` — the interactive map (self-contained, opens in any browser, no network needed), capped
-  to the {meta.get('viz_nodes', 300)} best-connected nodes
+  to the {meta.get("viz_nodes", 300)} best-connected nodes
 - `overview.md` — the prose repo map: languages, most depended-on files, most called symbols
 - `manifest.json` — what every field in the other files means
 - `stats.json` — the raw counters above
@@ -321,15 +335,15 @@ see [ATTRIBUTIONS.md](../ATTRIBUTIONS.md#why-chunksjsonl-is-not-committed).
 
 Call edges are matched by name, not by type — see
 [docs/limitations.md](../../docs/limitations.md). Unresolved / ambiguous calls for this example:
-{_n(meta['stats'].get('ambiguous_calls', 0))} out of {_n(meta['stats'].get('edge:CALLS', 0))} total CALLS edges.
+{_n(meta["stats"].get("ambiguous_calls", 0))} out of {_n(meta["stats"].get("edge:CALLS", 0))} total CALLS edges.
 
 ## Reproduce
 
 ```bash
-python scripts/generate_examples.py --repo {entry['id']}
+python scripts/generate_examples.py --repo {entry["id"]}
 ```
 
-This clones `{entry['url']}` at `{entry['ref']}` (pinned to the commit above only via
+This clones `{entry["url"]}` at `{entry["ref"]}` (pinned to the commit above only via
 `examples/repositories.yaml`; re-running against a moving ref will get a newer commit and
 different numbers — see [docs/benchmarks.md](../../docs/benchmarks.md#staleness)).
 """
@@ -345,20 +359,30 @@ def generate_one(entry: dict, results: dict) -> dict:
         src = workdir / "src"
         sha = clone_scoped(entry, src)
         clone_seconds = round(time.monotonic() - t0, 1)
-        print(f"[{repo_id}] cloned {sha[:12]} in {clone_seconds}s; analyzing (no network from here) ...",
-              file=sys.stderr)
+        print(
+            f"[{repo_id}] cloned {sha[:12]} in {clone_seconds}s; analyzing (no network from here) ...",
+            file=sys.stderr,
+        )
 
         t1 = time.monotonic()
-        g = build(src, include=entry.get("include"), exclude=entry.get("exclude"),
-                  git_history=entry.get("git_history", 0),
-                  max_files=entry.get("max_files", 0), jobs=0)
+        g = build(
+            src,
+            include=entry.get("include"),
+            exclude=entry.get("exclude"),
+            git_history=entry.get("git_history", 0),
+            max_files=entry.get("max_files", 0),
+            jobs=0,
+        )
         g.name = entry["id"]
         build_dir = workdir / "build"
-        written, n_chunks = dump_all(g, iter_chunks(g), build_dir,
-                                     {"jsonl", "overview", "html"}, viz_nodes=300)
+        written, n_chunks = dump_all(
+            g, iter_chunks(g), build_dir, {"jsonl", "overview", "html"}, viz_nodes=300
+        )
         build_seconds = round(time.monotonic() - t1, 1)
-        print(f"[{repo_id}] built {len(g.nodes)} nodes / {len(g.edges)} edges "
-              f"in {build_seconds}s", file=sys.stderr)
+        print(
+            f"[{repo_id}] built {len(g.nodes)} nodes / {len(g.edges)} edges in {build_seconds}s",
+            file=sys.stderr,
+        )
 
         flows = run_queries(build_dir, entry["queries"])
 
@@ -376,7 +400,8 @@ def generate_one(entry: dict, results: dict) -> dict:
         for i, flow in enumerate(flows):
             slug = "".join(c if c.isalnum() else "-" for c in flow["query"].lower())[:40].strip("-")
             (repo_dir / "flows" / f"{i:02d}-{slug}.json").write_text(
-                json.dumps(flow, indent=2) + "\n", encoding="utf8", newline="\n")
+                json.dumps(flow, indent=2) + "\n", encoding="utf8", newline="\n"
+            )
 
         meta = {
             "repository": entry["url"],
@@ -397,7 +422,8 @@ def generate_one(entry: dict, results: dict) -> dict:
             "viz_nodes": 300,
         }
         (repo_dir / "metadata.json").write_text(
-            json.dumps(meta, indent=2) + "\n", encoding="utf8", newline="\n")
+            json.dumps(meta, indent=2) + "\n", encoding="utf8", newline="\n"
+        )
         write_readme(entry, meta, repo_dir)
 
         problems = validate_example(repo_dir, meta, workdir)
@@ -406,10 +432,14 @@ def generate_one(entry: dict, results: dict) -> dict:
         print(f"[{repo_id}] validated OK -> {repo_dir}", file=sys.stderr)
 
         results[repo_id] = {
-            "repository": entry["url"], "commit": sha,
+            "repository": entry["url"],
+            "commit": sha,
             "repo2graph_version": R2G_VERSION,
-            "files": meta["stats"].get("files"), "nodes": meta["nodes"], "edges": meta["edges"],
-            "clone_seconds": clone_seconds, "build_seconds": build_seconds,
+            "files": meta["stats"].get("files"),
+            "nodes": meta["nodes"],
+            "edges": meta["edges"],
+            "clone_seconds": clone_seconds,
+            "build_seconds": build_seconds,
             "generated_at": meta["generated_at"],
         }
         return meta
@@ -449,9 +479,18 @@ def main() -> int:
     merged = {r["repository"]: r for r in existing}
     for repo_id, r in results_by_id.items():
         merged[r["repository"]] = r
-    results_path.write_text(json.dumps(
-        {"generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-         "results": list(merged.values())}, indent=2) + "\n", encoding="utf8", newline="\n")
+    results_path.write_text(
+        json.dumps(
+            {
+                "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "results": list(merged.values()),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf8",
+        newline="\n",
+    )
     print(f"wrote {results_path}", file=sys.stderr)
     return 0
 

@@ -25,6 +25,7 @@ keys only by luck of hashing rather than by construction. Canonical JSON is
 total over every value a JSON-RPC caller can send, and equal inputs produce
 equal keys by definition.
 """
+
 import json
 import threading
 import time
@@ -81,8 +82,9 @@ def make_key(tool: str, params: Any) -> str:
         insertion order, and no argument value can make this raise.
     """
     try:
-        body = json.dumps(params or {}, sort_keys=True, default=str,
-                          ensure_ascii=False, separators=(",", ":"))
+        body = json.dumps(
+            params or {}, sort_keys=True, default=str, ensure_ascii=False, separators=(",", ":")
+        )
     except (TypeError, ValueError):
         # Unserialisable arguments cannot be compared for equality either, so
         # they get a key nothing else will match: a guaranteed miss beats a
@@ -103,9 +105,12 @@ class ResultCache:
             sleeping.
     """
 
-    def __init__(self, max_size: int = DEFAULT_MAX_SIZE,
-                 ttl: float = DEFAULT_TTL,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        max_size: int = DEFAULT_MAX_SIZE,
+        ttl: float = DEFAULT_TTL,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self.max_size = int(max_size)
         self.ttl = float(ttl)
         self._clock = clock

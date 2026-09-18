@@ -50,11 +50,12 @@ chunks = read_jsonl(".r2g/agent/chunks.jsonl")
 idx = Index(".r2g")
 pack = idx.pack_context(
     "how does session auth work?",
-    k=8, hops=1,
-    budget_chars=24000,      # bounds the WHOLE markdown; 0 means unbounded
-    min_confidence=1.0,      # drop ambiguous CALLS edges (CALLS only)
-    expand_graph=True,       # False = lexical seeds only
-    exclude_secrets=False,   # True drops dotfiles/.env/.pem/... from the pack
+    k=8,
+    hops=1,
+    budget_chars=24000,  # bounds the WHOLE markdown; 0 means unbounded
+    min_confidence=1.0,  # drop ambiguous CALLS edges (CALLS only)
+    expand_graph=True,  # False = lexical seeds only
+    exclude_secrets=False,  # True drops dotfiles/.env/.pem/... from the pack
 )
 print(pack["markdown"], pack["used_chars"], pack["truncated"])
 

@@ -10,6 +10,7 @@ at the top level and once per package.
 cost of being wrong is a burnt version number that PyPI will not let you reuse.
 This runs on every commit, where the cost is re-typing one string.
 """
+
 import json
 import pathlib
 import re
@@ -21,8 +22,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 def main() -> int:
     """Compare every recorded version; return 1 on any disagreement."""
-    pyproject = tomllib.loads(
-        (ROOT / "pyproject.toml").read_text(encoding="utf8"))
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf8"))
     want = pyproject["project"]["version"]
     found: dict[str, str] = {"pyproject.toml": want}
 

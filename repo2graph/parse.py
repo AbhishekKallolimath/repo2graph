@@ -1,34 +1,58 @@
 """Discovery, language configs, and tree-sitter based symbol/call extraction."""
+
 import os
 import re
 import stat as statmod
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+from typing import TypedDict, cast
+
+from tree_sitter import Node, Parser
 
 EXT_LANG = {
-    ".py": "python", ".pyi": "python",
-    ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
-    ".ts": "typescript", ".tsx": "tsx",
+    ".py": "python",
+    ".pyi": "python",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    ".ts": "typescript",
+    ".tsx": "tsx",
     ".go": "go",
     ".rs": "rust",
     ".java": "java",
     ".rb": "ruby",
-    ".c": "c", ".h": "c",
-    ".cc": "cpp", ".cpp": "cpp", ".cxx": "cpp", ".hpp": "cpp", ".hh": "cpp",
+    ".c": "c",
+    ".h": "c",
+    ".cc": "cpp",
+    ".cpp": "cpp",
+    ".cxx": "cpp",
+    ".hpp": "cpp",
+    ".hh": "cpp",
     ".cs": "csharp",
     ".php": "php",
     ".kt": "kotlin",
     ".scala": "scala",
     ".swift": "swift",
-    ".sh": "bash", ".bash": "bash",
+    ".sh": "bash",
+    ".bash": "bash",
 }
 
 DOC_EXT = {".md", ".mdx", ".rst", ".txt", ".adoc"}
 CONFIG_EXT = {".json", ".yaml", ".yml", ".toml", ".ini", ".cfg"}
 
-LANG_CFG = {
+
+class LangConfig(TypedDict):
+    kind_map: dict[str, str]
+    call_types: set[str]
+    import_types: set[str]
+    doc: str
+
+
+LANG_CFG: dict[str, LangConfig] = {
     "python": {
         "kind_map": {"function_definition": "function", "class_definition": "class"},
         "call_types": {"call"},
@@ -59,8 +83,12 @@ LANG_CFG = {
     },
     "rust": {
         "kind_map": {
-            "function_item": "function", "struct_item": "struct", "enum_item": "enum",
-            "trait_item": "trait", "impl_item": "impl", "mod_item": "module",
+            "function_item": "function",
+            "struct_item": "struct",
+            "enum_item": "enum",
+            "trait_item": "trait",
+            "impl_item": "impl",
+            "mod_item": "module",
         },
         "call_types": {"call_expression", "macro_invocation"},
         "import_types": {"use_declaration"},
@@ -68,8 +96,10 @@ LANG_CFG = {
     },
     "java": {
         "kind_map": {
-            "method_declaration": "method", "constructor_declaration": "method",
-            "class_declaration": "class", "interface_declaration": "interface",
+            "method_declaration": "method",
+            "constructor_declaration": "method",
+            "class_declaration": "class",
+            "interface_declaration": "interface",
             "enum_declaration": "enum",
         },
         "call_types": {"method_invocation", "object_creation_expression"},
@@ -77,50 +107,79 @@ LANG_CFG = {
         "doc": "jsdoc",
     },
     "ruby": {
-        "kind_map": {"method": "method", "singleton_method": "method",
-                     "class": "class", "module": "module"},
+        "kind_map": {
+            "method": "method",
+            "singleton_method": "method",
+            "class": "class",
+            "module": "module",
+        },
         "call_types": {"call"},
         "import_types": set(),
         "doc": "line",
     },
     "c": {
-        "kind_map": {"function_definition": "function", "struct_specifier": "struct",
-                     "enum_specifier": "enum"},
+        "kind_map": {
+            "function_definition": "function",
+            "struct_specifier": "struct",
+            "enum_specifier": "enum",
+        },
         "call_types": {"call_expression"},
         "import_types": {"preproc_include"},
         "doc": "line",
     },
     "csharp": {
-        "kind_map": {"method_declaration": "method", "class_declaration": "class",
-                     "interface_declaration": "interface", "struct_declaration": "struct"},
+        "kind_map": {
+            "method_declaration": "method",
+            "class_declaration": "class",
+            "interface_declaration": "interface",
+            "struct_declaration": "struct",
+        },
         "call_types": {"invocation_expression", "object_creation_expression"},
         "import_types": {"using_directive"},
         "doc": "line",
     },
     "php": {
-        "kind_map": {"function_definition": "function", "method_declaration": "method",
-                     "class_declaration": "class", "interface_declaration": "interface"},
-        "call_types": {"function_call_expression", "member_call_expression", "object_creation_expression"},
+        "kind_map": {
+            "function_definition": "function",
+            "method_declaration": "method",
+            "class_declaration": "class",
+            "interface_declaration": "interface",
+        },
+        "call_types": {
+            "function_call_expression",
+            "member_call_expression",
+            "object_creation_expression",
+        },
         "import_types": {"namespace_use_declaration"},
         "doc": "jsdoc",
     },
     "kotlin": {
-        "kind_map": {"function_declaration": "function", "class_declaration": "class",
-                     "object_declaration": "object"},
+        "kind_map": {
+            "function_declaration": "function",
+            "class_declaration": "class",
+            "object_declaration": "object",
+        },
         "call_types": {"call_expression"},
         "import_types": {"import_header"},
         "doc": "jsdoc",
     },
     "swift": {
-        "kind_map": {"function_declaration": "function", "class_declaration": "class",
-                     "protocol_declaration": "protocol"},
+        "kind_map": {
+            "function_declaration": "function",
+            "class_declaration": "class",
+            "protocol_declaration": "protocol",
+        },
         "call_types": {"call_expression"},
         "import_types": {"import_declaration"},
         "doc": "line",
     },
     "scala": {
-        "kind_map": {"function_definition": "function", "class_definition": "class",
-                     "object_definition": "object", "trait_definition": "trait"},
+        "kind_map": {
+            "function_definition": "function",
+            "class_definition": "class",
+            "object_definition": "object",
+            "trait_definition": "trait",
+        },
         "call_types": {"call_expression"},
         "import_types": {"import_declaration"},
         "doc": "line",
@@ -132,22 +191,49 @@ LANG_CFG = {
         "doc": "line",
     },
 }
-LANG_CFG["typescript"] = dict(LANG_CFG["javascript"])
+LANG_CFG["typescript"] = cast(LangConfig, dict(LANG_CFG["javascript"]))
 LANG_CFG["typescript"]["kind_map"] = dict(
     LANG_CFG["javascript"]["kind_map"],
-    interface_declaration="interface", type_alias_declaration="type",
-    enum_declaration="enum", abstract_class_declaration="class",
+    interface_declaration="interface",
+    type_alias_declaration="type",
+    enum_declaration="enum",
+    abstract_class_declaration="class",
 )
 LANG_CFG["tsx"] = LANG_CFG["typescript"]
-LANG_CFG["cpp"] = dict(LANG_CFG["c"])
-LANG_CFG["cpp"]["kind_map"] = dict(LANG_CFG["c"]["kind_map"],
-                                   class_specifier="class", namespace_definition="namespace")
+LANG_CFG["cpp"] = cast(LangConfig, dict(LANG_CFG["c"]))
+LANG_CFG["cpp"]["kind_map"] = dict(
+    LANG_CFG["c"]["kind_map"], class_specifier="class", namespace_definition="namespace"
+)
 
 DEFAULT_SKIP_DIRS = {
-    ".git", ".hg", ".svn", "node_modules", "venv", ".venv", "env", "__pycache__",
-    "dist", "build", "target", ".next", ".nuxt", "vendor", ".idea", ".vscode",
-    "site-packages", ".mypy_cache", ".pytest_cache", ".tox", "coverage", ".terraform",
-    ".ruff_cache", ".eggs", ".cache", ".gradle", ".direnv", ".yarn",
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    "venv",
+    ".venv",
+    "env",
+    "__pycache__",
+    "dist",
+    "build",
+    "target",
+    ".next",
+    ".nuxt",
+    "vendor",
+    ".idea",
+    ".vscode",
+    "site-packages",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".tox",
+    "coverage",
+    ".terraform",
+    ".ruff_cache",
+    ".eggs",
+    ".cache",
+    ".gradle",
+    ".direnv",
+    ".yarn",
 }
 MAX_BYTES = 1_500_000
 
@@ -169,9 +255,20 @@ def _git_files(root: Path):
         # fallback -- and a child holding that pipe can swallow frames meant for
         # us. Nothing here ever has anything to say to git on stdin.
         out = subprocess.run(
-            ["git", "-c", "core.quotepath=false", "-C", str(root),
-             "ls-files", "-z", "-co", "--exclude-standard"],
-            capture_output=True, stdin=subprocess.DEVNULL, timeout=60,
+            [
+                "git",
+                "-c",
+                "core.quotepath=false",
+                "-C",
+                str(root),
+                "ls-files",
+                "-z",
+                "-co",
+                "--exclude-standard",
+            ],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=60,
         )
         if out.returncode != 0:
             return None
@@ -212,7 +309,7 @@ def _glob_re(pattern: str) -> re.Pattern:
             i += 1
         elif pat[i] == "[":
             j = pat.find("]", i + 1)
-            cls = pat[i + 1:j].replace("\\", "\\\\") if j != -1 else ""
+            cls = pat[i + 1 : j].replace("\\", "\\\\") if j != -1 else ""
             body = ("^/" + cls[1:]) if cls.startswith("!") else cls
             if j == -1 or body in ("", "^", "^/"):
                 out.append(re.escape(pat[i]))
@@ -280,6 +377,8 @@ def discover(root: Path, include_globs=None, exclude_globs=None, stats=None, con
             continue
         yield rp, abspath
 
+
+_get_parser: Callable[[str], Parser] | None
 try:
     from tree_sitter_language_pack import get_parser as _get_parser
 except ImportError:  # pragma: no cover
@@ -321,7 +420,7 @@ class ParsedFile:
 
 
 def _text(src: bytes, node) -> str:
-    return src[node.start_byte:node.end_byte].decode("utf8", "replace")
+    return src[node.start_byte : node.end_byte].decode("utf8", "replace")
 
 
 def _name_of(src: bytes, node, lang: str) -> str | None:
@@ -354,9 +453,14 @@ def _callee_name(src: bytes, node) -> str | None:
     # fields, so named_children[0] is the receiver — `logger.info(x)` would be
     # recorded as a call to `logger`. Read the method field directly instead.
     # "macro": Rust `macro_invocation` nodes expose the macro name in `macro`.
-    fn = (node.child_by_field_name("function") or node.child_by_field_name("name")
-          or node.child_by_field_name("method") or node.child_by_field_name("constructor")
-          or node.child_by_field_name("macro") or node.child_by_field_name("type"))
+    fn = (
+        node.child_by_field_name("function")
+        or node.child_by_field_name("name")
+        or node.child_by_field_name("method")
+        or node.child_by_field_name("constructor")
+        or node.child_by_field_name("macro")
+        or node.child_by_field_name("type")
+    )
     if fn is None:
         if node.named_child_count:
             fn = node.named_children[0]
@@ -378,8 +482,14 @@ def _callee_name(src: bytes, node) -> str | None:
 
 
 _ATTR_OR_COMMENT_TYPES = (
-    "comment", "line_comment", "block_comment", "doc_comment",
-    "attribute_item", "attribute", "decorator", "annotation",
+    "comment",
+    "line_comment",
+    "block_comment",
+    "doc_comment",
+    "attribute_item",
+    "attribute",
+    "decorator",
+    "annotation",
 )
 _COMMENT_TYPES = ("comment", "line_comment", "block_comment", "doc_comment")
 
@@ -400,8 +510,12 @@ def _docstring(src: bytes, node, lang: str) -> str:
                     pfx += 1
                 body_txt = raw[pfx:]
                 for q in ('"""', "'''", '"', "'"):
-                    if body_txt.startswith(q) and body_txt.endswith(q) and len(body_txt) >= 2 * len(q):
-                        body_txt = body_txt[len(q):-len(q)]
+                    if (
+                        body_txt.startswith(q)
+                        and body_txt.endswith(q)
+                        and len(body_txt) >= 2 * len(q)
+                    ):
+                        body_txt = body_txt[len(q) : -len(q)]
                         break
                 return body_txt.strip()[:600]
         return ""
@@ -417,29 +531,55 @@ def _docstring(src: bytes, node, lang: str) -> str:
 def _signature(src: bytes, node) -> str:
     body = node.child_by_field_name("body")
     end = body.start_byte if body is not None else min(node.end_byte, node.start_byte + 300)
-    return src[node.start_byte:end].decode("utf8", "replace").strip()[:300]
+    return src[node.start_byte : end].decode("utf8", "replace").strip()[:300]
 
 
 # Node types that hold a class's supertypes. Grammars differ: some expose them
 # through a field, others only as an unnamed child clause.
 _BASE_NODES = {
-    "class_heritage", "extends_clause", "implements_clause", "superclass",
-    "super_interfaces", "type_list", "base_list", "base_clause",
-    "class_interface_clause", "delegation_specifier", "inheritance_specifier",
+    "class_heritage",
+    "extends_clause",
+    "implements_clause",
+    "superclass",
+    "super_interfaces",
+    "type_list",
+    "base_list",
+    "base_clause",
+    "class_interface_clause",
+    "delegation_specifier",
+    "inheritance_specifier",
     "base_class_clause",
 }
 # Keywords and access specifiers that sit inside those clauses.
 _BASE_WORDS = {
-    "extends", "implements", "with", "public", "private", "protected", "internal",
-    "virtual", "open", "abstract", "final", "sealed", "override", "case", "class",
-    "interface", "struct", "typename",
+    "extends",
+    "implements",
+    "with",
+    "public",
+    "private",
+    "protected",
+    "internal",
+    "virtual",
+    "open",
+    "abstract",
+    "final",
+    "sealed",
+    "override",
+    "case",
+    "class",
+    "interface",
+    "struct",
+    "typename",
 }
 
 
 def _clean_base(text: str) -> str:
     """'public B', 'extends B', '< B' -> 'B'."""
-    words = [w for w in text.replace(":", " ").replace("<", " <").split()
-             if w and w not in _BASE_WORDS and w not in ("<", ">", "&", "*", ",")]
+    words = [
+        w
+        for w in text.replace(":", " ").replace("<", " <").split()
+        if w and w not in _BASE_WORDS and w not in ("<", ">", "&", "*", ",")
+    ]
     return words[0].split("(")[0].strip(",;") if words else ""
 
 
@@ -527,7 +667,7 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
 
     # Explicit stack rather than recursion: tree-sitter trees nest deeply enough
     # (long chained expressions, big literals) to blow the interpreter's limit.
-    stack: list[tuple[object, tuple[str, ...], Symbol | None]] = [(tree.root_node, (), None)]
+    stack: list[tuple[Node, tuple[str, ...], Symbol | None]] = [(tree.root_node, (), None)]
     while stack:
         node, scope, owner = stack.pop()
         ntype = node.type
@@ -550,14 +690,20 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
             if kind == "maybe_function":
                 value = node.child_by_field_name("value")
                 if value is None or value.type not in (
-                        "arrow_function", "function", "function_expression"):
+                    "arrow_function",
+                    "function",
+                    "function_expression",
+                ):
                     kind = None
                 else:
                     kind = "function"
             if kind and name:
                 sym = Symbol(
-                    name=name, qualname=".".join(scope + (name,)), kind=kind,
-                    start_line=node.start_point[0] + 1, end_line=node.end_point[0] + 1,
+                    name=name,
+                    qualname=".".join(scope + (name,)),
+                    kind=kind,
+                    start_line=node.start_point[0] + 1,
+                    end_line=node.end_point[0] + 1,
                     parent=".".join(scope) or None,
                     signature=_signature(source, node),
                     docstring=_docstring(source, node, lang),

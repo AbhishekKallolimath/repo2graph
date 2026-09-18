@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/Srinivasan-78/repo2graph/blob/main/docs/README.md
+    about: Check the docs index before filing — architecture, CLI/MCP reference, and known limitations are covered there.
+  - name: Security vulnerability
+    url: https://github.com/Srinivasan-78/repo2graph/security/advisories/new
+    about: Report vulnerabilities privately — see SECURITY.md. Do not open a public issue for undisclosed vulnerabilities.

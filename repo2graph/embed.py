@@ -11,6 +11,7 @@ rebuilt independently of `embed`, and a row-keyed file would silently point at
 the wrong text after any rebuild. `query.Index` translates id -> current list
 index at load time and drops ids the current chunks.jsonl no longer holds.
 """
+
 import ast
 import hashlib
 import json
@@ -41,20 +42,18 @@ _FLOAT_BYTES = 4
 class Embedder(Protocol):
     """Anything that turns texts into vectors. sentence-transformers satisfies it."""
 
-    def encode(self, texts: list[str]) -> list[list[float]]:
-        ...
+    def encode(self, texts: list[str]) -> list[list[float]]: ...
 
 
 # ---------------------------------------------------------------- .npy ----
 
+
 def _npy_header(rows: int, cols: int) -> bytes:
-    body = ("{'descr': '" + _NPY_DESCR + "', 'fortran_order': False, "
-            f"'shape': ({rows}, {cols}), }}")
-    prefix = len(_NPY_MAGIC) + 2 + 2          # magic + version + uint16 length
+    body = "{'descr': '" + _NPY_DESCR + f"', 'fortran_order': False, 'shape': ({rows}, {cols}), }}"
+    prefix = len(_NPY_MAGIC) + 2 + 2  # magic + version + uint16 length
     pad = -(prefix + len(body) + 1) % _NPY_ALIGN
     body = body + " " * pad + "\n"
-    return (_NPY_MAGIC + bytes((1, 0)) + struct.pack("<H", len(body))
-            + body.encode("latin1"))
+    return _NPY_MAGIC + bytes((1, 0)) + struct.pack("<H", len(body)) + body.encode("latin1")
 
 
 def _npy_write(path: Path, rows: list, cols: int) -> None:
@@ -89,7 +88,7 @@ def _npy_read(path: Path) -> tuple[list, int]:
         hlen, start = struct.unpack("<I", raw[8:12])[0], 12
     else:
         raise ValueError(f"{path}: unsupported .npy version {major}")
-    header = raw[start:start + hlen]
+    header = raw[start : start + hlen]
     if len(header) != hlen:
         raise ValueError(f"{path}: truncated .npy header")
     try:
@@ -101,8 +100,11 @@ def _npy_read(path: Path) -> tuple[list, int]:
     if info.get("descr") != _NPY_DESCR or info.get("fortran_order"):
         raise ValueError(f"{path}: expected a C-order {_NPY_DESCR} array")
     shape = info.get("shape")
-    if (not isinstance(shape, tuple) or len(shape) != 2
-            or not all(isinstance(n, int) and n >= 0 for n in shape)):
+    if (
+        not isinstance(shape, tuple)
+        or len(shape) != 2
+        or not all(isinstance(n, int) and n >= 0 for n in shape)
+    ):
         raise ValueError(f"{path}: expected a 2-D shape, got {shape!r}")
     nrows, cols = shape
     body_at = start + hlen
@@ -116,6 +118,7 @@ def _npy_read(path: Path) -> tuple[list, int]:
 
 
 # ------------------------------------------------------------ metadata ----
+
 
 def meta_path(path) -> Path:
     """'.../vectors.npy' -> '.../vectors.meta.json' (a sibling, same stem)."""
@@ -150,8 +153,10 @@ def dim_of(embedder, probe: str = "dimension probe") -> int:
 
 # ------------------------------------------------------------ building ----
 
-def build_vectors(chunks, embedder, batch: int = DEFAULT_BATCH,
-                  reuse=None) -> dict[str, list[float]]:
+
+def build_vectors(
+    chunks, embedder, batch: int = DEFAULT_BATCH, reuse=None
+) -> dict[str, list[float]]:
     """{chunk id: vector} for every chunk, embedding in batches.
 
     `reuse` is an optional {chunk id: vector} of vectors already known to be
@@ -171,18 +176,16 @@ def build_vectors(chunks, embedder, batch: int = DEFAULT_BATCH,
             todo.append(c)
     step = max(1, int(batch))
     for i in range(0, len(todo), step):
-        part = todo[i:i + step]
+        part = todo[i : i + step]
         encoded = list(embedder.encode([c.get("text") or "" for c in part]))
         if len(encoded) != len(part):
-            raise ValueError(
-                f"embedder returned {len(encoded)} vectors for {len(part)} texts")
+            raise ValueError(f"embedder returned {len(encoded)} vectors for {len(part)} texts")
         for c, vec in zip(part, encoded, strict=True):
             out[c["id"]] = [float(x) for x in vec]
     return out
 
 
-def write_vectors(path, vectors, model_id: str, dim: int, chunk_ids,
-                  text_hashes=None) -> int:
+def write_vectors(path, vectors, model_id: str, dim: int, chunk_ids, text_hashes=None) -> int:
     """Write vectors.npy plus its sibling vectors.meta.json; return the count.
 
     Row order is `chunk_ids` order, which is chunks.jsonl order, so re-running
@@ -230,8 +233,7 @@ def load_vectors(path) -> tuple[dict[str, list[float]], dict]:
         raise ValueError(f"{meta_path(path)}: chunk_ids is missing")
     rows, cols = _npy_read(path)
     if len(rows) != len(ids):
-        raise ValueError(
-            f"{path}: {len(rows)} rows for {len(ids)} chunk ids")
+        raise ValueError(f"{path}: {len(rows)} rows for {len(ids)} chunk ids")
     dim = meta.get("dim")
     if isinstance(dim, int) and rows and dim != cols:
         raise ValueError(f"{path}: rows are {cols} wide, meta says {dim}")
@@ -239,6 +241,7 @@ def load_vectors(path) -> tuple[dict[str, list[float]], dict]:
 
 
 # ----------------------------------------------------------- embedders ----
+
 
 class _SentenceTransformerEmbedder:
     """Adapter: sentence-transformers' ndarray output -> plain float lists."""
@@ -263,6 +266,6 @@ def default_embedder(name: str | None = None):
         from sentence_transformers import SentenceTransformer
     except Exception:
         raise RuntimeError(
-            "embedding needs the optional `rag` extra: "
-            'pip install "repo2graph[rag]"') from None
+            'embedding needs the optional `rag` extra: pip install "repo2graph[rag]"'
+        ) from None
     return _SentenceTransformerEmbedder(SentenceTransformer(model_id), model_id)

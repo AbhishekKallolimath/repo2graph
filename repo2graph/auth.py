@@ -31,6 +31,7 @@ Security properties this module is responsible for, none of them optional:
   a stream of tokens carrying random `kid`s is a free amplification attack
   against the issuer.
 """
+
 import hashlib
 import hmac
 import json
@@ -110,6 +111,7 @@ def b64url_decode(text: str) -> bytes:
         AuthError: If the segment is not valid base64url.
     """
     import base64
+
     pad = "=" * (-len(text) % 4)
     try:
         return base64.urlsafe_b64decode(text + pad)
@@ -171,9 +173,13 @@ class JWKSCache:
             somebody else's machine.
     """
 
-    def __init__(self, issuer: str, ttl: float = DEFAULT_JWKS_TTL,
-                 opener: Callable[[str], Any] | None = None,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        issuer: str,
+        ttl: float = DEFAULT_JWKS_TTL,
+        opener: Callable[[str], Any] | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self.issuer = issuer.rstrip("/")
         self.ttl = ttl
         self._open = opener or _fetch_json
@@ -199,7 +205,8 @@ class JWKSCache:
         declared = str(doc.get("issuer") or "").rstrip("/")
         if declared and declared != self.issuer:
             raise AuthError(
-                f"issuer mismatch: asked {self.issuer!r}, document declares {declared!r}")
+                f"issuer mismatch: asked {self.issuer!r}, document declares {declared!r}"
+            )
         self._jwks_uri = uri
         return uri
 
@@ -208,8 +215,7 @@ class JWKSCache:
         keys = doc.get("keys") if isinstance(doc, dict) else None
         if not isinstance(keys, list):
             raise AuthError("issuer JWKS has no key list")
-        self._keys = {str(k.get("kid")): k for k in keys
-                      if isinstance(k, dict) and k.get("kid")}
+        self._keys = {str(k.get("kid")): k for k in keys if isinstance(k, dict) and k.get("kid")}
         self._fetched_at = self._clock()
 
     def key_for(self, kid: str) -> dict[str, Any]:
@@ -278,8 +284,7 @@ def _fetch_json(url: str) -> Any:
         raise AuthError("issuer document is not valid JSON") from None
 
 
-def decode_jwt(token: str, jwks: JWKSCache, issuer: str,
-               audience: str | None) -> dict[str, Any]:
+def decode_jwt(token: str, jwks: JWKSCache, issuer: str, audience: str | None) -> dict[str, Any]:
     """Validate a JWT's signature and claims, returning them.
 
     Args:
@@ -325,17 +330,20 @@ def decode_jwt(token: str, jwks: JWKSCache, issuer: str,
         raise AuthError("token algorithm does not match the signing key")
 
     signing_input = f"{head_b64}.{payload_b64}".encode("ascii", "strict")
-    if not rsa_verify(_int_from_b64url(str(key["n"])),
-                      _int_from_b64url(str(key["e"])),
-                      b64url_decode(sig_b64), signing_input, hash_name):
+    if not rsa_verify(
+        _int_from_b64url(str(key["n"])),
+        _int_from_b64url(str(key["e"])),
+        b64url_decode(sig_b64),
+        signing_input,
+        hash_name,
+    ):
         raise AuthError("token signature is invalid")
 
     _check_claims(claims, issuer, audience)
     return claims
 
 
-def _check_claims(claims: dict[str, Any], issuer: str,
-                  audience: str | None) -> None:
+def _check_claims(claims: dict[str, Any], issuer: str, audience: str | None) -> None:
     """Enforce iss, aud, exp and nbf. A valid signature is not a valid token."""
     now = time.time()
     if str(claims.get("iss") or "").rstrip("/") != issuer.rstrip("/"):
@@ -408,13 +416,18 @@ class Authenticator:
         clock: Monotonic time source for the JWKS cache, injected for tests.
     """
 
-    def __init__(self, config: AuthConfig,
-                 opener: Callable[[str], Any] | None = None,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        config: AuthConfig,
+        opener: Callable[[str], Any] | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self.config = config
-        self._jwks = (JWKSCache(config.oidc_issuer, config.jwks_ttl, opener,
-                                clock)
-                      if config.oidc_issuer else None)
+        self._jwks = (
+            JWKSCache(config.oidc_issuer, config.jwks_ttl, opener, clock)
+            if config.oidc_issuer
+            else None
+        )
 
     def authenticate(self, header: str | None) -> Identity:
         """Validate one Authorization header.
@@ -447,15 +460,15 @@ class Authenticator:
                 raise AuthError("invalid bearer token")
 
         if self._jwks is not None and self.config.oidc_issuer:
-            claims = decode_jwt(credential, self._jwks,
-                                self.config.oidc_issuer, self.config.audience)
+            claims = decode_jwt(
+                credential, self._jwks, self.config.oidc_issuer, self.config.audience
+            )
             subject = str(claims.get("sub") or "unknown")
             return Identity(subject=subject, mode="oidc", claims=claims)
         raise AuthError("invalid bearer token")
 
 
-def client_metadata_document(base_url: str,
-                             name: str = "repo2graph") -> dict[str, Any]:
+def client_metadata_document(base_url: str, name: str = "repo2graph") -> dict[str, Any]:
     """A Client ID Metadata Document, as RFC 7591 client metadata.
 
     CIMD serves this at a URL and uses that URL as the `client_id`, so the

@@ -19,6 +19,7 @@ against a rate estimated from the file count. It is deliberately capped below
 100 until the build genuinely finishes, because a progress bar that reaches 100
 and then keeps going is worse than one that admits it is guessing.
 """
+
 import threading
 import time
 import uuid
@@ -108,8 +109,11 @@ class TaskManager:
             seconds. Injected for the same reason.
     """
 
-    def __init__(self, builder: Callable[[Any, Any], None] | None = None,
-                 estimator: Callable[[Any], float] | None = None) -> None:
+    def __init__(
+        self,
+        builder: Callable[[Any, Any], None] | None = None,
+        estimator: Callable[[Any], float] | None = None,
+    ) -> None:
         self._builder = builder or _default_builder
         self._estimator = estimator or _default_estimator
         self._lock = threading.Lock()
@@ -135,9 +139,12 @@ class TaskManager:
             self._by_dir[key] = task
             self._by_id[task.task_id] = task
 
-        thread = threading.Thread(target=self._run, args=(task, repo, out),
-                                  name=f"repo2graph-build-{task.task_id[:8]}",
-                                  daemon=True)
+        thread = threading.Thread(
+            target=self._run,
+            args=(task, repo, out),
+            name=f"repo2graph-build-{task.task_id[:8]}",
+            daemon=True,
+        )
         thread.start()
         return task
 
@@ -158,8 +165,8 @@ class TaskManager:
             task.status = FAILED
             task.finished_at = time.monotonic()
             from .events import emit
-            emit("index_build_failed", level="error", task_id=task.task_id,
-                 error=task.error)
+
+            emit("index_build_failed", level="error", task_id=task.task_id, error=task.error)
             return
         task.status = READY
         task.finished_at = time.monotonic()
@@ -194,6 +201,7 @@ def _default_estimator(repo: Any) -> float:
     """
     try:
         from .parse import discover
+
         count = sum(1 for _ in discover(repo))
     except Exception:
         return 1.0
@@ -204,15 +212,18 @@ def _default_builder(repo: Any, out: Any) -> None:
     """Build an index the same way the synchronous path does."""
     from .mcp import _build_index
     from pathlib import Path
+
     _build_index(Path(repo), Path(out))
 
 
 BUILDING_MESSAGE = (
     "the index for this repository is still being built. Call "
     "repo_build_status with task_id {task_id!r} to check; roughly {eta_s}s "
-    "remaining ({progress_pct}% done, estimated).")
+    "remaining ({progress_pct}% done, estimated)."
+)
 
 FAILED_MESSAGE = (
     "the index build failed and no index is available: {error}. Fix the cause "
     "and rebuild with `repo2graph build <repo> -o <out>`, or restart this "
-    "server to retry.")
+    "server to retry."
+)

@@ -1,8 +1,9 @@
 """Interactive knowledge-graph map: one self-contained HTML file, no CDN, no build step."""
+
 import html
 import json
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 
@@ -20,8 +21,13 @@ OTHER_COLOR = "#C9CBCF"
 # How strongly an edge argues for keeping its endpoints when the graph is too
 # big to draw. Directory scaffolding is cheap; calls and imports are the point.
 EDGE_WEIGHT = {
-    "CALLS": 3.0, "IMPORTS": 3.0, "INHERITS": 3.0, "CO_CHANGE": 2.0,
-    "DEFINES": 1.0, "CALLS_EXTERNAL": 0.75, "CONTAINS": 0.5,
+    "CALLS": 3.0,
+    "IMPORTS": 3.0,
+    "INHERITS": 3.0,
+    "CO_CHANGE": 2.0,
+    "DEFINES": 1.0,
+    "CALLS_EXTERNAL": 0.75,
+    "CONTAINS": 0.5,
 }
 MAX_NODES = 300
 LABEL_CHARS = 15
@@ -47,7 +53,9 @@ def select(nodes: dict, edges: list, max_nodes: int = MAX_NODES):
     A force layout stops being readable long before a real repo stops having
     nodes, so the map shows the hubs: rank by edge weight, drop the tail.
     """
-    score: Counter = Counter()
+    # Edge weights are fractional (EDGE_WEIGHT), so this accumulates float
+    # scores -- a plain dict, not Counter, which typeshed pins to int counts.
+    score: dict[str, float] = defaultdict(float)
     for e in edges:
         w = EDGE_WEIGHT.get(e["type"], 1.0)
         score[e["src"]] += w
@@ -82,8 +90,7 @@ def payload(g, max_nodes: int = MAX_NODES) -> dict:
 
     out_nodes = []
     for n in nodes:
-        item = {"id": n["id"], "label": node_label(n), "type": n["type"],
-                "deg": deg[n["id"]]}
+        item = {"id": n["id"], "label": node_label(n), "type": n["type"], "deg": deg[n["id"]]}
         for key in ("path", "kind", "lang", "start_line", "end_line", "lines"):
             if n.get(key) not in (None, "", []):
                 item[key] = n[key]
@@ -96,8 +103,7 @@ def payload(g, max_nodes: int = MAX_NODES) -> dict:
     return {
         "name": g.name,
         "nodes": out_nodes,
-        "edges": [{"s": index[e["src"]], "t": index[e["dst"]], "type": e["type"]}
-                  for e in edges],
+        "edges": [{"s": index[e["src"]], "t": index[e["dst"]], "type": e["type"]} for e in edges],
         "colors": {**NODE_COLORS, "_": OTHER_COLOR},
         "hidden": {"nodes": HIDDEN_NODE_TYPES, "edges": HIDDEN_EDGE_TYPES},
         "nodeTypes": sorted(Counter(n["type"] for n in out_nodes).items()),
@@ -115,9 +121,12 @@ def write_html(g, path: Path, max_nodes: int = MAX_NODES) -> dict:
     # template's own "</script>" no longer closes the block and every source
     # file that mentions both tokens (web frameworks, this repo) silently kills
     # the map with a SyntaxError.
-    blob = (json.dumps(data, ensure_ascii=False)
-            .replace("<", "\\u003c")
-            .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
+    blob = (
+        json.dumps(data, ensure_ascii=False)
+        .replace("<", "\\u003c")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
     # ISS-33: Single-pass replace prevents __R2G_DATA__ in repo title from expanding
     replacements = {
         "__R2G_DATA__": blob,
@@ -129,6 +138,7 @@ def write_html(g, path: Path, max_nodes: int = MAX_NODES) -> dict:
     # local Windows rebuild, so the commit-branch push carries no CRLF churn.
     # atomic_write: a crash mid-write never leaves a half-rendered page.
     from .export import atomic_write
+
     with atomic_write(Path(path), "w", encoding="utf8", newline="\n") as fh:
         fh.write(page)
     return data
@@ -140,10 +150,10 @@ class LoadedGraph:
     def __init__(self, outdir: Path):
         from .export import path as artifact_path
         from .query import read_jsonl
+
         outdir = Path(outdir)
         self.name = outdir.name
-        self.nodes = {n["id"]: n
-                      for n in read_jsonl(artifact_path(outdir, "nodes.jsonl"))}
+        self.nodes = {n["id"]: n for n in read_jsonl(artifact_path(outdir, "nodes.jsonl"))}
         self.edges = read_jsonl(artifact_path(outdir, "edges.jsonl"))
         overview = artifact_path(outdir, "overview.md")
         if overview.exists():

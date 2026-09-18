@@ -8,6 +8,7 @@ dist/
 venv/
 .pytest_cache/
 .ruff_cache/
+.coverage
 .cache/
 .r2g/
 .env
