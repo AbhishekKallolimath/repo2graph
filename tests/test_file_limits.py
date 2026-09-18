@@ -4,6 +4,7 @@ from repo2graph.cli import _max_file_mb
 from repo2graph.graph import build
 from repo2graph.parse import BuildConfig
 
+
 def test_max_file_mb_validator():
     assert _max_file_mb("1.5") == 1.5
     assert _max_file_mb("0.1") == 0.1
@@ -11,6 +12,7 @@ def test_max_file_mb_validator():
         _max_file_mb("0.09")
     with pytest.raises(argparse.ArgumentTypeError, match="expected a number, got 'abc'"):
         _max_file_mb("abc")
+
 
 def test_file_limits(tmp_path):
     # create files
@@ -40,6 +42,7 @@ def test_file_limits(tmp_path):
     assert "file:over_limit.py" in g2.nodes
     assert g2.nodes["file:over_limit.py"].get("chunked") is True
 
+
 def test_exclude_dir(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -62,4 +65,3 @@ def test_exclude_dir(tmp_path):
     g2 = build(repo, config=config)
     assert "file:normal/a.py" in g2.nodes
     assert "file:my_excluded/b.py" not in g2.nodes
-

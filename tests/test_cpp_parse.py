@@ -25,6 +25,7 @@ def test_cpp_parse_pass_2(mock_run):
             return MagicMock(returncode=0)
         else:
             return MagicMock(returncode=0, stdout="int main() { return 0; }")
+
     mock_run.side_effect = mock_run_impl
 
     pf = parse_source(source, "c", filepath="test.c")
@@ -57,6 +58,7 @@ def test_cpp_parse_cpp_too_large(mock_run, caplog):
         else:
             # Return output larger than 2x original size
             return MagicMock(returncode=0, stdout="int main() { return 0; } " * 10)
+
     mock_run.side_effect = mock_run_impl
 
     with caplog.at_level(logging.WARNING):
@@ -66,4 +68,3 @@ def test_cpp_parse_cpp_too_large(mock_run, caplog):
     assert pf.parse_errors > 0
     assert not pf.used_cpp
     assert "is too large, skipping" in caplog.text
-

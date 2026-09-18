@@ -266,8 +266,14 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
 
         deduped_symbols.append(sym)
 
-    pf = ParsedFile(lang=lang, symbols=deduped_symbols, imports=list(set(all_imports)),
-                    parse_errors=total_parse_errors, used_cpp=used_cpp, is_chunked=True)
+    pf = ParsedFile(
+        lang=lang,
+        symbols=deduped_symbols,
+        imports=list(set(all_imports)),
+        parse_errors=total_parse_errors,
+        used_cpp=used_cpp,
+        is_chunked=True,
+    )
 
     digest = hashlib.sha256(raw_content).hexdigest()
     lines = raw_content.count(b"\n") + 1
@@ -285,6 +291,7 @@ def _read_and_parse(item):
     rel, abspath, lang, config = item
     if config is None:
         from .parse import BuildConfig
+
         config = BuildConfig()
 
     try:
@@ -307,7 +314,6 @@ def _read_and_parse(item):
         # count the file, drop its symbols, same as an unavailable parser.
         pf = None
     return rel, lang, (len(raw), raw.count(b"\n") + 1, pf, hashlib.sha256(raw).hexdigest())
-
 
 
 # ---------- parse cache (incremental builds) ----------
@@ -350,6 +356,7 @@ def cache_entry(lang: str | None, size: int, lines: int, pf, digest: str) -> dic
         },
     }
 
+
 def entry_read(entry: dict) -> tuple | None:
     """Rebuild `_read_and_parse`'s result tuple from a cache entry.
 
@@ -369,11 +376,14 @@ def entry_read(entry: dict) -> tuple | None:
         if raw is None:
             return size, lines, None, digest
         symbols = [Symbol(**s) for s in raw["symbols"]]
-        pf = ParsedFile(lang=str(raw["lang"]), symbols=symbols,
-                        imports=[str(i) for i in raw["imports"]],
-                        parse_errors=int(raw.get("parse_errors") or 0),
-                        used_cpp=bool(raw.get("used_cpp") or False),
-                        is_chunked=bool(raw.get("is_chunked") or False))
+        pf = ParsedFile(
+            lang=str(raw["lang"]),
+            symbols=symbols,
+            imports=[str(i) for i in raw["imports"]],
+            parse_errors=int(raw.get("parse_errors") or 0),
+            used_cpp=bool(raw.get("used_cpp") or False),
+            is_chunked=bool(raw.get("is_chunked") or False),
+        )
         return size, lines, pf, digest
     except (KeyError, TypeError, ValueError):
         return None
@@ -453,8 +463,7 @@ def parse_all(files, jobs: int, config=None):
     keeps node ids and edge order identical to a serial run.
     """
     jobs = resolve_jobs(jobs)
-    items = [(rel, abspath, EXT_LANG.get(abspath.suffix.lower()), config)
-             for rel, abspath in files]
+    items = [(rel, abspath, EXT_LANG.get(abspath.suffix.lower()), config) for rel, abspath in files]
     if jobs == 1 or len(items) < PARALLEL_MIN_FILES:
         return [_read_and_parse(i) for i in items]
     import concurrent.futures
@@ -573,7 +582,7 @@ def build(
         g.stats["parse_errors"] += pf.parse_errors
         if pf.parse_errors > 0:
             g.stats["files_with_parse_errors"] += 1
-        if getattr(pf, 'used_cpp', False):
+        if getattr(pf, "used_cpp", False):
             g.stats["cpp_fallback_files"] += 1
 
         for sym in pf.symbols:
@@ -604,7 +613,6 @@ def build(
                     mid = f"module:{target}"
                     g.add_node(mid, type="module", name=target, external=True)
                     g.add_edge(fid, mid, "IMPORTS", target=target, internal=False)
-
 
     # ----- name index for call/inheritance resolution -----
     imported_files: dict[str, set[str]] = defaultdict(set)
@@ -657,18 +665,32 @@ def build(
                         kept = {c: ns for c, ns in norm_scores.items() if ns >= threshold}
                         if not kept:
                             sorted_c = sorted(norm_scores.items(), key=lambda x: x[1], reverse=True)
-                            kept = dict(sorted_c[:min(N, 3)])
+                            kept = dict(sorted_c[: min(N, 3)])
 
                         ambiguous = len(kept) > 1
                         for c, conf in kept.items():
-                            g.add_edge(sid, c, "CALLS", count=count, confidence=round(conf, 3), **({"ambiguous": True} if ambiguous else {}))
+                            g.add_edge(
+                                sid,
+                                c,
+                                "CALLS",
+                                count=count,
+                                confidence=round(conf, 3),
+                                **({"ambiguous": True} if ambiguous else {}),
+                            )
                     else:
                         limit = min(N, 3)
                         limit = min(limit, max_call_candidates)
                         if limit > 0:
                             # keep up to limit
                             for c in pick[:limit]:
-                                g.add_edge(sid, c, "CALLS", count=count, confidence=round(1.0 / min(N, 3), 3), ambiguous=True)
+                                g.add_edge(
+                                    sid,
+                                    c,
+                                    "CALLS",
+                                    count=count,
+                                    confidence=round(1.0 / min(N, 3), 3),
+                                    ambiguous=True,
+                                )
                         else:
                             g.stats["ambiguous_calls"] += 1
             for base in sym.bases:
@@ -691,7 +713,9 @@ def build(
     mark_entrypoints(g)
     g.stats["nodes"] = len(g.nodes)
     g.stats["edges"] = len(g.edges)
-    g.stats["parse_errors_summary"] = f"Files with parse errors: {g.stats.get('files_with_parse_errors', 0)}  ({g.stats.get('cpp_fallback_files', 0)} C/C++ files used cpp fallback)"  # type: ignore[assignment]
+    g.stats["parse_errors_summary"] = (
+        f"Files with parse errors: {g.stats.get('files_with_parse_errors', 0)}  ({g.stats.get('cpp_fallback_files', 0)} C/C++ files used cpp fallback)"  # type: ignore[assignment]
+    )
     return g
 
 

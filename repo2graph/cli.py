@@ -115,7 +115,6 @@ def cmd_build(args):
     _emit(json.dumps(report, indent=2))
 
 
-
 def cmd_github(args):
     from .fetch import index_github
 
@@ -506,7 +505,6 @@ def _nonneg(value: str) -> int:
     return n
 
 
-
 def _posint(value: str) -> int:
     try:
         n = int(value)
@@ -515,6 +513,7 @@ def _posint(value: str) -> int:
     if n < 1:
         raise argparse.ArgumentTypeError(f"must be >= 1, got {n}")
     return n
+
 
 def _viz_nodes(value: str):
     """argparse type for --viz-nodes: a non-negative int, or "all" for no cap.
@@ -638,16 +637,38 @@ def main(argv=None):
     b = sub.add_parser("build", parents=[common], help="parse a repo into a graph + RAG chunks")
     b.add_argument("repo")
     b.add_argument("--no-chunks", action="store_true")
-    b.add_argument("--max-call-candidates", type=_posint, default=5,
-                   help="maximum number of candidates to keep for ambiguous calls")
-    b.add_argument("--max-file-mb", type=_max_file_mb, default=1.5,
-                   help="max file size in MB before skipping or chunking (default: 1.5, min: 0.1)")
-    b.add_argument("--include-vendor", action="store_true", default=False,
-                   help="index files in vendor directories (default: off)")
-    b.add_argument("--exclude-dir", action="append", default=[], dest="extra_exclude_dirs",
-                   metavar="NAME", help="additional directory name to exclude (repeatable)")
-    b.add_argument("--chunk-large-files", action="store_true", default=False,
-                   help="chunk and parse files exceeding max-file-mb instead of skipping them (default: off)")
+    b.add_argument(
+        "--max-call-candidates",
+        type=_posint,
+        default=5,
+        help="maximum number of candidates to keep for ambiguous calls",
+    )
+    b.add_argument(
+        "--max-file-mb",
+        type=_max_file_mb,
+        default=1.5,
+        help="max file size in MB before skipping or chunking (default: 1.5, min: 0.1)",
+    )
+    b.add_argument(
+        "--include-vendor",
+        action="store_true",
+        default=False,
+        help="index files in vendor directories (default: off)",
+    )
+    b.add_argument(
+        "--exclude-dir",
+        action="append",
+        default=[],
+        dest="extra_exclude_dirs",
+        metavar="NAME",
+        help="additional directory name to exclude (repeatable)",
+    )
+    b.add_argument(
+        "--chunk-large-files",
+        action="store_true",
+        default=False,
+        help="chunk and parse files exceeding max-file-mb instead of skipping them (default: off)",
+    )
     b.add_argument(
         "--incremental",
         action="store_true",

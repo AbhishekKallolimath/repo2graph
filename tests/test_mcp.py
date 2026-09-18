@@ -768,9 +768,6 @@ def _fake_sdk(monkeypatch, *, decorators: bool, version="2.2.0", with_server_mod
     return mcp_pkg
 
 
-
-
-
 def test_r8_a_broken_server_module_is_also_an_instruction(mini_index, monkeypatch):
     """R-8 (c): the other way a future SDK can move -- `mcp` imports but
     `mcp.server` does not."""
