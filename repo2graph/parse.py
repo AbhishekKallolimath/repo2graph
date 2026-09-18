@@ -335,7 +335,13 @@ def is_binary(path: Path) -> bool:
         return True
 
 
-def discover(root: Path, include_globs=None, exclude_globs=None, stats=None, config: BuildConfig | None = None):
+def discover(
+    root: Path,
+    include_globs=None,
+    exclude_globs=None,
+    stats=None,
+    config: BuildConfig | None = None,
+):
     """Yield (relative_path, absolute_path) for candidate source files."""
     if config is None:
         config = BuildConfig()
@@ -641,7 +647,12 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
             if Path(filepath).suffix.lower() in (".c", ".cc", ".cpp", ".h", ".hpp"):
                 try:
                     subprocess.run(["cpp", "--version"], capture_output=True, timeout=5, check=True)
-                    out = subprocess.run(["cpp", "-w", "-P", "-undef", str(filepath)], capture_output=True, text=True, timeout=10)
+                    out = subprocess.run(
+                        ["cpp", "-w", "-P", "-undef", str(filepath)],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
                     if out.returncode == 0:
                         cpp_bytes = out.stdout.encode("utf8", "replace")
                         if len(cpp_bytes) <= 2 * len(source):
@@ -654,6 +665,7 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                                 used_cpp = True
                         else:
                             import logging
+
                             logging.warning(f"cpp output for {filepath} is too large, skipping")
                 except (OSError, subprocess.SubprocessError):
                     pass
@@ -716,5 +728,6 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
         # reversed: the stack pops last-pushed first, so this keeps source order
         for c in reversed(node.named_children):
             stack.append((c, child_scope, child_owner))
-    return ParsedFile(lang=lang, symbols=symbols, imports=imports,
-                      parse_errors=final_errors, used_cpp=used_cpp)
+    return ParsedFile(
+        lang=lang, symbols=symbols, imports=imports, parse_errors=final_errors, used_cpp=used_cpp
+    )

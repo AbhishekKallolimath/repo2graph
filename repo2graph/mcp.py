@@ -30,18 +30,22 @@ other call worth serving first. It happens once per process, and once on disk.
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 from . import __version__
 from .cache import DEFAULT_MAX_SIZE, DEFAULT_TTL, ResultCache
 from .export import path as artifact_path
 from .query import Index, _fit_lines, count_tokens
 
+
 def check_mcp_version(version_str: str | None = None):
     import mcp
+
     v_str = version_str or getattr(mcp, "__version__", None)
     if not v_str:
         try:
             from importlib.metadata import version as _dist_version
+
             v_str = _dist_version("mcp")
         except Exception:
             v_str = "1.0.0"
@@ -593,6 +597,7 @@ MISSING_SDK = 'the MCP server needs the optional `mcp` extra: pip install "repo2
 # prevent, one SDK major later.
 SDK_SPEC = "mcp>=1.0,<3.0"
 
+
 def _sdk_version(module) -> str:
     """Best-effort version of the installed SDK, for the error message."""
     version = getattr(module, "__version__", None)
@@ -607,10 +612,12 @@ def _sdk_version(module) -> str:
 
 
 def _unusable_sdk(version: str, detail: str) -> str:
-    return (f"the installed mcp SDK ({version}) is not supported by "
-            f"repo2graph-mcp: {detail}. Install a 1.x or 2.x SDK instead: "
-            f'pip install "{SDK_SPEC}" '
-            '(or `pip install "repo2graph[mcp]"` in a clean environment).')
+    return (
+        f"the installed mcp SDK ({version}) is not supported by "
+        f"repo2graph-mcp: {detail}. Install a 1.x or 2.x SDK instead: "
+        f'pip install "{SDK_SPEC}" '
+        '(or `pip install "repo2graph[mcp]"` in a clean environment).'
+    )
 
 
 def _require_sdk():
@@ -681,6 +688,7 @@ class ServerWrapper:
     def add_tool(self, name, handler, schema=None):
         self.tools[name] = {"handler": handler, "schema": schema}
 
+
 server = ServerWrapper("repo2graph", version=__version__)
 server.add_tool("repo_map", tool_repo_map, TOOL_SCHEMAS["repo_map"])
 server.add_tool("repo_search", tool_repo_search, TOOL_SCHEMAS["repo_search"])
@@ -737,11 +745,14 @@ def serve(out, repo=None, cache=None, tasks=None) -> None:
         text = dispatch(index, name, arguments or {}, cache=cache, tasks=tasks)
         return [TextContent(type="text", text=text)]
 
+    server_cls: Any = Server
+    mcp_server: Any = None
     if supports_decorators:
-        mcp_server = Server(server.name, version=server.version)
+        mcp_server = server_cls(server.name, version=server.version)
         mcp_server.list_tools()(list_tools_handler)
         mcp_server.call_tool()(call_tool_handler)
     else:
+
         async def list_tools_2x(ctx, params):
             return mcp.types.ListToolsResult(tools=await list_tools_handler())
 
@@ -750,11 +761,14 @@ def serve(out, repo=None, cache=None, tasks=None) -> None:
             return mcp.types.CallToolResult(content=content)
 
         try:
-            mcp_server = Server(server.name, version=server.version,  # type: ignore[call-arg]
-                                on_list_tools=list_tools_2x,
-                                on_call_tool=call_tool_2x)
+            mcp_server = server_cls(
+                server.name,
+                version=server.version,
+                on_list_tools=list_tools_2x,
+                on_call_tool=call_tool_2x,
+            )
         except TypeError:
-            mcp_server = Server(server.name, version=server.version)
+            mcp_server = server_cls(server.name, version=server.version)
 
     async def _run():
         async with stdio_server() as (read_stream, write_stream):
