@@ -706,6 +706,45 @@ HOW_TO_READ = [
 ]
 
 
+# Static orientation copy for manifest.json's usage_hints. Kept separate from
+# HOW_TO_READ (prose, read top to bottom) as a keyed lookup an agent can index
+# into directly by tool name or question ("what does confidence 0.5 mean?").
+TOOL_DECISION_TREE = {
+    "orient_first": (
+        "Call repo_map once to get languages, hub files and entry points before any other tool."
+    ),
+    "search_by_question": (
+        "Use repo_search for natural-language questions; it returns cited "
+        "chunks plus graph neighbours."
+    ),
+    "trace_relationships": (
+        "Use repo_neighbours with a node_id to hop through callers, callees, "
+        "base classes and defining files."
+    ),
+    "node_id_format": (
+        "sym:pkg/relative/path.py::function_name -- read the 'id' field off "
+        "nodes.jsonl, or a chunk's node_id/caller_edges/callee_edges target, "
+        "to construct one."
+    ),
+}
+
+CONFIDENCE_SEMANTICS = {
+    "1.0": "Certain: the call name resolved to exactly one definition.",
+    "lt_1.0": (
+        "Ambiguous: the name matched multiple candidates, fanned out to up "
+        "to 5 CALLS edges at 1/n confidence each. Filter to confidence == 1.0 "
+        "when correctness matters more than recall. IMPORTS, DEFINES and "
+        "INHERITS edges carry no confidence key -- they are never ambiguous."
+    ),
+}
+
+DYNAMIC_CALLS_NOTE = (
+    "No CALLS edge does not prove no call happens at runtime. Dynamic "
+    "dispatch, reflection and generated code are invisible to a parser -- "
+    "hedge answers about them accordingly."
+)
+
+
 def write_manifest(g, path: Path, written: list[str]):
     """Describe the agent-facing output so a reader needs no other docs."""
     entry = sorted(
@@ -742,6 +781,9 @@ def write_manifest(g, path: Path, written: list[str]):
             "callers",
             "callees",
             "callees_external",
+            "caller_edges",
+            "callee_edges",
+            "base_edges",
             "text",
         ],
         "counts": dict(g.stats),
@@ -765,12 +807,98 @@ def write_manifest(g, path: Path, written: list[str]):
             "Dynamic dispatch, reflection and generated code are invisible to a parser.",
             "Absence of an edge is not proof of absence of a call.",
         ],
+        "usage_hints": {
+            "tool_decision_tree": TOOL_DECISION_TREE,
+            "confidence_semantics": CONFIDENCE_SEMANTICS,
+            # Same EDGE_TYPES dict manifest.json's top-level "edge_types" key
+            # already carries -- one authored copy, not a second one to drift.
+            "edge_type_meanings": EDGE_TYPES,
+            # Same labels write_overview_human's "## What was skipped" section
+            # counts against (_SKIP_STAT_LABELS) -- what's excluded by policy,
+            # not just what this particular build happened to skip.
+            "what_is_not_indexed": [label for _, label in _SKIP_STAT_LABELS]
+            + ["dynamic dispatch -- code that decides at runtime which function to call"],
+            "dynamic_calls_note": DYNAMIC_CALLS_NOTE,
+        },
     }
     with atomic_write(path, "w", encoding="utf8", newline="\n") as fh:
         fh.write(json.dumps(manifest, indent=2) + "\n")
 
 
 STATE_FORMAT = "repo2graph/state-1"
+
+INDEX_SCHEMA_VERSION = "1"
+
+
+def _stats_extra(g) -> dict:
+    """Additive stats.json fields, computed live from `g` at write time.
+
+    Never re-read from nodes.jsonl/edges.jsonl -- dump_all always has the
+    Graph in memory here, and re-deriving from the files it is about to write
+    would be a circular dependency for no reason.
+    """
+    indeg: Counter[str] = Counter()
+    for e in g.edges:
+        if e["type"] in ("IMPORTS", "CALLS"):
+            indeg[e["dst"]] += 1
+    hubs = sorted((n for n in g.nodes.values() if indeg[n["id"]]), key=lambda n: -indeg[n["id"]])[
+        :10
+    ]
+    extra: dict = {
+        "top_hub_nodes": [
+            {
+                "node_id": n["id"],
+                "label": n.get("qualname") or n.get("path") or n.get("name") or n["id"],
+                "in_degree": indeg[n["id"]],
+            }
+            for n in hubs
+        ],
+        "languages": dict(
+            Counter(
+                n.get("lang") for n in g.nodes.values() if n["type"] == "file" and n.get("lang")
+            ).most_common()
+        ),
+        # Flipped to True by _mark_has_vectors once `embed` (a separate,
+        # later command) writes vectors.npy -- false is correct at build time.
+        "has_vectors": False,
+        "index_schema_version": INDEX_SCHEMA_VERSION,
+    }
+    sha = _git_short_sha(g.root)
+    if sha:
+        extra["built_at_commit"] = sha
+    cochange = sorted(
+        (e for e in g.edges if e["type"] == "CO_CHANGE"), key=lambda e: -e.get("count", 0)
+    )[:5]
+    if cochange:
+        extra["co_change_hotspots"] = [
+            {
+                "file_a": g.nodes.get(e["src"], {}).get("path", e["src"]),
+                "file_b": g.nodes.get(e["dst"], {}).get("path", e["dst"]),
+                "weight": e.get("count", 0),
+            }
+            for e in cochange
+        ]
+    return extra
+
+
+def _mark_has_vectors(outdir) -> None:
+    """Flip stats.json's has_vectors to True after `embed` writes vectors.npy.
+
+    Best-effort, same as register_written: a missing or unreadable stats.json
+    (e.g. a fixture built with --formats that never writes one) is not
+    embed's problem to fix, so any failure here is silently skipped.
+    """
+    target = path(outdir, "stats.json")
+    try:
+        with open(target, encoding="utf8", newline="\n") as fh:
+            stats = json.load(fh)
+    except (OSError, UnicodeDecodeError, ValueError):
+        return
+    if not isinstance(stats, dict):
+        return
+    stats["has_vectors"] = True
+    with atomic_write(target, "w", encoding="utf8", newline="\n") as fh:
+        fh.write(json.dumps(stats, indent=2) + "\n")
 
 
 def register_written(outdir, names) -> bool:
@@ -781,6 +909,7 @@ def register_written(outdir, names) -> bool:
     counts, entrypoints, how_to_read -- is left exactly as it was. Returns
     False when there is no readable manifest to append to.
     """
+    names = list(names)
     target = path(outdir, "manifest.json")
     try:
         with open(target, encoding="utf8", newline="\n") as fh:
@@ -801,6 +930,8 @@ def register_written(outdir, names) -> bool:
     manifest["files"] = files
     with atomic_write(target, "w", encoding="utf8", newline="\n") as fh:
         fh.write(json.dumps(manifest, indent=2) + "\n")
+    if any(name.split("/", 1)[-1] == "vectors.npy" for name in names):
+        _mark_has_vectors(outdir)
     return True
 
 
@@ -897,7 +1028,7 @@ def dump_all(g, chunks, outdir: Path, formats: set[str], viz_nodes: int = MAX_NO
     if "html" in formats:
         write_html(g, out("graph.html")[0], viz_nodes)
     with atomic_write(out("stats.json")[0], "w", encoding="utf8", newline="\n") as fh:
-        fh.write(json.dumps(dict(g.stats), indent=2) + "\n")
+        fh.write(json.dumps({**dict(g.stats), **_stats_extra(g)}, indent=2) + "\n")
     write_state(g, out("index.state.json")[0], n_chunks)
     write_parse_cache(g, out("parse.cache.json")[0])
     write_manifest(g, out("manifest.json")[0], written)

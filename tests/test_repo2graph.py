@@ -510,6 +510,36 @@ def test_manifest_describes_the_agent_output(tmp_path, sample_repo):
     assert m["how_to_read"] and m["approximations"]
 
 
+def test_manifest_usage_hints_are_present_and_non_empty(tmp_path, sample_repo):
+    """usage_hints lets an agent orient without a round-trip tool call: every
+    key is populated, and edge_type_meanings/what_is_not_indexed are derived
+    from the same source manifest.json's top-level edge_types and the skip
+    labels write_overview_human's "What was skipped" section uses -- not a
+    second hand-authored copy that can drift."""
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out)])
+    m = json.loads(artifact_path(out, "manifest.json").read_text())
+    hints = m["usage_hints"]
+    for key in (
+        "tool_decision_tree",
+        "confidence_semantics",
+        "edge_type_meanings",
+        "what_is_not_indexed",
+        "dynamic_calls_note",
+    ):
+        assert hints[key], key
+
+    assert hints["edge_type_meanings"] == m["edge_types"]
+    assert set(hints["tool_decision_tree"]) >= {
+        "orient_first",
+        "search_by_question",
+        "trace_relationships",
+        "node_id_format",
+    }
+    assert "1.0" in hints["confidence_semantics"]
+    assert "lt_1.0" in hints["confidence_semantics"]
+
+
 def test_chunks_separate_in_repo_and_external_calls(tmp_path, sample_repo):
     out = tmp_path / "idx"
     main(["build", str(sample_repo), "-o", str(out), "--formats", "jsonl"])
@@ -520,6 +550,50 @@ def test_chunks_separate_in_repo_and_external_calls(tmp_path, sample_repo):
     assert "# calls: pkg/util.py::helper" in run["text"]
     assert "# calls (outside the repo): getpid" in run["text"]
     assert "# entry point:" in run["text"]
+
+
+def test_chunk_neighbours_carry_structured_edge_info(tmp_path):
+    """caller_edges/callee_edges/base_edges are the additive, structured
+    sibling of callers/callees/bases: same targets, plus edge_type,
+    edge_direction and -- only when ambiguous -- confidence."""
+    (tmp_path / "base.py").write_text("class Base:\n    pass\n")
+    (tmp_path / "sub.py").write_text(
+        "from base import Base\n\n\nclass Sub(Base):\n    def run(self):\n        helper()\n"
+    )
+    (tmp_path / "util.py").write_text("def helper():\n    pass\n")
+    (tmp_path / "other.py").write_text("def helper():\n    pass\n")
+
+    g = build(tmp_path)
+    chunks = {(c["path"], c["qualname"]): c for c in build_chunks(g)}
+
+    sub_class = chunks[("sub.py", "Sub")]
+    assert sub_class["base_edges"] == [
+        {"target": "base.py::Base", "edge_type": "INHERITS", "edge_direction": "outbound"}
+    ]
+    assert "confidence" not in sub_class["base_edges"][0]  # INHERITS is never ambiguous
+
+    run = chunks[("sub.py", "Sub.run")]
+    assert run["base_edges"] == []
+    callee_edges = run["callee_edges"]
+    assert len(callee_edges) == len(run["callees"]) == 2  # helper() is ambiguous: 2 candidates
+    targets = {e["target"] for e in callee_edges}
+    assert targets == {"util.py::helper", "other.py::helper"}
+    for e in callee_edges:
+        assert e["edge_type"] == "CALLS"
+        assert e["edge_direction"] == "outbound"
+        assert 0 < e["confidence"] < 1.0  # ambiguous: must be flagged, not omitted
+
+    helper_chunk = chunks[("util.py", "helper")]
+    assert helper_chunk["caller_edges"] == [
+        {
+            "target": "sub.py::Sub.run",
+            "edge_type": "CALLS",
+            "edge_direction": "inbound",
+            "confidence": next(
+                e["confidence"] for e in callee_edges if e["target"] == "util.py::helper"
+            ),
+        }
+    ]
 
 
 def test_no_chunks_flag(tmp_path, sample_repo):
@@ -565,6 +639,53 @@ def test_overview_lists_hubs(tmp_path, sample_repo):
     assert "# Repo overview:" in text
     assert "## At a glance" in text
     assert "pkg/util.py" in text
+
+
+def test_stats_json_carries_hub_nodes_languages_and_schema_version(tmp_path, sample_repo):
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out)])
+    stats = json.loads(artifact_path(out, "stats.json").read_text())
+
+    assert stats["index_schema_version"] == "1"
+    assert stats["has_vectors"] is False
+    assert stats["languages"].get("python", 0) >= 2
+    assert stats["top_hub_nodes"], "sample_repo has real IMPORTS/CALLS in-degree"
+    top = stats["top_hub_nodes"][0]
+    assert {"node_id", "label", "in_degree"} <= set(top)
+    degrees = [n["in_degree"] for n in stats["top_hub_nodes"]]
+    assert degrees == sorted(degrees, reverse=True)
+    assert "co_change_hotspots" not in stats  # no --git-history: nothing to report
+
+
+def test_stats_json_cochange_hotspots_and_built_at_commit(tmp_path):
+    run = lambda *a: subprocess.run(
+        ["git", "-C", str(tmp_path), *a], check=True, capture_output=True
+    )
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
+    run("config", "user.email", "t@example.com")
+    run("config", "user.name", "t")
+    for i in range(3):
+        (tmp_path / "a.py").write_text(f"a = {i}\n")
+        (tmp_path / "b.py").write_text(f"b = {i}\n")
+        run("add", "-A")
+        run("commit", "-qm", f"c{i}")
+
+    out = tmp_path / "idx"
+    main(["build", str(tmp_path), "-o", str(out), "--git-history", "10"])
+    stats = json.loads(artifact_path(out, "stats.json").read_text())
+
+    assert stats["co_change_hotspots"] == [{"file_a": "a.py", "file_b": "b.py", "weight": 3}]
+    assert re.fullmatch(r"[0-9a-f]{7,40}", stats["built_at_commit"])
+
+
+def test_embed_flips_has_vectors_in_stats_json(mini_index, use_stub_embedder, capsys):
+    """has_vectors is read from the same has-vectors-been-written fact
+    register_written already appends vectors.npy for -- not a hardcoded
+    guess, and not re-derived independently."""
+    assert json.loads(artifact_path(mini_index, "stats.json").read_text())["has_vectors"] is False
+    main(["embed", "-o", str(mini_index)])
+    capsys.readouterr()
+    assert json.loads(artifact_path(mini_index, "stats.json").read_text())["has_vectors"] is True
 
 
 def test_write_overview_human_at_a_glance_matches_graph_stats(tmp_path, sample_graph):
