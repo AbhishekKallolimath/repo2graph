@@ -17,8 +17,10 @@ Call order from `cli.cmd_build`:
 
 import json
 from pathlib import Path
+from typing import Any
 
 from .export import atomic_write, make_path, path as artifact_path
+from .graph import Graph
 from .query import read_jsonl
 
 MAX_ITEMS = 50
@@ -34,7 +36,9 @@ INDEGREE_EDGE_TYPES = ("IMPORTS", "CALLS")
 HOTSPOT_DELTA = 3
 
 
-def previous_state(outdir) -> tuple[list[dict], list[dict]] | None:
+def previous_state(
+    outdir: str | Path,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]] | None:
     """Snapshot the previous build's nodes/edges, or None if there is none.
 
     Must be called before `export.dump_all` runs: `dump_all` overwrites
@@ -60,7 +64,7 @@ def previous_state(outdir) -> tuple[list[dict], list[dict]] | None:
     return prev_nodes, prev_edges
 
 
-def _prev_commit_sha(outdir) -> str | None:
+def _prev_commit_sha(outdir: str | Path) -> str | None:
     """A previously recorded commit sha, if one exists.
 
     `agent/index.json` is written only by `repo2graph github`/`fetch.py`, so a
@@ -79,7 +83,7 @@ def _prev_commit_sha(outdir) -> str | None:
     return sha if isinstance(sha, str) and sha and sha != "unknown" else None
 
 
-def resolve_shas(repo_path, outdir) -> tuple[str | None, str | None]:
+def resolve_shas(repo_path: str | Path, outdir: str | Path) -> tuple[str | None, str | None]:
     """(current_short_sha, previous_short_sha) for the CHANGELOG.md header.
 
     Call before `dump_all` writes a new `agent/index.json` (`build` itself
@@ -95,11 +99,11 @@ def resolve_shas(repo_path, outdir) -> tuple[str | None, str | None]:
     return current, prev_sha
 
 
-def _edge_key(e: dict) -> tuple:
+def _edge_key(e: dict[str, Any]) -> tuple[Any, Any, Any]:
     return (e.get("src"), e.get("dst"), e.get("type"))
 
 
-def _indegree(edges) -> dict[str, int]:
+def _indegree(edges: list[dict[str, Any]]) -> dict[str, int]:
     deg: dict[str, int] = {}
     for e in edges:
         if e.get("type") in INDEGREE_EDGE_TYPES:
@@ -109,11 +113,11 @@ def _indegree(edges) -> dict[str, int]:
     return deg
 
 
-def _node_line(n: dict) -> str:
+def _node_line(n: dict[str, Any]) -> str:
     return f"- {n.get('id')}  ({n.get('type', '')})"
 
 
-def _edge_line(e: dict) -> str:
+def _edge_line(e: dict[str, Any]) -> str:
     conf = e.get("confidence")
     suffix = f"  (confidence: {conf})" if conf is not None else ""
     return f"- {e.get('type')}: {e.get('src')} → {e.get('dst')}{suffix}"
@@ -127,9 +131,9 @@ def _section(lines: list[str], count: int) -> list[str]:
 
 
 def build_changelog_markdown(
-    g,
-    prev_nodes: list[dict],
-    prev_edges: list[dict],
+    g: Graph,
+    prev_nodes: list[dict[str, Any]],
+    prev_edges: list[dict[str, Any]],
     short_sha: str | None,
     prev_short_sha: str | None,
     build_date: str,
@@ -203,9 +207,9 @@ def build_changelog_markdown(
 
 
 def write_changelog(
-    outdir,
-    g,
-    prev_state: tuple[list[dict], list[dict]] | None,
+    outdir: str | Path,
+    g: Graph,
+    prev_state: tuple[list[dict[str, Any]], list[dict[str, Any]]] | None,
     short_sha: str | None,
     prev_short_sha: str | None,
     build_date: str,

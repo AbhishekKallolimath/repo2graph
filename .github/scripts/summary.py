@@ -234,9 +234,7 @@ def parse_changelog(text: str) -> dict:
         next_header = _NEXT_HEADER_RE.search(rest)
         block = rest[: next_header.start()] if next_header else rest
         result["hotspots"] = [
-            line.strip()[2:].strip()
-            for line in block.split("\n")
-            if line.strip().startswith("- ")
+            line.strip()[2:].strip() for line in block.split("\n") if line.strip().startswith("- ")
         ]
 
     return result
@@ -338,7 +336,9 @@ def render(args) -> str:
         out.append(delta)
 
     if args.artifact_name:
-        out.append(f"> Artifact: download `{args.artifact_name}` for the full interactive graph.html")
+        out.append(
+            f"> Artifact: download `{args.artifact_name}` for the full interactive graph.html"
+        )
 
     return "\n".join(out).rstrip() + "\n"
 

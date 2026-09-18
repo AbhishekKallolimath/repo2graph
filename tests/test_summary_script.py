@@ -44,12 +44,46 @@ def _mock_artifacts(tmp_path: Path):
     (agent / "stats.json").write_text(json.dumps(stats, indent=2), encoding="utf8")
 
     nodes = [
-        {"id": "file:pkg/core.py", "type": "file", "name": "core.py", "path": "pkg/core.py", "lang": "python"},
-        {"id": "file:pkg/util.py", "type": "file", "name": "util.py", "path": "pkg/util.py", "lang": "python"},
-        {"id": "file:cmd/main.go", "type": "file", "name": "main.go", "path": "cmd/main.go", "lang": "go"},
-        {"id": "file:README.md", "type": "file", "name": "README.md", "path": "README.md", "lang": "markdown"},
-        {"id": "sym:pkg/core.py::dispatch", "type": "symbol", "kind": "function", "path": "pkg/core.py"},
-        {"id": "sym:pkg/util.py::helper", "type": "symbol", "kind": "function", "path": "pkg/util.py"},
+        {
+            "id": "file:pkg/core.py",
+            "type": "file",
+            "name": "core.py",
+            "path": "pkg/core.py",
+            "lang": "python",
+        },
+        {
+            "id": "file:pkg/util.py",
+            "type": "file",
+            "name": "util.py",
+            "path": "pkg/util.py",
+            "lang": "python",
+        },
+        {
+            "id": "file:cmd/main.go",
+            "type": "file",
+            "name": "main.go",
+            "path": "cmd/main.go",
+            "lang": "go",
+        },
+        {
+            "id": "file:README.md",
+            "type": "file",
+            "name": "README.md",
+            "path": "README.md",
+            "lang": "markdown",
+        },
+        {
+            "id": "sym:pkg/core.py::dispatch",
+            "type": "symbol",
+            "kind": "function",
+            "path": "pkg/core.py",
+        },
+        {
+            "id": "sym:pkg/util.py::helper",
+            "type": "symbol",
+            "kind": "function",
+            "path": "pkg/util.py",
+        },
     ]
     _write_jsonl(agent / "nodes.jsonl", nodes)
 
@@ -57,7 +91,12 @@ def _mock_artifacts(tmp_path: Path):
         {"src": "dir:pkg", "dst": "file:pkg/core.py", "type": "CONTAINS"},
         {"src": "file:pkg/util.py", "dst": "file:pkg/core.py", "type": "IMPORTS"},
         {"src": "file:cmd/main.go", "dst": "file:pkg/core.py", "type": "IMPORTS"},
-        {"src": "sym:pkg/util.py::helper", "dst": "sym:pkg/core.py::dispatch", "type": "CALLS", "confidence": 1.0},
+        {
+            "src": "sym:pkg/util.py::helper",
+            "dst": "sym:pkg/core.py::dispatch",
+            "type": "CALLS",
+            "confidence": 1.0,
+        },
         {"src": "file:pkg/core.py", "dst": "sym:pkg/core.py::dispatch", "type": "DEFINES"},
         {"src": "file:pkg/util.py", "dst": "file:cmd/main.go", "type": "CO_CHANGE", "count": 5},
         {"src": "file:pkg/core.py", "dst": "file:pkg/util.py", "type": "CO_CHANGE", "count": 8},
@@ -171,9 +210,7 @@ def test_summary_omits_graph_delta_when_changelog_file_missing(tmp_path):
 
 def test_summary_survives_missing_stats_file(tmp_path):
     _, nodes, edges = _mock_artifacts(tmp_path)
-    proc = _run(
-        tmp_path, stats=tmp_path / "agent" / "nope.json", nodes=nodes, edges=edges
-    )
+    proc = _run(tmp_path, stats=tmp_path / "agent" / "nope.json", nodes=nodes, edges=edges)
     assert proc.returncode == 0, proc.stderr
     assert "Traceback" not in proc.stderr
     assert re.search(r"\|\s*Files indexed\s*\|\s*N/A\s*\|", proc.stdout), proc.stdout
