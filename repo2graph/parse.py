@@ -152,6 +152,14 @@ DEFAULT_SKIP_DIRS = {
 MAX_BYTES = 1_500_000
 
 
+@dataclass
+class BuildConfig:
+    max_file_bytes: int = 1_500_000
+    extra_exclude_dirs: list[str] = field(default_factory=list)
+    include_vendor: bool = False
+    chunk_large_files: bool = False
+
+
 def _git_files(root: Path):
     try:
         # stdin=DEVNULL: capture_output redirects the child's stdout and stderr
@@ -173,10 +181,12 @@ def _git_files(root: Path):
         return None
 
 
-def _walk_files(root: Path):
+def _walk_files(root: Path, skip_dirs=None):
+    if skip_dirs is None:
+        skip_dirs = DEFAULT_SKIP_DIRS
     files = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in DEFAULT_SKIP_DIRS]
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
         for fn in filenames:
             files.append(Path(dirpath) / fn)
     return files
@@ -228,15 +238,21 @@ def is_binary(path: Path) -> bool:
         return True
 
 
-def discover(root: Path, include_globs=None, exclude_globs=None, stats=None):
+def discover(root: Path, include_globs=None, exclude_globs=None, stats=None, config: BuildConfig | None = None):
     """Yield (relative_path, absolute_path) for candidate source files."""
+    if config is None:
+        config = BuildConfig()
+    skip_dirs = set(DEFAULT_SKIP_DIRS) | set(config.extra_exclude_dirs)
+    if config.include_vendor:
+        skip_dirs.discard("vendor")
+
     root = root.resolve()
     files = _git_files(root)
     if files is not None:
         if stats is not None:
             stats["discovery"] = "git"
     else:
-        files = _walk_files(root)
+        files = _walk_files(root, skip_dirs=skip_dirs)
         if stats is not None:
             stats["discovery"] = "walk"
     for abspath in files:
@@ -244,14 +260,17 @@ def discover(root: Path, include_globs=None, exclude_globs=None, stats=None):
             rel = abspath.relative_to(root)
         except ValueError:
             continue
-        if any(part in DEFAULT_SKIP_DIRS for part in rel.parts):
+        if any(part in skip_dirs for part in rel.parts):
             continue
         try:
             st = abspath.lstat()
         except OSError:
             continue
-        if not statmod.S_ISREG(st.st_mode) or st.st_size > MAX_BYTES:
-            continue
+        if not statmod.S_ISREG(st.st_mode) or st.st_size > config.max_file_bytes:
+            if st.st_size > config.max_file_bytes and config.chunk_large_files:
+                pass
+            else:
+                continue
         rp = rel.as_posix()
         if include_globs and not matches_any(rp, include_globs):
             continue
@@ -297,6 +316,8 @@ class ParsedFile:
     symbols: list[Symbol]
     imports: list[str]
     parse_errors: int = 0
+    used_cpp: bool = False
+    is_chunked: bool = False
 
 
 def _text(src: bytes, node) -> str:
@@ -455,16 +476,54 @@ def _bases(src: bytes, node, lang: str) -> list[str]:
     return uniq[:8]
 
 
-def parse_source(source: bytes, lang: str) -> ParsedFile:
+def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -> ParsedFile:
     cfg = LANG_CFG.get(lang)
     parser = parser_for(lang)
     if cfg is None or parser is None:
         return ParsedFile(lang=lang, symbols=[], imports=[])
     tree = parser.parse(source)
+
+    def _count_errors(node):
+        errs = 0
+        stack = [node]
+        while stack:
+            n = stack.pop()
+            if n.type == "ERROR":
+                errs += 1
+            stack.extend(n.children)
+        return errs
+
+    errors = _count_errors(tree.root_node)
+    used_cpp = False
+
+    if errors > 0 and lang in ("c", "cpp") and filepath is not None:
+        try:
+            if Path(filepath).suffix.lower() in (".c", ".cc", ".cpp", ".h", ".hpp"):
+                try:
+                    subprocess.run(["cpp", "--version"], capture_output=True, timeout=5, check=True)
+                    out = subprocess.run(["cpp", "-w", "-P", "-undef", str(filepath)], capture_output=True, text=True, timeout=10)
+                    if out.returncode == 0:
+                        cpp_bytes = out.stdout.encode("utf8", "replace")
+                        if len(cpp_bytes) <= 2 * len(source):
+                            cpp_tree = parser.parse(cpp_bytes)
+                            cpp_errors = _count_errors(cpp_tree.root_node)
+                            if cpp_errors < errors:
+                                tree = cpp_tree
+                                source = cpp_bytes
+                                errors = cpp_errors
+                                used_cpp = True
+                        else:
+                            import logging
+                            logging.warning(f"cpp output for {filepath} is too large, skipping")
+                except (OSError, subprocess.SubprocessError):
+                    pass
+        except Exception:
+            pass
+
     kind_map, call_types, import_types = cfg["kind_map"], cfg["call_types"], cfg["import_types"]
     symbols: list[Symbol] = []
     imports: list[str] = []
-    errors = 0
+    final_errors = 0
 
     # Explicit stack rather than recursion: tree-sitter trees nest deeply enough
     # (long chained expressions, big literals) to blow the interpreter's limit.
@@ -473,7 +532,7 @@ def parse_source(source: bytes, lang: str) -> ParsedFile:
         node, scope, owner = stack.pop()
         ntype = node.type
         if ntype == "ERROR":
-            errors += 1
+            final_errors += 1
         if ntype in import_types:
             raw = _text(source, node).strip()
             if raw:
@@ -512,4 +571,4 @@ def parse_source(source: bytes, lang: str) -> ParsedFile:
         for c in reversed(node.named_children):
             stack.append((c, child_scope, child_owner))
     return ParsedFile(lang=lang, symbols=symbols, imports=imports,
-                      parse_errors=errors)
+                      parse_errors=final_errors, used_cpp=used_cpp)

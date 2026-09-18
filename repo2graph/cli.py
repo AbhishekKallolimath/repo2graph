@@ -75,20 +75,27 @@ def cmd_build(args):
         raise SystemExit(f"error: repository directory does not exist or is not a directory: {repo_path}")
     formats = parse_formats(args.formats)
     outdir = Path(args.out)
-    # An absent or unreadable cache is an empty dict, which is exactly a full
-    # build -- so `--incremental` against a directory with no index yet works,
-    # it just has nothing to reuse on the first run.
     cache = load_parse_cache(outdir) if getattr(args, "incremental", False) else None
+
+    from .parse import BuildConfig
+    config = BuildConfig(
+        max_file_bytes=int(args.max_file_mb * 1_000_000),
+        extra_exclude_dirs=args.extra_exclude_dirs or [],
+        include_vendor=args.include_vendor,
+        chunk_large_files=args.chunk_large_files,
+    )
+
     g = build(repo_path, include=args.include, exclude=args.exclude,
               git_history=args.git_history, max_files=args.max_files, jobs=args.jobs,
-              cache=cache)
-    chunks = None if args.no_chunks else iter_chunks(g)   # a generator, streamed to disk
+              cache=cache, max_call_candidates=args.max_call_candidates, config=config)
+    chunks = None if args.no_chunks else iter_chunks(g)
     written, n_chunks = dump_all(g, chunks, outdir, formats, args.viz_nodes)
     report = {"out": str(outdir), "written": written,
               "stats": dict(g.stats), "chunks": n_chunks}
     if g.incremental is not None:
         report["incremental"] = g.incremental
     _emit(json.dumps(report, indent=2))
+
 
 
 def cmd_github(args):
@@ -425,6 +432,16 @@ def _nonneg(value: str) -> int:
     return n
 
 
+
+def _posint(value: str) -> int:
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected an integer, got {value!r}") from None
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"must be >= 1, got {n}")
+    return n
+
 def _viz_nodes(value: str):
     """argparse type for --viz-nodes: a non-negative int, or "all" for no cap.
 
@@ -479,6 +496,16 @@ def _add_vector_flags(parser) -> None:
                              f"--vectors; must match the index (default: {EMBED_DEFAULT_MODEL})")
 
 
+def _max_file_mb(value: str) -> float:
+    try:
+        f = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a number, got {value!r}") from None
+    if f < 0.1:
+        raise argparse.ArgumentTypeError("--max-file-mb must be at least 0.1")
+    return f
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="repo2graph", description=__doc__)
     p.add_argument("-v", "--version", action="version",
@@ -513,6 +540,16 @@ def main(argv=None):
     b = sub.add_parser("build", parents=[common], help="parse a repo into a graph + RAG chunks")
     b.add_argument("repo")
     b.add_argument("--no-chunks", action="store_true")
+    b.add_argument("--max-call-candidates", type=_posint, default=5,
+                   help="maximum number of candidates to keep for ambiguous calls")
+    b.add_argument("--max-file-mb", type=_max_file_mb, default=1.5,
+                   help="max file size in MB before skipping or chunking (default: 1.5, min: 0.1)")
+    b.add_argument("--include-vendor", action="store_true", default=False,
+                   help="index files in vendor directories (default: off)")
+    b.add_argument("--exclude-dir", action="append", default=[], dest="extra_exclude_dirs",
+                   metavar="NAME", help="additional directory name to exclude (repeatable)")
+    b.add_argument("--chunk-large-files", action="store_true", default=False,
+                   help="chunk and parse files exceeding max-file-mb instead of skipping them (default: off)")
     b.add_argument("--incremental", action="store_true",
                    help="reuse parse results for files whose content hash is "
                         "unchanged since the last build in --out (default: off, "

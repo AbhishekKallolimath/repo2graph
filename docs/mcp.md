@@ -1,5 +1,7 @@
 # MCP server
 
+> **Note**: `repo2graph-mcp` requires the `mcp` SDK `mcp>=1.0,<3.0`. You can install it using `pip install 'repo2graph[mcp]'`.
+
 `repo2graph-mcp` is a stdio [MCP](https://modelcontextprotocol.io) server over an
 existing `.r2g` index, so an agent can ask the map questions itself instead of you
 pasting a pack into a chat window.
@@ -139,17 +141,97 @@ runtime argument — see [`server.json`](../server.json).
 > path as `command` — `.venv/bin/repo2graph-mcp`, or
 > `.venv\Scripts\repo2graph-mcp.exe` on Windows.
 
-## The three tools
+## Tools
 
 | Tool | Arguments | What comes back |
 |---|---|---|
 | `repo_map` | none | Languages, hub files and top entry points. Stable across calls, so it caches. Read this first. |
 | `repo_search` | `query`, optional `k`, `hops`, `budget_tokens` | Seed chunks plus their graph neighbours, each block headed `[cite: path:start-end]`. |
 | `repo_neighbours` | `node_id`, optional `hops`, `limit` | One graph hop from a node: callers, callees, base classes and the defining file, with edge direction. |
+| `repo_cache_stats` | none | JSON object with cache metrics (hits, misses, size, etc.). |
+| `repo_build_status` | `task_id` | JSON object with build task status, progress, and error details. |
 
 `repo_neighbours` takes ids in the same shape the rest of the project uses:
 `file:<path>`, `sym:<path>::<qualname>`, `dir:<path>`. Hand it something else and
 it says so instead of returning nothing.
+
+### `repo_cache_stats`
+
+**Purpose:** Retrieve runtime diagnostic counters for the tool result cache. An agent calls this to inspect cache efficiency or debug server performance.
+
+**Input parameters:** none (empty object).
+
+**Output fields:**
+
+| Field | Type | Meaning |
+|---|---|---|
+| `enabled` | boolean | Whether the cache is active (`max_size > 0` and `ttl > 0`). |
+| `hits` | integer | Number of successful cache lookups. |
+| `misses` | integer | Number of lookups for items not in the cache or expired. |
+| `size` | integer | Current number of entries in the cache. |
+| `max_size` | integer | Maximum number of entries before eviction. |
+| `ttl_s` | integer | Time-to-live for a cached entry, in seconds. |
+| `evictions` | integer | Number of entries removed to make room for new ones. |
+| `hit_rate` | float | Ratio of hits to total lookups (e.g. `0.75`). |
+
+**Example:**
+
+Call: `repo_cache_stats()`
+
+Result:
+```json
+{
+  "hits": 12,
+  "misses": 4,
+  "size": 4,
+  "max_size": 256,
+  "ttl_s": 60,
+  "evictions": 0,
+  "hit_rate": 0.75,
+  "enabled": true
+}
+```
+
+### `repo_build_status`
+
+**Purpose:** Query progress and status of an asynchronous background index build started with the `--async-build` flag.
+
+**Input parameters:**
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `task_id` | string (required) | The opaque handle returned by a previous tool call that initiated the background build. |
+
+**Output fields:**
+
+| Field | Type | Meaning |
+|---|---|---|
+| `task_id` | string | The requested task ID. |
+| `status` | string | Current state: `"building"`, `"ready"`, `"failed"`, or `"unknown"`. |
+| `progress_pct` | integer | Estimated completion percentage (1-100). |
+| `eta_s` | integer | Estimated seconds remaining. |
+| `error` | string \| null | Human-readable failure message if status is `"failed"`. |
+| `progress_is_estimated` | boolean | Always `true`, indicating progress is an estimate based on file count. |
+
+**Example sequence:**
+
+1. Call `repo_map()` while the server is running with `--async-build` and no index exists.
+2. The server responds with a message indicating a build started:
+   ```text
+   the index for this repository is still being built. Call repo_build_status with task_id '8d7f3e2a-...' to check; roughly 12s remaining (15% done, estimated).
+   ```
+3. Call `repo_build_status(task_id="8d7f3e2a-...")`.
+4. Result:
+   ```json
+   {
+     "task_id": "8d7f3e2a-...",
+     "status": "building",
+     "progress_pct": 45,
+     "eta_s": 8,
+     "error": null,
+     "progress_is_estimated": true
+   }
+   ```
 
 ## Three promises the server keeps that the CLI leaves to you
 

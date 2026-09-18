@@ -35,6 +35,30 @@ from .cache import DEFAULT_MAX_SIZE, DEFAULT_TTL, ResultCache
 from .export import path as artifact_path
 from .query import Index, _fit_lines, count_tokens
 
+def check_mcp_version(version_str: str | None = None):
+    import mcp
+    v_str = version_str or getattr(mcp, "__version__", None)
+    if not v_str:
+        try:
+            from importlib.metadata import version as _dist_version
+            v_str = _dist_version("mcp")
+        except Exception:
+            v_str = "1.0.0"
+        setattr(mcp, "__version__", v_str)
+    parts = []
+    for x in v_str.split(".")[:2]:
+        try:
+            parts.append(int(x))
+        except ValueError:
+            parts.append(0)
+    _mcp_version = tuple(parts)
+    if _mcp_version < (1, 0):
+        raise RuntimeError(
+            f"repo2graph requires mcp>=1.0, found {v_str}. "
+            "Run: pip install 'repo2graph[mcp]' to get the right version."
+        )
+
+
 # The formats a served index actually needs: `jsonl` carries the chunks, nodes
 # and edges every tool reads, `overview` is what repo_map hands back. The other
 # three (`html`, `graphml`, `cypher`) are for humans and other tools, and cost
@@ -541,9 +565,7 @@ MISSING_SDK = ('the MCP server needs the optional `mcp` extra: '
 # `import mcp` is therefore not evidence the SDK is usable -- the guard has to
 # look at the API surface, or the user gets exactly the traceback it exists to
 # prevent, one SDK major later.
-SDK_SPEC = "mcp>=1.0,<2"
-REQUIRED_SERVER_API = ("list_tools", "call_tool")
-
+SDK_SPEC = "mcp>=1.0,<3.0"
 
 def _sdk_version(module) -> str:
     """Best-effort version of the installed SDK, for the error message."""
@@ -559,7 +581,7 @@ def _sdk_version(module) -> str:
 
 def _unusable_sdk(version: str, detail: str) -> str:
     return (f"the installed mcp SDK ({version}) is not supported by "
-            f"repo2graph-mcp: {detail}. Install a 1.x SDK instead: "
+            f"repo2graph-mcp: {detail}. Install a 1.x or 2.x SDK instead: "
             f'pip install "{SDK_SPEC}" '
             '(or `pip install "repo2graph[mcp]"` in a clean environment).')
 
@@ -578,16 +600,10 @@ def _require_sdk():
     if mcp is None:
         raise SystemExit(MISSING_SDK)
     try:
-        from mcp.server import Server
+        from mcp.server import Server as _Server  # noqa: F401
     except ImportError as exc:
         raise SystemExit(_unusable_sdk(
             _sdk_version(mcp), f"`from mcp.server import Server` failed ({exc})")) from None
-    missing = [name for name in REQUIRED_SERVER_API if not hasattr(Server, name)]
-    if missing:
-        raise SystemExit(_unusable_sdk(
-            _sdk_version(mcp),
-            "its Server has no " + "/".join(missing)
-            + " decorator (removed in mcp 2.x)"))
     return mcp
 
 
@@ -613,7 +629,7 @@ def get_tools(types_module=None):
         if tool_fields is None:
             tool_fields = getattr(tool_cls, "__annotations__", {})
         if "annotations" in tool_fields or hasattr(tool_cls, "annotations"):
-            ann = dict(TOOL_ANNOTATIONS)
+            ann: dict[str, object] = dict(TOOL_ANNOTATIONS)
             if name in TOOL_TITLES:
                 ann["title"] = TOOL_TITLES[name]
             if tool_ann_cls is not None:
@@ -627,26 +643,32 @@ def get_tools(types_module=None):
     return tools
 
 
+class ServerWrapper:
+    def __init__(self, name, version=None):
+        self.name = name
+        self.version = version
+        self.tools = {}
+
+    def add_tool(self, name, handler, schema=None):
+        self.tools[name] = {"handler": handler, "schema": schema}
+
+server = ServerWrapper("repo2graph", version=__version__)
+server.add_tool("repo_map", tool_repo_map, TOOL_SCHEMAS["repo_map"])
+server.add_tool("repo_search", tool_repo_search, TOOL_SCHEMAS["repo_search"])
+server.add_tool("repo_neighbours", tool_repo_neighbours, TOOL_SCHEMAS["repo_neighbours"])
+server.add_tool("repo_cache_stats", tool_cache_stats, TOOL_SCHEMAS["repo_cache_stats"])
+server.add_tool("repo_build_status", tool_build_status, TOOL_SCHEMAS["repo_build_status"])
+
+
 def serve(out, repo=None, cache=None, tasks=None) -> None:
     """Run the stdio MCP server against the index at `out`.
 
     Deliberately thin: every answer comes from dispatch(), which is tested
     without the SDK, so SDK API drift can break the wiring but nothing else.
-
-    When `repo` is given and no index exists yet, the build happens on the first
-    tool call rather than here, and that placement is the whole point. A client
-    spawns this process and waits for the `initialize` response; blocking that
-    handshake for the minute a large repo takes to parse makes the server look
-    dead and the client gives up. Building on first call instead means the
-    handshake is instant, the tools list, and the one slow call writes a real
-    index to disk -- so even if *that* call times out, the work is not lost and
-    the retry is instant. A failure that heals itself beats one that does not.
     """
     mcp = _require_sdk()
     index_dir = Path(out)
     if repo is None:
-        # No repo to build from: the index must already exist, so say so now
-        # rather than at the first call.
         open_index(index_dir)
     import asyncio
 
@@ -654,22 +676,24 @@ def serve(out, repo=None, cache=None, tasks=None) -> None:
     from mcp.server.stdio import stdio_server
     from mcp.types import TextContent
 
-    # version= is not optional in practice. Left unset, the SDK fills serverInfo
-    # with *its own* version, so every client is told repo2graph is whatever
-    # release of `mcp` happens to be installed -- 1.30.0 against a 1.4.0 package.
-    # The HTTP transport reports __version__ correctly, so omitting it here also
-    # made the two transports disagree about what they are.
-    server = Server("repo2graph", version=__version__)
+    supports_decorators = hasattr(Server, "list_tools")
 
-    @server.list_tools()
-    async def list_tools():
+    async def list_tools_handler(*args, **kwargs):
         return get_tools(mcp.types)
 
-    @server.call_tool()
-    async def call_tool(name, arguments):
+    async def call_tool_handler(*args, **kwargs):
+        name = None
+        arguments = None
+
+        if not supports_decorators:
+            params = args[1]
+            name = params.name
+            arguments = params.arguments
+        else:
+            name = args[0]
+            arguments = args[1] if len(args) > 1 else kwargs.get("arguments")
+
         if (name or "") == "repo_build_status":
-            # Answerable without an index, and the only tool that is: asking
-            # for build progress must not itself wait on the build.
             return [TextContent(type="text",
                                 text=dispatch(None, name, arguments or {},
                                               cache=cache, tasks=tasks))]
@@ -679,10 +703,29 @@ def serve(out, repo=None, cache=None, tasks=None) -> None:
         text = dispatch(index, name, arguments or {}, cache=cache, tasks=tasks)
         return [TextContent(type="text", text=text)]
 
+    if supports_decorators:
+        mcp_server = Server(server.name, version=server.version)
+        mcp_server.list_tools()(list_tools_handler)
+        mcp_server.call_tool()(call_tool_handler)
+    else:
+        async def list_tools_2x(ctx, params):
+            return mcp.types.ListToolsResult(tools=await list_tools_handler())
+
+        async def call_tool_2x(ctx, params):
+            content = await call_tool_handler(ctx, params)
+            return mcp.types.CallToolResult(content=content)
+
+        try:
+            mcp_server = Server(server.name, version=server.version,  # type: ignore[call-arg]
+                                on_list_tools=list_tools_2x,
+                                on_call_tool=call_tool_2x)
+        except TypeError:
+            mcp_server = Server(server.name, version=server.version)
+
     async def _run():
         async with stdio_server() as (read_stream, write_stream):
-            await server.run(read_stream, write_stream,
-                             server.create_initialization_options())
+            await mcp_server.run(read_stream, write_stream,
+                                 mcp_server.create_initialization_options())
 
     asyncio.run(_run())
 

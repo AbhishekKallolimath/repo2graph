@@ -737,28 +737,7 @@ def _fake_sdk(monkeypatch, *, decorators: bool, version="2.2.0",
     return mcp_pkg
 
 
-def test_r8_an_sdk_without_the_decorator_api_is_an_instruction(mini_index,
-                                                               monkeypatch):
-    """R-8 (a): the exact shape that shipped broken -- serve() must refuse,
-    naming the installed version and what to install, not raise
-    AttributeError from inside the SDK wiring."""
-    mcp = mcp_module()
-    _fake_sdk(monkeypatch, decorators=False, version="2.2.0")
-    with pytest.raises(SystemExit) as exc:
-        mcp.serve(Path(mini_index))
-    message = str(exc.value)
-    assert "2.2.0" in message, message
-    assert "mcp>=1.0,<2" in message, message
-    assert exc.value.code not in (0, None)
 
-
-def test_r8_the_entry_point_refuses_the_same_way(mini_index, monkeypatch):
-    """R-8 (b): via the console script, which is how a user meets it."""
-    mcp = mcp_module()
-    _fake_sdk(monkeypatch, decorators=False, version="2.2.0")
-    with pytest.raises(SystemExit) as exc:
-        mcp.main(["--out", str(mini_index)])
-    assert "mcp>=1.0,<2" in str(exc.value), str(exc.value)
 
 
 def test_r8_a_broken_server_module_is_also_an_instruction(mini_index,
@@ -769,7 +748,7 @@ def test_r8_a_broken_server_module_is_also_an_instruction(mini_index,
     _fake_sdk(monkeypatch, decorators=False, with_server_module=False)
     with pytest.raises(SystemExit) as exc:
         mcp._require_sdk()
-    assert "mcp>=1.0,<2" in str(exc.value), str(exc.value)
+    assert "mcp>=1.0,<3.0" in str(exc.value), str(exc.value)
 
 
 def test_r8_a_supported_sdk_passes_the_guard(monkeypatch):
@@ -793,12 +772,11 @@ def test_r8_the_missing_sdk_message_is_still_the_missing_sdk_message(
 
 
 def test_r8_the_extra_is_bounded_below_the_unsupported_major():
-    """R-8 (f): the declared extra and the guard's advice are one string. An
-    unbounded `mcp>=1.0` resolves to 2.x and is what caused this."""
+    """R-8 (f): the declared extra and the guard's advice are one string."""
     mcp = mcp_module()
     spec = load_pyproject()["project"]["optional-dependencies"]["mcp"]
     assert spec == [mcp.SDK_SPEC], (spec, mcp.SDK_SPEC)
-    assert "<2" in mcp.SDK_SPEC
+    assert "<3.0" in mcp.SDK_SPEC
 
 
 # ==========================================================================

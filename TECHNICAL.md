@@ -44,8 +44,10 @@ deliberate trade-off — the alternative is a project-specific setup step per la
 exactly what repo2graph exists to avoid. That trade-off shows up in a few specific, bounded ways:
 
 - **`CALLS` is matched by name, not by type.** If two functions in the codebase share a name,
-  repo2graph draws up to 5 possible `CALLS` edges from a call site and gives each one
-  `confidence = 1/n`. A single unambiguous match gets `confidence = 1.0`. If your use of the graph
+  repo2graph uses heuristics (same-file, same-directory, and imports) to boost the confidence 
+  of the most likely candidates. If heuristics fail to break a tie, it draws up to `max_call_candidates` 
+  possible `CALLS` edges from a call site and gives each one equal confidence and `ambiguous=True`. 
+  A single unambiguous match gets `confidence = 1.0`. If your use of the graph
   needs certainty rather than a ranked guess, filter to `confidence == 1.0` edges only.
 - **Import resolution is per-language**, matching each language's actual module/package
   conventions (relative imports, package `__init__`-style re-exports, Go's module paths, and so
