@@ -87,12 +87,14 @@ def cmd_build(args):
     formats = parse_formats(args.formats)
     outdir = Path(args.out)
     from .parse import BuildConfig
+
     config = BuildConfig(
         max_file_bytes=int(args.max_file_mb * 1_000_000),
         extra_exclude_dirs=args.extra_exclude_dirs or [],
         include_vendor=args.include_vendor,
         chunk_large_files=args.chunk_large_files,
     )
+    cache = load_parse_cache(outdir) if getattr(args, "incremental", False) else None
 
     g = build(
         repo_path,
