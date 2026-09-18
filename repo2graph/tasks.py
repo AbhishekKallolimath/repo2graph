@@ -161,15 +161,20 @@ class TaskManager:
             # BaseException, not Exception: a build killed by a SystemExit from
             # deep in the stack must still mark the task failed rather than
             # leaving it reporting "building" until the process dies.
-            task.error = f"{type(exc).__name__}: {exc}"
-            task.status = FAILED
-            task.finished_at = time.monotonic()
+            # This runs on the build's background thread; every other mutator
+            # in this class holds self._lock, so the same three assignments do
+            # here (ISS-109) rather than racing a concurrent get()/for_dir().
+            with self._lock:
+                task.error = f"{type(exc).__name__}: {exc}"
+                task.status = FAILED
+                task.finished_at = time.monotonic()
             from .events import emit
 
             emit("index_build_failed", level="error", task_id=task.task_id, error=task.error)
             return
-        task.status = READY
-        task.finished_at = time.monotonic()
+        with self._lock:
+            task.status = READY
+            task.finished_at = time.monotonic()
 
     def get(self, task_id: str) -> BuildTask | None:
         """The task with this id, or None if it was never issued."""
