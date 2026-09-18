@@ -9,8 +9,7 @@ only show up at scale.
 
 ## Static analysis, generally
 
-- **`CALLS` is matched by name, not by type.** Two functions sharing a name produce up to 5 possible
-  edges, each `confidence = 1/n`. Filter to `confidence == 1.0` if you need certainty over recall.
+- **`CALLS` is matched by name, not by type.** Two functions sharing a name are disambiguated using heuristics (same-file, same-directory, and explicit imports) to boost the confidence of the most likely candidates. If heuristics isolate a strong match, it gets a high confidence score; if they fail to break a tie, repo2graph falls back to producing up to `max_call_candidates` possible edges (default 5) with equal confidence and flags them as `ambiguous=True`. While confidence scores are now highly meaningful, filter to `confidence == 1.0` if you need absolute certainty over recall.
 - **No arrow does not prove no call.** Dynamic dispatch — a string-keyed lookup, a plugin registry,
   `getattr`-style dispatch, a virtual call resolved only at runtime — is invisible to a reader that
   never executes anything.
@@ -32,9 +31,13 @@ Numbers below are from [`benchmarks/results.json`](../benchmarks/results.json) a
 
 ### Macro-heavy C/C++ produces real tree-sitter parse errors
 
-`parse_errors` counts individual tree-sitter `ERROR` nodes inside a file's parse tree (see
-`repo2graph/parse.py`), not "files that failed to parse" — a single file can contribute many. Across
-the five examples:
+Tree-sitter parses raw source, which means C/C++ macros can produce syntax it cannot handle. `parse_errors` counts individual tree-sitter `ERROR` nodes inside a file's parse tree (see `repo2graph/parse.py`), not "files that failed to parse" — a single file can contribute many. This value is now visible as a `parse_errors` field on each file node and in the `stats.json` summary.
+
+To mitigate this, repo2graph now uses a two-pass strategy for C/C++ files:
+1. Parse raw source (Pass 1).
+2. If errors are found, optionally run the system's `cpp` preprocessor (Pass 2) and parse the expanded output. If it yields fewer errors and output size constraints are met, the expanded parse is kept (`used_cpp=True`).
+
+Even with this fallback, across the five examples:
 
 | Example | Files indexed | `parse_errors` | Language |
 |---|---:|---:|---|
@@ -46,8 +49,7 @@ the five examples:
 
 The pattern is exactly what the C/C++ grammar's known weak spot predicts: the kernel and TensorFlow
 lean heavily on preprocessor macros (`SYSCALL_DEFINE`, `EXPORT_SYMBOL`, conditional compilation,
-C++ template metaprogramming) that tree-sitter's grammar does not expand, so it emits `ERROR` nodes
-around syntax it cannot classify — it still recovers and extracts the symbols around the error, but
+C++ template metaprogramming) that tree-sitter's grammar does not expand cleanly if `cpp` fails or expands too much — it still recovers and extracts the symbols around the error, but
 a macro-defined function or a heavily templated declaration can be missed entirely. Python, Go and
 TypeScript — languages without a text-substitution macro system — show parse errors two to three
 orders of magnitude lower on comparable file counts. If you are indexing a C or C++ codebase, expect

@@ -92,9 +92,9 @@ class RecordingParser:
         self.real = real
         self.calls = []
 
-    def __call__(self, raw, lang):
+    def __call__(self, raw, lang, filepath=None):
         self.calls.append(raw)
-        return self.real(raw, lang)
+        return self.real(raw, lang, filepath=filepath)
 
 
 @pytest.fixture
@@ -199,8 +199,8 @@ def test_adding_a_duplicate_name_elsewhere_lowers_confidence_repo_wide(tmp_path)
     build(repo, out, incremental=True)
 
     after = _calls_edges(out)
-    assert after[(src, "sym:pkg/alpha.py::handle")] == 0.5
-    assert after[(src, "sym:pkg/beta.py::handle")] == 0.5
+    assert after[(src, "sym:pkg/alpha.py::handle")] == 0.75
+    assert (src, "sym:pkg/beta.py::handle") not in after
 
 
 def test_deleting_a_file_removes_its_nodes_and_restores_confidence(tmp_path):
@@ -215,7 +215,7 @@ def test_deleting_a_file_removes_its_nodes_and_restores_confidence(tmp_path):
     build(repo, out)
 
     src = "sym:pkg/caller.py::entry"
-    assert _calls_edges(out)[(src, "sym:pkg/alpha.py::handle")] == 0.5
+    assert _calls_edges(out)[(src, "sym:pkg/alpha.py::handle")] == 0.75
 
     (repo / "pkg" / "beta.py").unlink()
     build(repo, out, incremental=True)
