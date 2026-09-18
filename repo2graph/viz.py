@@ -36,6 +36,28 @@ LABEL_CHARS = 15
 HIDDEN_NODE_TYPES = ["external"]
 HIDDEN_EDGE_TYPES = ["CALLS_EXTERNAL"]
 
+# One-line legend copy for the map's collapsible legend panel. Duplicated here
+# rather than imported from `export.NODE_TYPES`/`export.EDGE_TYPES`: export.py
+# already imports from this module (`from .viz import ... write_html`), so an
+# import the other way would be a cycle. Keep both wordings in sync by hand.
+NODE_TYPE_DESC = {
+    "repo": "the repository itself",
+    "dir": "a directory",
+    "file": "a source, doc or config file",
+    "symbol": "a function, method, class or other named symbol",
+    "module": "an import target that is not a file in this repo",
+    "external": "a call target that could not be resolved in this repo",
+}
+EDGE_TYPE_DESC = {
+    "CONTAINS": "repo -> dir -> file structure",
+    "DEFINES": "file -> symbol, or symbol -> symbol nested inside it",
+    "IMPORTS": "file -> file (internal) or file -> module",
+    "CALLS": "symbol -> symbol call within this repo",
+    "CALLS_EXTERNAL": "symbol -> external, a call that resolved to nothing in-repo",
+    "INHERITS": "symbol -> base class or interface",
+    "CO_CHANGE": "file <-> file, edited together in git history",
+}
+
 
 def _trim(text: str, limit: int) -> str:
     text = " ".join(str(text).split())
@@ -105,6 +127,8 @@ def payload(g, max_nodes: int = MAX_NODES) -> dict:
         "nodes": out_nodes,
         "edges": [{"s": index[e["src"]], "t": index[e["dst"]], "type": e["type"]} for e in edges],
         "colors": {**NODE_COLORS, "_": OTHER_COLOR},
+        "nodeDesc": NODE_TYPE_DESC,
+        "edgeDesc": EDGE_TYPE_DESC,
         "hidden": {"nodes": HIDDEN_NODE_TYPES, "edges": HIDDEN_EDGE_TYPES},
         "nodeTypes": sorted(Counter(n["type"] for n in out_nodes).items()),
         "edgeTypes": sorted(Counter(e["type"] for e in edges).items()),
@@ -195,14 +219,34 @@ TEMPLATE = r"""<!doctype html>
   #side h2 { font-size: 13px; margin: 0 0 6px; }
   .pad { padding: 12px 14px; border-bottom: 1px solid var(--line); }
   .sub { color: var(--muted); font-size: 11.5px; margin-top: 4px; }
+  #search-wrap { position: relative; margin-top: 9px; }
   #search {
     width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px;
-    font: inherit; margin-top: 9px; background: #fff; color: inherit;
+    font: inherit; background: #fff; color: inherit;
   }
   #search:focus { outline: 2px solid rgba(47,111,237,.35); border-color: var(--accent); }
+  #search-results {
+    position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    max-height: 220px; overflow: auto; z-index: 20; box-shadow: 0 6px 18px rgba(0,0,0,.15);
+  }
+  #search-results[hidden] { display: none; }
+  .search-result {
+    display: flex; align-items: center; gap: 7px; padding: 6px 9px; cursor: pointer; font-size: 12px;
+  }
+  .search-result:hover, .search-result:focus { background: #f0f3fa; outline: none; }
+  .search-result .swatch { border-radius: 50%; }
+  .legend-head {
+    display: flex; align-items: center; justify-content: space-between; cursor: pointer;
+    user-select: none;
+  }
+  .legend-head h2 { margin: 0; }
+  #legend-chevron { color: var(--muted); font-size: 10px; transition: transform .15s; }
+  #legend-body.collapsed { display: none; }
   .legend { display: flex; flex-direction: column; gap: 4px; }
   .legend label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
   .legend input { margin: 0; }
+  .legend-desc { margin: -2px 0 4px 19px; color: var(--muted); font-size: 10.5px; }
   .swatch { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 12px; }
   .bar { width: 12px; height: 3px; border-radius: 2px; background: var(--edge); flex: 0 0 12px; }
   .count { margin-left: auto; color: var(--muted); font-size: 11px; }
@@ -252,8 +296,8 @@ TEMPLATE = r"""<!doctype html>
   }
   .node.pinned circle { stroke: #23262b; stroke-width: 1.6px; stroke-dasharray: 3 2; }
   .node.hit circle { stroke: #b8860b; stroke-width: 2.5px; }
+  .node.focused circle { stroke: var(--accent); stroke-width: 2.5px; }
   .dim { opacity: .18; }
-  .fade { opacity: .18; }
   #hud {
     position: absolute; right: 12px; bottom: 10px; color: var(--muted); font-size: 11px;
     background: rgba(255,255,255,.85); padding: 4px 8px; border-radius: 6px;
@@ -266,20 +310,33 @@ TEMPLATE = r"""<!doctype html>
     <div class="pad">
       <h1>__R2G_TITLE__</h1>
       <div class="sub" id="counts"></div>
-      <input id="search" type="search" placeholder="Search nodes (Enter = focus)" autocomplete="off">
+      <div id="search-wrap">
+        <input id="search" type="search" placeholder="Search nodes (Enter = focus, Ctrl/Cmd+F)"
+               autocomplete="off">
+        <div class="legend" id="search-results" hidden></div>
+      </div>
     </div>
     <div class="pad">
-      <h2>Nodes</h2>
-      <div class="legend" id="node-legend"></div>
+      <div class="legend-head" id="legend-toggle">
+        <h2>Legend</h2>
+        <span id="legend-chevron">&#9662;</span>
+      </div>
     </div>
-    <div class="pad">
-      <h2>Relationships</h2>
-      <div class="legend" id="edge-legend"></div>
+    <div id="legend-body">
+      <div class="pad">
+        <h2>Nodes</h2>
+        <div class="legend" id="node-legend"></div>
+      </div>
+      <div class="pad">
+        <h2>Relationships</h2>
+        <div class="legend" id="edge-legend"></div>
+      </div>
     </div>
     <div class="pad btns">
       <button id="btn-fit">Fit</button>
       <button id="btn-relayout">Re-layout</button>
       <button id="btn-unpin">Unpin all</button>
+      <button id="btn-clear-focus">Clear focus</button>
     </div>
     <div id="details"></div>
   </aside>
@@ -582,14 +639,57 @@ function showDetails(n) {
     panel.appendChild(b);
   }
 }
+// ---------- focus mode + search: opacity combines, most restrictive wins ----------
+// focus mode: clicked node 1, 1-hop .8, 2-hop .4, everything else .1
+// search mode: matching 1, non-matching .15
+// A node under both dims to whichever number is lower -- Math.min, per node.
+const FOCUS_OPACITY = [1, 0.8, 0.4];
+const FOCUS_FAR_OPACITY = 0.1;
+const SEARCH_MISS_OPACITY = 0.15;
+let focusNode = null;
+let focusDist = new Map();
+let searchQuery = "";
+
+function computeFocusDistances(n) {
+  const dist = new Map([[n.id, 0]]);
+  const frontier = neighbours(n.id).map(l => l.other);
+  for (const m of frontier) if (!dist.has(m.id)) dist.set(m.id, 1);
+  for (const m of frontier) {
+    for (const link of neighbours(m.id)) {
+      if (!dist.has(link.other.id)) dist.set(link.other.id, 2);
+    }
+  }
+  return dist;
+}
+function opacityFor(n) {
+  let o = 1;
+  if (focusNode) {
+    const d = focusDist.get(n.id);
+    o = Math.min(o, d === undefined ? FOCUS_FAR_OPACITY : FOCUS_OPACITY[d]);
+  }
+  if (searchQuery) {
+    o = Math.min(o, n.hay.includes(searchQuery) ? 1 : SEARCH_MISS_OPACITY);
+  }
+  return o;
+}
+function applyOpacity() {
+  for (const n of nodes) {
+    n.el.style.opacity = opacityFor(n);
+    n.el.classList.toggle("hit", searchQuery !== "" && n.hay.includes(searchQuery));
+    n.el.classList.toggle("focused", focusNode === n);
+  }
+}
+function clearFocus() {
+  focusNode = null;
+  focusDist = new Map();
+  applyOpacity();
+}
+
 function selectNode(n, centre) {
   selected = n;
-  const near = new Set([n.id]);
-  for (const link of neighbours(n.id)) near.add(link.other.id);
-  for (const m of nodes) {
-    m.el.classList.remove("fade");   // selection dimming replaces search dimming
-    m.el.classList.toggle("dim", !near.has(m.id));
-  }
+  focusNode = n;
+  focusDist = computeFocusDistances(n);
+  applyOpacity();
   for (const l of links) {
     const on = l.source.id === n.id || l.target.id === n.id;
     l.line.classList.toggle("dim", !on);
@@ -600,7 +700,7 @@ function selectNode(n, centre) {
 }
 function clearSelection() {
   selected = null;
-  for (const m of nodes) m.el.classList.remove("dim");
+  clearFocus();
   for (const l of links) { l.line.classList.remove("dim"); l.text.classList.remove("dim"); }
   emptyDetails();
 }
@@ -612,7 +712,8 @@ function centreOn(n) {
 }
 
 // ---------- controls ----------
-function legendRow(host, key, count, colour, kind) {
+function legendRow(host, key, count, colour, kind, desc) {
+  const wrap = el("div");
   const label = el("label");
   const box = el("input");
   box.type = "checkbox";
@@ -625,40 +726,104 @@ function legendRow(host, key, count, colour, kind) {
   const mark = el("span", kind === "node" ? "swatch" : "bar");
   if (colour) mark.style.background = colour;
   label.append(box, mark, el("span", "", key), el("span", "count", count));
-  host.appendChild(label);
+  wrap.appendChild(label);
+  if (desc) wrap.appendChild(el("div", "legend-desc", desc));
+  host.appendChild(wrap);
 }
 for (const [type, count] of DATA.nodeTypes) {
   legendRow(document.getElementById("node-legend"), type, count,
-            DATA.colors[type] || DATA.colors._, "node");
+            DATA.colors[type] || DATA.colors._, "node", DATA.nodeDesc[type]);
 }
 for (const [type, count] of DATA.edgeTypes) {
-  legendRow(document.getElementById("edge-legend"), type, count, null, "edge");
+  legendRow(document.getElementById("edge-legend"), type, count, null, "edge", DATA.edgeDesc[type]);
 }
 document.getElementById("counts").textContent =
   nodes.length + " of " + DATA.totals.nodes + " nodes · " +
   links.length + " of " + DATA.totals.edges + " edges";
 
-const search = document.getElementById("search");
-search.addEventListener("input", () => {
-  const q = search.value.trim().toLowerCase();
-  for (const n of nodes) {
-    const hit = q !== "" && n.hay.includes(q);
-    n.el.classList.toggle("hit", hit);
-    n.el.classList.toggle("fade", q !== "" && !hit);
-  }
+// ---------- legend collapse, persisted per-viewer ----------
+const legendToggle = document.getElementById("legend-toggle");
+const legendBody = document.getElementById("legend-body");
+const legendChevron = document.getElementById("legend-chevron");
+const LEGEND_COLLAPSE_KEY = "r2g-legend-collapsed";
+function setLegendCollapsed(collapsed) {
+  legendBody.classList.toggle("collapsed", collapsed);
+  legendChevron.textContent = collapsed ? "▸" : "▾";
+  try { localStorage.setItem(LEGEND_COLLAPSE_KEY, collapsed ? "1" : "0"); } catch (_) {}
+}
+let legendCollapsed = false;
+try { legendCollapsed = localStorage.getItem(LEGEND_COLLAPSE_KEY) === "1"; } catch (_) {}
+setLegendCollapsed(legendCollapsed);
+legendToggle.addEventListener("click", () => {
+  setLegendCollapsed(!legendBody.classList.contains("collapsed"));
 });
+
+// ---------- search: highlight, dropdown, pan/zoom to a result ----------
+const search = document.getElementById("search");
+const searchWrap = document.getElementById("search-wrap");
+const searchResults = document.getElementById("search-results");
+function matchesFor(q) {
+  return q ? nodes.filter(n => n.hay.includes(q)).slice(0, 30) : [];
+}
+function renderSearchResults(q) {
+  searchResults.replaceChildren();
+  const matches = matchesFor(q);
+  if (!matches.length) { searchResults.hidden = true; return; }
+  for (const n of matches) {
+    const row = el("div", "search-result");
+    row.tabIndex = 0;
+    const dot = el("span", "swatch");
+    dot.style.background = colorOf(n);
+    row.append(dot, document.createTextNode(n.label + "  ·  " + n.type));
+    row.addEventListener("click", () => {
+      searchResults.hidden = true;
+      selectNode(n, true);
+    });
+    searchResults.appendChild(row);
+  }
+  searchResults.hidden = false;
+}
+function applySearch(q) {
+  searchQuery = q;
+  applyOpacity();
+  renderSearchResults(q);
+}
+search.addEventListener("input", () => applySearch(search.value.trim().toLowerCase()));
 search.addEventListener("keydown", ev => {
   if (ev.key !== "Enter") return;
   const q = search.value.trim().toLowerCase();
   const hit = q && nodes.find(n => nodeShown(n) && n.hay.includes(q));
-  if (hit) selectNode(hit, true);
+  if (hit) { searchResults.hidden = true; selectNode(hit, true); }
 });
+document.addEventListener("pointerdown", ev => {
+  if (!searchWrap.contains(ev.target)) searchResults.hidden = true;
+});
+// Cmd/Ctrl+F focuses the search box instead of the browser's own find-in-page;
+// Escape clears whichever of search / focus mode is active, search box first.
+window.addEventListener("keydown", ev => {
+  if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "f") {
+    ev.preventDefault();
+    search.focus();
+    search.select();
+    return;
+  }
+  if (ev.key !== "Escape") return;
+  if (document.activeElement === search && search.value) {
+    search.value = "";
+    applySearch("");
+    searchResults.hidden = true;
+  } else if (focusNode) {
+    clearSelection();
+  }
+});
+
 document.getElementById("btn-fit").addEventListener("click", fit);
 document.getElementById("btn-relayout").addEventListener("click", relayout);
 document.getElementById("btn-unpin").addEventListener("click", () => {
   for (const n of nodes) { n.fx = null; n.fy = null; n.el.classList.remove("pinned"); }
   reheat(0.6);
 });
+document.getElementById("btn-clear-focus").addEventListener("click", clearSelection);
 
 // ---------- pointer: drag nodes, pan and zoom the canvas ----------
 function toGraph(ev) {
