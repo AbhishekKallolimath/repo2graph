@@ -463,6 +463,7 @@ def test_output_is_split_into_human_and_agent_sections(tmp_path, sample_repo, ca
     out = tmp_path / "idx"
     main(["build", str(sample_repo), "-o", str(out)])
     assert sorted(p.name for p in (out / "human").iterdir()) == [
+        "CHANGELOG.md",
         "graph.graphml",
         "graph.html",
         "overview.md",

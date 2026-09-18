@@ -42,6 +42,7 @@ def atomic_write(path: Path, mode: str = "w", **open_kw):
 
 SECTIONS: dict[str, tuple[str, ...]] = {
     "overview.md": (HUMAN_DIR, AGENT_DIR),
+    "CHANGELOG.md": (HUMAN_DIR,),
     "graph.html": (HUMAN_DIR,),
     "graph.graphml": (HUMAN_DIR,),
     "nodes.jsonl": (AGENT_DIR,),
