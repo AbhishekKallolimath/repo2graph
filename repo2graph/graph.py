@@ -105,9 +105,7 @@ _IMPORT_RE = {
     # 2): a dots-only module ("from . import X") has no name of its own, so
     # import_targets() below appends each imported name to the dots instead of
     # discarding it (#160). The bare `import a, b` form is group 3, unchanged.
-    "python": re.compile(
-        r"^(?:from\s+(\.*[\w.]*)\s+import\s+([\w\s,*()]+)|import\s+([\w\.,\s]+))"
-    ),
+    "python": re.compile(r"^(?:from\s+(\.*[\w.]*)\s+import\s+([\w\s,*()]+)|import\s+([\w\.,\s]+))"),
     "js": re.compile(r"""['"]([^'"]+)['"]"""),
     "go": re.compile(r"""['"]([^'"]+)['"]"""),
     "rust": re.compile(r"use\s+([\w:]+)"),

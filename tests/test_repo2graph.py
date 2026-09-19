@@ -323,18 +323,23 @@ def test_iss160_build_edges_bare_dot_relative_import(tmp_path):
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
-    (pkg / "utils.py").write_text('def helper(value):\n    return value * 2\n')
-    (pkg / "main.py").write_text("from . import utils\n\n\ndef entry():\n    return utils.helper(3)\n")
+    (pkg / "utils.py").write_text("def helper(value):\n    return value * 2\n")
+    (pkg / "main.py").write_text(
+        "from . import utils\n\n\ndef entry():\n    return utils.helper(3)\n"
+    )
     g = build(tmp_path)
     edges = edges_of(g, "IMPORTS")
     assert ("file:pkg/main.py", "file:pkg/utils.py") in edges
     assert ("file:pkg/main.py", "file:pkg/__init__.py") not in edges
 
+
 # ---------- ISS-161: `from pkg import submodule` must resolve to the submodule ----------
 
 PKG3_INIT = "ANSWER = 42\n\n\nclass Thing:\n    pass\n"
 PKG3_MYMOD = "VALUE = 1\n\n\ndef foo():\n    return VALUE\n"
-PKG3_CONSUMER = "from pkg3 import mymod\n\nCONSUMER_TAG = 'c'\n\n\ndef use():\n    return mymod.foo()\n"
+PKG3_CONSUMER = (
+    "from pkg3 import mymod\n\nCONSUMER_TAG = 'c'\n\n\ndef use():\n    return mymod.foo()\n"
+)
 
 
 @pytest.fixture

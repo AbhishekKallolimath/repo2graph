@@ -597,15 +597,14 @@ def _resolved_push_git_calls(tmp_path: Path, token: str) -> list:
     makes, as the literal argv bash hands it -- captured by overriding `git`
     with a shell function instead of truncating/rewriting the script, so the
     step body under test is exactly what's in action.yml, unmodified."""
-    body = _run_body(_action_step_by_name(ACTION_YML.read_text(encoding="utf8"), "Push graph to branch"))
+    body = _run_body(
+        _action_step_by_name(ACTION_YML.read_text(encoding="utf8"), "Push graph to branch")
+    )
     log = tmp_path / "git-calls.log"
     out_dir = tmp_path / "out"
     out_dir.mkdir()
     (out_dir / "graph.jsonl").write_text("{}\n", encoding="utf8")
-    script = (
-        'git() { printf "%s\\x1f" "$@" >> "$GIT_LOG"; printf "\\n" >> "$GIT_LOG"; }\n'
-        + body
-    )
+    script = 'git() { printf "%s\\x1f" "$@" >> "$GIT_LOG"; printf "\\n" >> "$GIT_LOG"; }\n' + body
     env = dict(os.environ)
     env.update(
         GITHUB_TOKEN=token,

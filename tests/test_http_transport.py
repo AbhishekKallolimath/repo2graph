@@ -446,9 +446,7 @@ def test_a_cross_origin_origin_header_is_rejected(make_server):
     """The DNS-rebinding shape: a browser page on another origin must not be
     able to drive this server, even though the request lands on loopback."""
     server = make_server()
-    status, body = server.rpc(
-        "initialize", headers={"Origin": "https://evil.example.com"}
-    )
+    status, body = server.rpc("initialize", headers={"Origin": "https://evil.example.com"})
     assert status == 403
     assert body["error"]["message"] == "Origin not allowed"
 
@@ -458,18 +456,14 @@ def test_a_non_loopback_host_header_is_rejected(make_server):
     address -- 127.0.0.1 is what the socket saw, evil.example.com is what
     the browser believes it is talking to."""
     server = make_server()
-    status, body = server.rpc(
-        "initialize", headers={"Host": "evil.example.com"}
-    )
+    status, body = server.rpc("initialize", headers={"Host": "evil.example.com"})
     assert status == 403
     assert body["error"]["message"] == "Host header not allowed"
 
 
 def test_a_loopback_request_with_a_same_origin_origin_header_is_accepted(make_server):
     server = make_server()
-    status, body = server.rpc(
-        "initialize", headers={"Origin": f"http://127.0.0.1:{server.port}"}
-    )
+    status, body = server.rpc("initialize", headers={"Origin": f"http://127.0.0.1:{server.port}"})
     assert status == 200
     assert body["result"]["serverInfo"]["name"] == "repo2graph"
 

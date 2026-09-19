@@ -121,6 +121,7 @@ def _origin_header_allowed(value: str | None, allowed_hostnames: frozenset[str])
     hostname = _hostname_from_origin(value)
     return hostname is not None and hostname in allowed_hostnames
 
+
 WELL_KNOWN_METADATA = "/.well-known/mcp-server-metadata"
 WELL_KNOWN_CLIENT = "/.well-known/oauth-client-metadata"
 
@@ -318,14 +319,10 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         # server with ordinary fetch()/XHR unless Host and Origin are checked
         # *before* anything else runs. Fail closed on anything unrecognised.
         if not _host_header_allowed(self.headers.get("Host"), self.allowed_hostnames):
-            self._send_json(
-                FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Host header not allowed")
-            )
+            self._send_json(FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Host header not allowed"))
             return
         if not _origin_header_allowed(self.headers.get("Origin"), self.allowed_hostnames):
-            self._send_json(
-                FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Origin not allowed")
-            )
+            self._send_json(FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Origin not allowed"))
             return
         try:
             raw = self._read_body()

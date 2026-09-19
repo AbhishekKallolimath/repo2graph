@@ -196,7 +196,10 @@ def test_rsa_verify_rejects_a_negative_modulus():
 
 
 def test_rsa_verify_rejects_a_zero_exponent():
-    assert rsa_verify(KEY["n"], 0, b"\x01" * ((KEY["n"].bit_length() + 7) // 8), b"msg", "sha256") is False
+    assert (
+        rsa_verify(KEY["n"], 0, b"\x01" * ((KEY["n"].bit_length() + 7) // 8), b"msg", "sha256")
+        is False
+    )
 
 
 def test_rsa_verify_rejects_garbage_in_the_padding():

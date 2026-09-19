@@ -691,11 +691,7 @@ def _bases(src: bytes, node, lang: str) -> list[str]:
     for fname in ("superclasses", "bases", "trait"):
         n = node.child_by_field_name(fname)
         if n is not None:
-            out += [
-                t.strip()
-                for t in _split_bases(_text(src, n).strip("(): "))
-                if t.strip()
-            ]
+            out += [t.strip() for t in _split_bases(_text(src, n).strip("(): ")) if t.strip()]
     for clause in _base_clauses(node):
         raw = _text(src, clause).replace(" with ", ",")
         out += [c for c in (_clean_base(t) for t in _split_bases(raw)) if c]
