@@ -402,7 +402,29 @@ def test_split_respects_size_and_overlaps():
 
 
 def test_split_terminates_on_one_huge_line():
-    assert _split("x" * 10_000 + "\ny\n", max_chars=100)
+    parts = _split("x" * 10_000 + "\ny\n", max_chars=100)
+    assert parts
+    # ISS-153: a single oversized line must not be emitted as one unbounded
+    # chunk -- every piece stays within the requested budget.
+    assert all(len(p) <= 100 for p in parts)
+    assert "".join(parts).replace("\n", "") == "x" * 10_000 + "y"  # no text lost
+
+
+def test_iss153_split_breaks_a_line_longer_than_max_chars():
+    """Hand-built fixture pinning literal chunk boundaries (AGENTS.md: assert
+    literal values, not a property the old, buggy code also happened to hold).
+
+    text = "AAAAAAAAAA\nBB\n" (a 10-char line the packer alone can't shrink,
+    plus a short second line), max_chars=5. Before the fix, _split returned a
+    single 14-char chunk (the whole first line plus every line the packer
+    could still fit) because the inner loop always appended at least the
+    first line regardless of its own length -- an unbounded chunk.
+    """
+    text = "A" * 10 + "\n" + "BB" + "\n"
+    parts = _split(text, max_chars=5)
+    assert parts == ["AAAAA", "AAAAA", "\nBB\n"]
+    assert all(len(p) <= 5 for p in parts)
+    assert "".join(parts) == text
 
 
 def test_iter_chunks_streams_without_materialising(sample_graph):

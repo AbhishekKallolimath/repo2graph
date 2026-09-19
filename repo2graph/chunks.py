@@ -44,6 +44,20 @@ def _split(text: str, max_chars: int = MAX_CHARS):
     if len(text) <= max_chars:
         return [text]
     lines = _keepends_lf(text)
+    # ISS-153: a single line longer than max_chars (minified JS/CSS, a long SVG
+    # path, base64, one-line JSON, ...) can't be shrunk by grouping on line
+    # boundaries alone -- the packer below would emit it whole, unbounded.
+    # Break any such line into max_chars-sized pieces first so every entry the
+    # packer sees is already within budget; "".join(pieces) still == the
+    # original line, so no text is lost or reordered.
+    if any(len(ln) > max_chars for ln in lines):
+        bounded: list[str] = []
+        for ln in lines:
+            if len(ln) > max_chars:
+                bounded.extend(ln[j : j + max_chars] for j in range(0, len(ln), max_chars))
+            else:
+                bounded.append(ln)
+        lines = bounded
     out: list[str] = []
     buf: list[str] = []
     size = 0
