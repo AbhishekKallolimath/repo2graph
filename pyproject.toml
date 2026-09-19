@@ -1,6 +1,6 @@
 [project]
 name = "repo2graph"
-version = "1.5.1"
+version = "1.5.4"
 description = "Turn any repository into a code graph + graph-aware RAG chunks"
 requires-python = ">=3.10"
 license = "MIT"
@@ -45,7 +45,7 @@ where = ["."]
 include = ["repo2graph*"]
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "ruff>=0.5", "mypy>=1.11", "pre-commit>=3.5"]
+dev = ["pytest>=7", "pytest-cov>=4", "ruff>=0.5", "mypy>=1.11", "pre-commit>=3.5"]
 # Strictly optional: the GraphRAG layer falls back to BM25 + the identifier
 # boost with zero extra dependencies when these are not installed.
 rag = ["sentence-transformers>=3.0", "numpy>=1.24"]
@@ -54,7 +54,7 @@ rag = ["sentence-transformers>=3.0", "numpy>=1.24"]
 # (`@server.list_tools()` / `@server.call_tool()`), which mcp 2.x removed. An
 # unbounded `mcp>=1.0` resolves to 2.x today and crashes the server on start.
 # See docs/BACKLOG.md ("Port the MCP server to the 2.x SDK API").
-mcp = ["mcp>=1.0,<2"]
+mcp = ["mcp>=1.0,<3.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

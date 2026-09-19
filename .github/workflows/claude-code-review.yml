@@ -25,6 +25,13 @@ jobs:
     #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
 
     runs-on: ubuntu-latest
+    # GitHub already withholds repository secrets from `pull_request`-triggered
+    # runs whose head is a fork, so CLAUDE_CODE_OAUTH_TOKEN is never handed to a
+    # fork PR's checked-out workflow. This condition makes that boundary
+    # explicit rather than relying on the platform default staying enabled --
+    # a future org-level "send secrets to fork PRs" toggle must not silently
+    # start executing this step against untrusted, PR-editable workflow code.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     permissions:
       contents: read
       pull-requests: read
@@ -40,7 +47,7 @@ jobs:
       - name: Run Claude Code Review
         id: claude-review
         continue-on-error: true
-        uses: anthropics/claude-code-action@9cdae7f0d995e3ba7c33f226087fdf82a59cd520  # v1 branch @ 2026-09; the v1 tag has since moved, this pin has not
+        uses: anthropics/claude-code-action@51db78a4b844e144f8d02425cb280435c04a3474  # v1 branch @ 2026-09; the v1 tag has since moved, this pin has not
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'

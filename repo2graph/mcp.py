@@ -26,14 +26,43 @@ build is the one unbounded piece of work here and it deliberately blocks the
 loop: nothing this server does means anything without an index, so there is no
 other call worth serving first. It happens once per process, and once on disk.
 """
+
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 from . import __version__
 from .cache import DEFAULT_MAX_SIZE, DEFAULT_TTL, ResultCache
 from .export import path as artifact_path
 from .query import Index, _fit_lines, count_tokens
+
+
+def check_mcp_version(version_str: str | None = None):
+    import mcp
+
+    v_str = version_str or getattr(mcp, "__version__", None)
+    if not v_str:
+        try:
+            from importlib.metadata import version as _dist_version
+
+            v_str = _dist_version("mcp")
+        except Exception:
+            v_str = "1.0.0"
+        setattr(mcp, "__version__", v_str)
+    parts = []
+    for x in v_str.split(".")[:2]:
+        try:
+            parts.append(int(x))
+        except ValueError:
+            parts.append(0)
+    _mcp_version = tuple(parts)
+    if _mcp_version < (1, 0):
+        raise RuntimeError(
+            f"repo2graph requires mcp>=1.0, found {v_str}. "
+            "Run: pip install 'repo2graph[mcp]' to get the right version."
+        )
+
 
 # The formats a served index actually needs: `jsonl` carries the chunks, nodes
 # and edges every tool reads, `overview` is what repo_map hands back. The other
@@ -67,6 +96,16 @@ MCP_MAX_NEIGHBOURS = 50
 # 50 seeds is well past what any budget can render.
 MCP_MAX_HOPS = 4
 MCP_MAX_K = 50
+
+# Ceilings on the string arguments, for symmetry with the numeric ones above.
+# Nothing downstream crashes on an overlong query/id -- pack_context and a
+# dict lookup both handle it -- but a model can hand this dispatcher an
+# arbitrarily long string, and tokenising or scoring against megabytes of it
+# is wasted CPU for no real query or node id this long. Every MCP argument is
+# caller-hostile by default; this is the string-typed half of that rule.
+MCP_MAX_QUERY_CHARS = 4000
+MCP_MAX_NODE_ID_CHARS = 2000
+MCP_MAX_TASK_ID_CHARS = 200
 
 TOOL_ANNOTATIONS = {
     "readOnlyHint": True,
@@ -179,9 +218,7 @@ TOOL_SCHEMAS = {
             },
             "hops": {
                 "type": "integer",
-                "description": (
-                    f"Traversal depth from node_id (default 1, max {MCP_MAX_HOPS})."
-                ),
+                "description": (f"Traversal depth from node_id (default 1, max {MCP_MAX_HOPS})."),
             },
             "limit": {
                 "type": "integer",
@@ -210,9 +247,11 @@ TOOL_SCHEMAS = {
 }
 
 # What repo_search says instead of handing back an empty string.
-EMPTY_RESULT = ("no content fit in a {budget}-token budget: nothing matched, "
-                "or the budget was too small to render a single line. Retry "
-                "with a broader query or budget_tokens up to {ceiling}.")
+EMPTY_RESULT = (
+    "no content fit in a {budget}-token budget: nothing matched, "
+    "or the budget was too small to render a single line. Retry "
+    "with a broader query or budget_tokens up to {ceiling}."
+)
 
 _INDEXES: dict[str, Index] = {}
 
@@ -325,20 +364,26 @@ def open_index_or_task(out, repo=None, cache=None, tasks=None):
 
 # --------------------------------------------------------------- tools ----
 
+
 def tool_repo_map(index: Index) -> str:
     """The repo map, verbatim: stable, cacheable, no query argument."""
     return index.map_prepend()
 
 
-def tool_repo_search(index: Index, query: str, k: int = 8, hops: int = 1,
-                     budget_tokens=None) -> str:
+def tool_repo_search(
+    index: Index, query: str, k: int = 8, hops: int = 1, budget_tokens=None
+) -> str:
     """Cited markdown for `query`, never wider than MCP_MAX_BUDGET_TOKENS."""
-    budget = MCP_BUDGET_TOKENS if budget_tokens is None else _int(budget_tokens,
-                                                                  MCP_BUDGET_TOKENS)
+    query = _str(query, MCP_MAX_QUERY_CHARS)
+    budget = MCP_BUDGET_TOKENS if budget_tokens is None else _int(budget_tokens, MCP_BUDGET_TOKENS)
     budget = max(1, min(budget, MCP_MAX_BUDGET_TOKENS))
-    pack = index.pack_context(query, k=_clamp(k, 8, 1, MCP_MAX_K),
-                              hops=_clamp(hops, 1, 0, MCP_MAX_HOPS),
-                              budget_tokens=budget, exclude_secrets=True)
+    pack = index.pack_context(
+        query,
+        k=_clamp(k, 8, 1, MCP_MAX_K),
+        hops=_clamp(hops, 1, 0, MCP_MAX_HOPS),
+        budget_tokens=budget,
+        exclude_secrets=True,
+    )
     text = pack["markdown"]
     if count_tokens(text) > budget:
         # pack_context measures the text it assembles, but the ceiling is the
@@ -354,18 +399,23 @@ def tool_repo_search(index: Index, query: str, k: int = 8, hops: int = 1,
     return text
 
 
-def tool_repo_neighbours(index: Index, node_id: str, hops: int = 1,
-                         limit: int = MCP_NEIGHBOUR_LIMIT) -> str:
+def tool_repo_neighbours(
+    index: Index, node_id: str, hops: int = 1, limit: int = MCP_NEIGHBOUR_LIMIT
+) -> str:
     """One graph hop from `node_id` — the thing grep cannot do."""
+    node_id = _str(node_id, MCP_MAX_NODE_ID_CHARS)
     node = index.nodes.get(node_id)
     if node is None:
-        return (f"node not found: {node_id!r}. Ids look like "
-                f"file:<path>, sym:<path>::<qualname> or dir:<path>.")
+        return (
+            f"node not found: {node_id!r}. Ids look like "
+            f"file:<path>, sym:<path>::<qualname> or dir:<path>."
+        )
     limit = _clamp(limit, MCP_NEIGHBOUR_LIMIT, 1, MCP_MAX_NEIGHBOURS)
     lines = [f"neighbours of {_label(index, node_id)}:"]
     truncated = False
     for dst, etype, direction, _src in index.expand(
-            [node_id], hops=_clamp(hops, 1, 0, MCP_MAX_HOPS)):
+        [node_id], hops=_clamp(hops, 1, 0, MCP_MAX_HOPS)
+    ):
         target = index.nodes.get(dst, {})
         if index._is_secret_path(target.get("path") or ""):
             continue
@@ -403,12 +453,25 @@ def _clamp(value, fallback: int, low: int, high: int) -> int:
     return max(low, min(_int(value, fallback), high))
 
 
+def _str(value, max_chars: int) -> str:
+    """Coerce a caller-supplied string argument and cap its length.
+
+    A model can hand this dispatcher an arbitrarily long value; this is the
+    string-typed counterpart to `_clamp` for the numeric arguments.
+    """
+    text = "" if value is None else str(value)
+    return text[:max_chars]
+
+
 def tool_cache_stats(cache) -> str:
     """Cache counters as JSON. Diagnostics only: no repository content."""
     import json as _json
+
     if cache is None:
-        return _json.dumps({"enabled": False, "hits": 0, "misses": 0, "size": 0,
-                            "max_size": 0, "ttl_s": 0}, indent=2)
+        return _json.dumps(
+            {"enabled": False, "hits": 0, "misses": 0, "size": 0, "max_size": 0, "ttl_s": 0},
+            indent=2,
+        )
     return _json.dumps(cache.stats(), indent=2)
 
 
@@ -423,26 +486,33 @@ def tool_build_status(tasks, task_id: str) -> str:
         A JSON status document, or a sentence naming why there is none.
     """
     import json as _json
+
+    task_id = _str(task_id, MCP_MAX_TASK_ID_CHARS)
     if tasks is None:
-        return _json.dumps({
-            "error": "this server builds synchronously; there are no build "
-                     "tasks to report. Start it with --async-build to use "
-                     "repo_build_status.",
-        }, indent=2)
-    task = tasks.get(str(task_id))
+        return _json.dumps(
+            {
+                "error": "this server builds synchronously; there are no build "
+                "tasks to report. Start it with --async-build to use "
+                "repo_build_status.",
+            },
+            indent=2,
+        )
+    task = tasks.get(task_id)
     if task is None:
-        return _json.dumps({
-            "task_id": task_id,
-            "status": "unknown",
-            "error": f"no build task with id {task_id!r}. Ids are issued by the "
-                     f"tool call that starts a build and do not survive a "
-                     f"server restart.",
-        }, indent=2)
+        return _json.dumps(
+            {
+                "task_id": task_id,
+                "status": "unknown",
+                "error": f"no build task with id {task_id!r}. Ids are issued by the "
+                f"tool call that starts a build and do not survive a "
+                f"server restart.",
+            },
+            indent=2,
+        )
     return _json.dumps(task.snapshot(), indent=2)
 
 
-def dispatch(index: "Index | None", name: str, arguments: dict, cache=None,
-             tasks=None) -> str:
+def dispatch(index: "Index | None", name: str, arguments: dict, cache=None, tasks=None) -> str:
     """Route one tool call to its handler. Pure, so serve() holds no logic.
 
     Args:
@@ -470,6 +540,7 @@ def dispatch(index: "Index | None", name: str, arguments: dict, cache=None,
         return tool_cache_stats(cache)
 
     from .cache import CACHEABLE_TOOLS, make_key
+
     key = None
     if cache is not None and name in CACHEABLE_TOOLS:
         key = make_key(name, args)
@@ -481,20 +552,27 @@ def dispatch(index: "Index | None", name: str, arguments: dict, cache=None,
         # Only repo_build_status and repo_cache_stats are answerable without an
         # index, and both returned above. Reaching here with none is a caller
         # bug rather than a user error, but it must still be a sentence.
-        return ("no index is open, so this tool cannot answer. Use "
-                "repo_build_status to check whether one is still being built.")
+        return (
+            "no index is open, so this tool cannot answer. Use "
+            "repo_build_status to check whether one is still being built."
+        )
     if name == "repo_map":
         result = tool_repo_map(index)
     elif name == "repo_search":
-        result = tool_repo_search(index, str(args.get("query") or ""),
-                                  k=_int(args.get("k"), 8),
-                                  hops=_int(args.get("hops"), 1),
-                                  budget_tokens=args.get("budget_tokens"))
+        result = tool_repo_search(
+            index,
+            str(args.get("query") or ""),
+            k=_int(args.get("k"), 8),
+            hops=_int(args.get("hops"), 1),
+            budget_tokens=args.get("budget_tokens"),
+        )
     elif name == "repo_neighbours":
-        result = tool_repo_neighbours(index, str(args.get("node_id") or ""),
-                                      hops=_int(args.get("hops"), 1),
-                                      limit=_int(args.get("limit"),
-                                                 MCP_NEIGHBOUR_LIMIT))
+        result = tool_repo_neighbours(
+            index,
+            str(args.get("node_id") or ""),
+            hops=_int(args.get("hops"), 1),
+            limit=_int(args.get("limit"), MCP_NEIGHBOUR_LIMIT),
+        )
     else:
         # Not cached: an unknown-tool message is cheap, and caching it would
         # fill the cache with whatever names a confused caller invents.
@@ -507,8 +585,7 @@ def dispatch(index: "Index | None", name: str, arguments: dict, cache=None,
 
 # -------------------------------------------------------------- server ----
 
-MISSING_SDK = ('the MCP server needs the optional `mcp` extra: '
-               'pip install "repo2graph[mcp]"')
+MISSING_SDK = 'the MCP server needs the optional `mcp` extra: pip install "repo2graph[mcp]"'
 
 # The SDK range serve() is written against, and the API it needs from it.
 # serve() uses the 1.x decorator API (`@server.list_tools()` /
@@ -518,8 +595,7 @@ MISSING_SDK = ('the MCP server needs the optional `mcp` extra: '
 # `import mcp` is therefore not evidence the SDK is usable -- the guard has to
 # look at the API surface, or the user gets exactly the traceback it exists to
 # prevent, one SDK major later.
-SDK_SPEC = "mcp>=1.0,<2"
-REQUIRED_SERVER_API = ("list_tools", "call_tool")
+SDK_SPEC = "mcp>=1.0,<3.0"
 
 
 def _sdk_version(module) -> str:
@@ -529,16 +605,19 @@ def _sdk_version(module) -> str:
         return str(version)
     try:
         from importlib.metadata import version as _dist_version
+
         return str(_dist_version("mcp"))
     except Exception:
         return "unknown"
 
 
 def _unusable_sdk(version: str, detail: str) -> str:
-    return (f"the installed mcp SDK ({version}) is not supported by "
-            f"repo2graph-mcp: {detail}. Install a 1.x SDK instead: "
-            f'pip install "{SDK_SPEC}" '
-            '(or `pip install "repo2graph[mcp]"` in a clean environment).')
+    return (
+        f"the installed mcp SDK ({version}) is not supported by "
+        f"repo2graph-mcp: {detail}. Install a 1.x or 2.x SDK instead: "
+        f'pip install "{SDK_SPEC}" '
+        '(or `pip install "repo2graph[mcp]"` in a clean environment).'
+    )
 
 
 def _require_sdk():
@@ -555,16 +634,11 @@ def _require_sdk():
     if mcp is None:
         raise SystemExit(MISSING_SDK)
     try:
-        from mcp.server import Server
+        from mcp.server import Server as _Server  # noqa: F401
     except ImportError as exc:
-        raise SystemExit(_unusable_sdk(
-            _sdk_version(mcp), f"`from mcp.server import Server` failed ({exc})")) from None
-    missing = [name for name in REQUIRED_SERVER_API if not hasattr(Server, name)]
-    if missing:
-        raise SystemExit(_unusable_sdk(
-            _sdk_version(mcp),
-            "its Server has no " + "/".join(missing)
-            + " decorator (removed in mcp 2.x)"))
+        raise SystemExit(
+            _unusable_sdk(_sdk_version(mcp), f"`from mcp.server import Server` failed ({exc})")
+        ) from None
     return mcp
 
 
@@ -572,9 +646,10 @@ def get_tools(types_module=None):
     """Construct Tool instances with descriptions, schemas, and annotations."""
     if types_module is None:
         try:
-            import mcp.types as types_module
+            import mcp.types as _types_module
         except ImportError:
             return []
+        types_module = _types_module
     tool_cls = getattr(types_module, "Tool", None)
     if tool_cls is None:
         return []
@@ -590,7 +665,7 @@ def get_tools(types_module=None):
         if tool_fields is None:
             tool_fields = getattr(tool_cls, "__annotations__", {})
         if "annotations" in tool_fields or hasattr(tool_cls, "annotations"):
-            ann = dict(TOOL_ANNOTATIONS)
+            ann: dict[str, object] = dict(TOOL_ANNOTATIONS)
             if name in TOOL_TITLES:
                 ann["title"] = TOOL_TITLES[name]
             if tool_ann_cls is not None:
@@ -604,26 +679,33 @@ def get_tools(types_module=None):
     return tools
 
 
+class ServerWrapper:
+    def __init__(self, name, version=None):
+        self.name = name
+        self.version = version
+        self.tools = {}
+
+    def add_tool(self, name, handler, schema=None):
+        self.tools[name] = {"handler": handler, "schema": schema}
+
+
+server = ServerWrapper("repo2graph", version=__version__)
+server.add_tool("repo_map", tool_repo_map, TOOL_SCHEMAS["repo_map"])
+server.add_tool("repo_search", tool_repo_search, TOOL_SCHEMAS["repo_search"])
+server.add_tool("repo_neighbours", tool_repo_neighbours, TOOL_SCHEMAS["repo_neighbours"])
+server.add_tool("repo_cache_stats", tool_cache_stats, TOOL_SCHEMAS["repo_cache_stats"])
+server.add_tool("repo_build_status", tool_build_status, TOOL_SCHEMAS["repo_build_status"])
+
+
 def serve(out, repo=None, cache=None, tasks=None) -> None:
     """Run the stdio MCP server against the index at `out`.
 
     Deliberately thin: every answer comes from dispatch(), which is tested
     without the SDK, so SDK API drift can break the wiring but nothing else.
-
-    When `repo` is given and no index exists yet, the build happens on the first
-    tool call rather than here, and that placement is the whole point. A client
-    spawns this process and waits for the `initialize` response; blocking that
-    handshake for the minute a large repo takes to parse makes the server look
-    dead and the client gives up. Building on first call instead means the
-    handshake is instant, the tools list, and the one slow call writes a real
-    index to disk -- so even if *that* call times out, the work is not lost and
-    the retry is instant. A failure that heals itself beats one that does not.
     """
     mcp = _require_sdk()
     index_dir = Path(out)
     if repo is None:
-        # No repo to build from: the index must already exist, so say so now
-        # rather than at the first call.
         open_index(index_dir)
     import asyncio
 
@@ -631,35 +713,68 @@ def serve(out, repo=None, cache=None, tasks=None) -> None:
     from mcp.server.stdio import stdio_server
     from mcp.types import TextContent
 
-    # version= is not optional in practice. Left unset, the SDK fills serverInfo
-    # with *its own* version, so every client is told repo2graph is whatever
-    # release of `mcp` happens to be installed -- 1.30.0 against a 1.4.0 package.
-    # The HTTP transport reports __version__ correctly, so omitting it here also
-    # made the two transports disagree about what they are.
-    server = Server("repo2graph", version=__version__)
+    supports_decorators = hasattr(Server, "list_tools")
 
-    @server.list_tools()
-    async def list_tools():
+    async def list_tools_handler(*args, **kwargs):
         return get_tools(mcp.types)
 
-    @server.call_tool()
-    async def call_tool(name, arguments):
+    async def call_tool_handler(*args, **kwargs):
+        name = None
+        arguments = None
+
+        if not supports_decorators:
+            params = args[1]
+            name = params.name
+            arguments = params.arguments
+        else:
+            name = args[0]
+            arguments = args[1] if len(args) > 1 else kwargs.get("arguments")
+
         if (name or "") == "repo_build_status":
             # Answerable without an index, and the only tool that is: asking
             # for build progress must not itself wait on the build.
-            return [TextContent(type="text",
-                                text=dispatch(None, name, arguments or {},
-                                              cache=cache, tasks=tasks))]
+            return [
+                TextContent(
+                    type="text",
+                    text=dispatch(None, name, arguments or {}, cache=cache, tasks=tasks),
+                )
+            ]
         index, pending = open_index_or_task(index_dir, repo, cache, tasks)
         if pending is not None:
             return [TextContent(type="text", text=pending)]
         text = dispatch(index, name, arguments or {}, cache=cache, tasks=tasks)
         return [TextContent(type="text", text=text)]
 
+    server_cls: Any = Server
+    mcp_server: Any = None
+    if supports_decorators:
+        mcp_server = server_cls(server.name, version=server.version)
+        mcp_server.list_tools()(list_tools_handler)
+        mcp_server.call_tool()(call_tool_handler)
+    else:
+
+        async def list_tools_2x(ctx, params):
+            return mcp.types.ListToolsResult(tools=await list_tools_handler())
+
+        async def call_tool_2x(ctx, params):
+            content = await call_tool_handler(ctx, params)
+            return mcp.types.CallToolResult(content=content)
+
+        try:
+            mcp_server = server_cls(
+                server.name,
+                version=server.version,
+                on_list_tools=list_tools_2x,
+                on_call_tool=call_tool_2x,
+            )
+        except TypeError:
+            mcp_server = server_cls(server.name, version=server.version)
+
     async def _run():
         async with stdio_server() as (read_stream, write_stream):
-            await server.run(read_stream, write_stream,
-                             server.create_initialization_options())
+            await mcp_server.run(
+                read_stream, write_stream, mcp_server.create_initialization_options()
+            )
 
     asyncio.run(_run())
 
@@ -680,8 +795,8 @@ def resolve_paths(repo=None, out=None):
         repo_path = Path(repo)
         if not repo_path.is_dir():
             raise SystemExit(
-                f"error: repository directory does not exist or is not a "
-                f"directory: {repo_path}")
+                f"error: repository directory does not exist or is not a directory: {repo_path}"
+            )
         return (Path(out) if out else repo_path / INDEX_DIRNAME), repo_path
     out_path = Path(out) if out else Path(INDEX_DIRNAME)
     if out_path.name == INDEX_DIRNAME and out_path.parent.is_dir():
@@ -691,30 +806,47 @@ def resolve_paths(repo=None, out=None):
 
 def main(argv=None):
     p = argparse.ArgumentParser(
-        prog="repo2graph-mcp",
-        description="Serve a repo2graph index over MCP on stdio")
-    p.add_argument("repo", nargs="?", default=None,
-                   help="repository to serve; its index is built on the first "
-                        "tool call if one does not exist yet "
-                        "(default: the directory holding --out)")
-    p.add_argument("-o", "--out", default=None,
-                   help="index directory (default: <repo>/.r2g)")
-    p.add_argument("--no-auto-build", action="store_true",
-                   help="never build: exit unless the index already exists")
-    p.add_argument("--async-build", action="store_true",
-                   help="build a missing index on a background thread and "
-                        "return a task_id immediately, instead of blocking the "
-                        "first tool call until it finishes. Poll it with "
-                        "repo_build_status (default: off, build synchronously)")
-    p.add_argument("--cache-size", type=int, default=DEFAULT_MAX_SIZE,
-                   metavar="N",
-                   help=f"cached tool results before the least recently used "
-                        f"is evicted; 0 disables the cache "
-                        f"(default: {DEFAULT_MAX_SIZE})")
-    p.add_argument("--cache-ttl", type=float, default=DEFAULT_TTL,
-                   metavar="SECONDS",
-                   help=f"seconds a cached result is served before it is "
-                        f"recomputed (default: {DEFAULT_TTL:g})")
+        prog="repo2graph-mcp", description="Serve a repo2graph index over MCP on stdio"
+    )
+    p.add_argument(
+        "repo",
+        nargs="?",
+        default=None,
+        help="repository to serve; its index is built on the first "
+        "tool call if one does not exist yet "
+        "(default: the directory holding --out)",
+    )
+    p.add_argument("-o", "--out", default=None, help="index directory (default: <repo>/.r2g)")
+    p.add_argument(
+        "--no-auto-build",
+        action="store_true",
+        help="never build: exit unless the index already exists",
+    )
+    p.add_argument(
+        "--async-build",
+        action="store_true",
+        help="build a missing index on a background thread and "
+        "return a task_id immediately, instead of blocking the "
+        "first tool call until it finishes. Poll it with "
+        "repo_build_status (default: off, build synchronously)",
+    )
+    p.add_argument(
+        "--cache-size",
+        type=int,
+        default=DEFAULT_MAX_SIZE,
+        metavar="N",
+        help=f"cached tool results before the least recently used "
+        f"is evicted; 0 disables the cache "
+        f"(default: {DEFAULT_MAX_SIZE})",
+    )
+    p.add_argument(
+        "--cache-ttl",
+        type=float,
+        default=DEFAULT_TTL,
+        metavar="SECONDS",
+        help=f"seconds a cached result is served before it is "
+        f"recomputed (default: {DEFAULT_TTL:g})",
+    )
     _add_auth_args(p)
     args = p.parse_args(argv)
     index_dir, repo = resolve_paths(args.repo, args.out)
@@ -727,23 +859,31 @@ def main(argv=None):
         args.http_port = args.well_known_port
 
     from .audit import AuditConfig, AuditLogger
-    audit = AuditLogger(AuditConfig(level=args.audit_log_level,
-                                    path=args.audit_log))
+
+    audit = AuditLogger(AuditConfig(level=args.audit_log_level, path=args.audit_log))
 
     tasks = None
     if args.async_build:
         from .tasks import TaskManager
+
         tasks = TaskManager()
 
     auth_config = _auth_config(args)
     transport = None
     if args.http_port is not None or args.auth_cimd:
         from .http_server import HTTPTransport
+
         transport = HTTPTransport(
-            index_dir, build_from, host=args.http_host,
+            index_dir,
+            build_from,
+            host=args.http_host,
             port=args.http_port if args.http_port is not None else 8719,
-            auth_config=auth_config, audit=audit, cache=cache,
-            publish_cimd=args.auth_cimd, tasks=tasks)
+            auth_config=auth_config,
+            audit=audit,
+            cache=cache,
+            publish_cimd=args.auth_cimd,
+            tasks=tasks,
+        )
         transport.start()
         if args.http_only:
             # No stdio peer: block on the HTTP thread instead of returning,
@@ -764,7 +904,8 @@ def main(argv=None):
         raise SystemExit(
             "error: --auth-token/--auth-oidc-issuer need a transport that "
             "carries headers. stdio has none, so the credential could never be "
-            "checked. Add --http-port to serve over HTTP as well.")
+            "checked. Add --http-port to serve over HTTP as well."
+        )
 
     try:
         serve(index_dir, build_from, cache=cache, tasks=tasks)
@@ -780,58 +921,100 @@ def _add_auth_args(p) -> None:
     http = p.add_argument_group(
         "http transport",
         "Serve MCP over HTTP as well as stdio. Required for authentication: "
-        "stdio carries no headers, so a bearer token has nowhere to travel.")
-    http.add_argument("--http-port", type=int, default=None, metavar="PORT",
-                      help="serve JSON-RPC on this port in addition to stdio "
-                           "(default: off)")
-    http.add_argument("--http-host", default="127.0.0.1", metavar="HOST",
-                      help="bind address for --http-port. Binding beyond "
-                           "loopback without authentication is refused "
-                           "(default: 127.0.0.1)")
-    http.add_argument("--http-only", action="store_true",
-                      help="serve HTTP only, without the stdio transport "
-                           "(default: off)")
-    http.add_argument("--well-known-port", type=int, default=None, metavar="PORT",
-                      help="alias for --http-port; the discovery documents are "
-                           "served by the same HTTP transport (default: off)")
+        "stdio carries no headers, so a bearer token has nowhere to travel.",
+    )
+    http.add_argument(
+        "--http-port",
+        type=int,
+        default=None,
+        metavar="PORT",
+        help="serve JSON-RPC on this port in addition to stdio (default: off)",
+    )
+    http.add_argument(
+        "--http-host",
+        default="127.0.0.1",
+        metavar="HOST",
+        help="bind address for --http-port. Binding beyond "
+        "loopback without authentication is refused "
+        "(default: 127.0.0.1)",
+    )
+    http.add_argument(
+        "--http-only",
+        action="store_true",
+        help="serve HTTP only, without the stdio transport (default: off)",
+    )
+    http.add_argument(
+        "--well-known-port",
+        type=int,
+        default=None,
+        metavar="PORT",
+        help="alias for --http-port; the discovery documents are "
+        "served by the same HTTP transport (default: off)",
+    )
 
     auth = p.add_argument_group("authentication")
-    auth.add_argument("--auth-token", default=None, metavar="TOKEN",
-                      help="require `Authorization: Bearer <TOKEN>` on every "
-                           "HTTP tool call (default: no authentication)")
-    auth.add_argument("--auth-oidc-issuer", default=None, metavar="URL",
-                      help="validate bearer tokens as JWTs against this OIDC "
-                           "issuer's JWKS, enforcing iss, aud and exp "
-                           "(default: off)")
-    auth.add_argument("--auth-audience", default=None, metavar="AUD",
-                      help="expected `aud` claim for --auth-oidc-issuer tokens "
-                           "(default: the claim is not checked)")
-    auth.add_argument("--auth-jwks-ttl", type=float, default=300.0,
-                      metavar="SECONDS",
-                      help="seconds a fetched JWKS is trusted before refetch "
-                           "(default: 300)")
-    auth.add_argument("--auth-cimd", action="store_true",
-                      help="publish an RFC 7591 client metadata document at "
-                           "/.well-known/oauth-client-metadata (default: off)")
+    auth.add_argument(
+        "--auth-token",
+        default=None,
+        metavar="TOKEN",
+        help="require `Authorization: Bearer <TOKEN>` on every "
+        "HTTP tool call (default: no authentication)",
+    )
+    auth.add_argument(
+        "--auth-oidc-issuer",
+        default=None,
+        metavar="URL",
+        help="validate bearer tokens as JWTs against this OIDC "
+        "issuer's JWKS, enforcing iss, aud and exp "
+        "(default: off)",
+    )
+    auth.add_argument(
+        "--auth-audience",
+        default=None,
+        metavar="AUD",
+        help="expected `aud` claim for --auth-oidc-issuer tokens "
+        "(default: the claim is not checked)",
+    )
+    auth.add_argument(
+        "--auth-jwks-ttl",
+        type=float,
+        default=300.0,
+        metavar="SECONDS",
+        help="seconds a fetched JWKS is trusted before refetch (default: 300)",
+    )
+    auth.add_argument(
+        "--auth-cimd",
+        action="store_true",
+        help="publish an RFC 7591 client metadata document at "
+        "/.well-known/oauth-client-metadata (default: off)",
+    )
 
     log = p.add_argument_group("audit logging")
-    log.add_argument("--audit-log", default=None, metavar="PATH",
-                     help="append audit records to this file as well as stderr "
-                          "(default: stderr only)")
-    log.add_argument("--audit-log-level", choices=("none", "errors", "all"),
-                     default="all",
-                     help="which tool calls produce an audit record "
-                          "(default: all)")
+    log.add_argument(
+        "--audit-log",
+        default=None,
+        metavar="PATH",
+        help="append audit records to this file as well as stderr (default: stderr only)",
+    )
+    log.add_argument(
+        "--audit-log-level",
+        choices=("none", "errors", "all"),
+        default="all",
+        help="which tool calls produce an audit record (default: all)",
+    )
 
 
 def _auth_config(args):
     """Build an AuthConfig from parsed arguments."""
     from .auth import AuthConfig
-    return AuthConfig(token=args.auth_token,
-                      oidc_issuer=args.auth_oidc_issuer,
-                      audience=args.auth_audience,
-                      jwks_ttl=args.auth_jwks_ttl,
-                      cimd=args.auth_cimd)
+
+    return AuthConfig(
+        token=args.auth_token,
+        oidc_issuer=args.auth_oidc_issuer,
+        audience=args.auth_audience,
+        jwks_ttl=args.auth_jwks_ttl,
+        cimd=args.auth_cimd,
+    )
 
 
 if __name__ == "__main__":

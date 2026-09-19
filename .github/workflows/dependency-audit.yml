@@ -44,6 +44,19 @@ jobs:
           pip install -e ".[dev,rag,mcp]"
           pip install pip-audit
 
+      - name: Uninstall the editable package itself
+        # We only wanted the extras' third-party dependencies installed; the
+        # package under audit is this repo, not a PyPI release of it. Left in
+        # place, pip-audit tries to resolve repo2graph's own in-repo version
+        # against PyPI and fails whenever that version isn't published yet
+        # (e.g. a release PR that bumps the version locally before publish.yml
+        # runs). `--skip-editable` looks like the fix but isn't: pip-audit
+        # still reports it as a SkippedDependency, and --strict treats any
+        # skip as fatal regardless of reason. Uninstalling removes only
+        # repo2graph's own dist-info; its dependencies, already installed,
+        # are untouched and remain in scope for the audit below.
+        run: pip uninstall -y repo2graph
+
       - name: pip-audit (fails on any known vulnerability)
         # --strict makes a failure to resolve an advisory an error rather than a
         # silent pass: an audit that cannot reach its database must not report

@@ -1,4 +1,5 @@
 """End-to-end and unit coverage for graph building, chunking and retrieval."""
+
 import re
 import json
 import shutil
@@ -64,6 +65,7 @@ def edges_of(g, etype):
 
 # ---------- walker ----------
 
+
 def test_discover_skips_binary_and_vendored(sample_repo):
     (sample_repo / "node_modules").mkdir()
     (sample_repo / "node_modules" / "dep.py").write_text("x = 1\n")
@@ -90,7 +92,7 @@ def test_double_star_spans_zero_directories(sample_repo):
 
 def test_glob_patterns():
     assert matches_any("setup.py", ["**/*.py"])
-    assert matches_any("a/b/c.py", ["*.py"])          # bare pattern: any depth
+    assert matches_any("a/b/c.py", ["*.py"])  # bare pattern: any depth
     assert matches_any("a/test/x.py", ["**/test/**"])
     assert not matches_any("a/b.py", ["**/test/**"])
     assert not matches_any("src/b/c.ts", ["src/*.ts"])  # a single * stops at "/"
@@ -105,6 +107,7 @@ def test_discover_finds_non_ascii_filenames(tmp_path):
 
 # ---------- parse ----------
 
+
 def test_parse_extracts_symbols_calls_and_imports():
     pf = parse_source(PKG_MAIN.encode(), "python")
     kinds = {s.qualname: s.kind for s in pf.symbols}
@@ -114,6 +117,37 @@ def test_parse_extracts_symbols_calls_and_imports():
     run = next(s for s in pf.symbols if s.qualname == "Runner.run")
     assert "helper" in run.calls
     assert any("from .util import helper" in i for i in pf.imports)
+    assert pf.parse_errors == 0
+
+
+def test_parse_javascript_extracts_symbols_calls_and_imports():
+    source = b"""\
+import { helper } from "./helper.js";
+
+function greet(name) {
+    return helper(name);
+}
+
+class Runner {
+    run(value) {
+        return greet(value);
+    }
+}
+
+const wrap = (value) => helper(value);
+"""
+    pf = parse_source(source, "javascript")
+    kinds = {s.qualname: s.kind for s in pf.symbols}
+    assert kinds == {
+        "greet": "function",
+        "Runner": "class",
+        "Runner.run": "method",
+        "wrap": "function",
+    }
+    assert "helper" in next(s for s in pf.symbols if s.qualname == "greet").calls
+    assert "greet" in next(s for s in pf.symbols if s.qualname == "Runner.run").calls
+    assert "helper" in next(s for s in pf.symbols if s.qualname == "wrap").calls
+    assert pf.imports == ['import { helper } from "./helper.js";']
     assert pf.parse_errors == 0
 
 
@@ -159,6 +193,7 @@ def test_parse_unknown_language_is_empty():
 
 # ---------- import resolution ----------
 
+
 def test_import_targets_python():
     assert import_targets("from .util import helper", "python") == [".util"]
     assert import_targets("import os, sys as system", "python") == ["os", "sys"]
@@ -188,20 +223,25 @@ def test_resolve_import_is_deterministic_across_duplicates():
 def test_resolve_import_javascript_relative():
     files = {"src/index.ts", "src/lib/helper.ts"}
     ctx = path_index(files)
-    assert resolve_import("./lib/helper.js", "src/index.ts", "typescript", files, ctx) \
+    assert (
+        resolve_import("./lib/helper.js", "src/index.ts", "typescript", files, ctx)
         == "src/lib/helper.ts"
+    )
     assert resolve_import("react", "src/index.ts", "typescript", files, ctx) is None
 
 
 def test_resolve_import_go_uses_module_path():
     files = {"go.mod", "cmd/app/main.go", "internal/store/store.go"}
     ctx = dict(path_index(files), go_module="example.com/m")
-    assert resolve_import("example.com/m/internal/store", "cmd/app/main.go", "go", files, ctx) \
+    assert (
+        resolve_import("example.com/m/internal/store", "cmd/app/main.go", "go", files, ctx)
         == "internal/store/store.go"
+    )
     assert resolve_import("github.com/other/pkg", "cmd/app/main.go", "go", files, ctx) is None
 
 
 # ---------- graph ----------
+
 
 def test_build_nodes_and_containment(sample_graph):
     ids = set(sample_graph.nodes)
@@ -214,10 +254,12 @@ def test_build_nodes_and_containment(sample_graph):
 def test_build_edges(sample_graph):
     assert ("file:pkg/main.py", "file:pkg/util.py") in edges_of(sample_graph, "IMPORTS")
     assert ("file:pkg/main.py", "module:os") in edges_of(sample_graph, "IMPORTS")
-    assert ("sym:pkg/main.py::Runner", "sym:pkg/main.py::Runner.run") \
-        in edges_of(sample_graph, "DEFINES")
-    assert ("sym:pkg/main.py::Runner.run", "sym:pkg/util.py::helper") \
-        in edges_of(sample_graph, "CALLS")
+    assert ("sym:pkg/main.py::Runner", "sym:pkg/main.py::Runner.run") in edges_of(
+        sample_graph, "DEFINES"
+    )
+    assert ("sym:pkg/main.py::Runner.run", "sym:pkg/util.py::helper") in edges_of(
+        sample_graph, "CALLS"
+    )
 
 
 def test_build_file_types_and_stats(sample_graph):
@@ -237,8 +279,9 @@ def test_edges_are_deduplicated(sample_graph):
 
 
 def test_cochange_edges_from_git_history(tmp_path):
-    run = lambda *a: subprocess.run(["git", "-C", str(tmp_path), *a], check=True,
-                                    capture_output=True)
+    run = lambda *a: subprocess.run(
+        ["git", "-C", str(tmp_path), *a], check=True, capture_output=True
+    )
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
     run("config", "user.email", "t@example.com")
     run("config", "user.name", "t")
@@ -252,6 +295,7 @@ def test_cochange_edges_from_git_history(tmp_path):
 
 
 # ---------- chunks ----------
+
 
 def test_split_respects_size_and_overlaps():
     text = "\n".join(f"line {i}" for i in range(2000))
@@ -275,11 +319,11 @@ def test_iter_chunks_streams_without_materialising(sample_graph):
     assert inspect.isgeneratorfunction(iter_chunks)
     assert isinstance(build_chunks(sample_graph), list)
     seen_symbol = seen_file = False
-    for c in iter_chunks(sample_graph):        # single pass, nothing materialised
+    for c in iter_chunks(sample_graph):  # single pass, nothing materialised
         seen_symbol |= c["type"] == "symbol"
         seen_file |= c["type"] in ("file", "file_residual")
         assert c["text"]
-    assert seen_symbol and seen_file           # covered[] was complete before the file pass
+    assert seen_symbol and seen_file  # covered[] was complete before the file pass
     # residual chunks still get real spans -> the file pass saw the full covered map
     residual = [c for c in iter_chunks(sample_graph) if c["type"] == "file_residual"]
     assert all(isinstance(c["start_line"], int) for c in residual)
@@ -309,9 +353,16 @@ def test_chunk_ids_are_unique(sample_graph):
 
 # ---------- query ----------
 
+
 def test_tokenize_splits_identifiers():
     assert set(tokenize("resolveImport build_chunks")) >= {
-        "resolveimport", "resolve", "import", "build_chunks", "build", "chunks"}
+        "resolveimport",
+        "resolve",
+        "import",
+        "build_chunks",
+        "build",
+        "chunks",
+    }
 
 
 def test_index_retrieves_and_expands(tmp_path, sample_repo):
@@ -350,8 +401,7 @@ def test_index_survives_unicode_line_separators(tmp_path, sample_repo):
     # fragment. splitlines() breaks on U+2028/U+2029/U+0085 but tree-sitter's
     # row numbers do not, so at HEAD the chunk text is sliced from the wrong
     # lines and never contains "return MSG".
-    sep_chunk = next(c for c in idx.chunks
-                     if c["node_id"] == "sym:pkg/sep.py::uses_sep")
+    sep_chunk = next(c for c in idx.chunks if c["node_id"] == "sym:pkg/sep.py::uses_sep")
     assert "return MSG" in sep_chunk["text"]
     assert 'MSG = "a' not in sep_chunk["text"]
 
@@ -384,6 +434,7 @@ def test_score_unknown_term_returns_nothing(tmp_path, sample_repo):
 
 # ---------- cli / export ----------
 
+
 def test_parse_formats_rejects_unknown():
     assert parse_formats("jsonl, cypher") == {"jsonl", "cypher"}
     with pytest.raises(SystemExit):
@@ -393,8 +444,15 @@ def test_parse_formats_rejects_unknown():
 def test_build_writes_all_artifacts(tmp_path, sample_repo, capsys):
     out = tmp_path / "idx"
     main(["build", str(sample_repo), "-o", str(out)])
-    for name in ("nodes.jsonl", "edges.jsonl", "chunks.jsonl", "graph.graphml",
-                 "graph.cypher", "overview.md", "stats.json"):
+    for name in (
+        "nodes.jsonl",
+        "edges.jsonl",
+        "chunks.jsonl",
+        "graph.graphml",
+        "graph.cypher",
+        "overview.md",
+        "stats.json",
+    ):
         assert artifact_path(out, name).exists(), name
     report = json.loads(capsys.readouterr().out)
     assert report["chunks"] > 0
@@ -405,11 +463,22 @@ def test_output_is_split_into_human_and_agent_sections(tmp_path, sample_repo, ca
     out = tmp_path / "idx"
     main(["build", str(sample_repo), "-o", str(out)])
     assert sorted(p.name for p in (out / "human").iterdir()) == [
-        "graph.graphml", "graph.html", "overview.md"]
+        "CHANGELOG.md",
+        "graph.graphml",
+        "graph.html",
+        "overview.md",
+    ]
     assert sorted(p.name for p in (out / "agent").iterdir()) == [
-        "chunks.jsonl", "edges.jsonl", "graph.cypher", "index.state.json",
-        "manifest.json", "nodes.jsonl", "overview.md", "parse.cache.json",
-        "stats.json"]
+        "chunks.jsonl",
+        "edges.jsonl",
+        "graph.cypher",
+        "index.state.json",
+        "manifest.json",
+        "nodes.jsonl",
+        "overview.md",
+        "parse.cache.json",
+        "stats.json",
+    ]
     assert sorted(p.name for p in out.iterdir()) == ["agent", "human"]
     written = json.loads(capsys.readouterr().out)["written"]
     assert "agent/nodes.jsonl" in written and "human/overview.md" in written
@@ -418,11 +487,13 @@ def test_output_is_split_into_human_and_agent_sections(tmp_path, sample_repo, ca
 def test_entrypoints_are_marked_and_ranked(tmp_path, sample_repo):
     out = tmp_path / "idx"
     main(["build", str(sample_repo), "-o", str(out), "--formats", "jsonl"])
-    nodes = {n["id"]: n for n in
-             (json.loads(l) for l in artifact_path(out, "nodes.jsonl").read_text().splitlines())}
+    nodes = {
+        n["id"]: n
+        for n in (json.loads(l) for l in artifact_path(out, "nodes.jsonl").read_text().splitlines())
+    }
     entry = {nid for nid, n in nodes.items() if n.get("entrypoint")}
-    assert "sym:pkg/main.py::entry" in entry        # nothing in the repo calls it
-    assert "sym:pkg/util.py::helper" not in entry   # Runner.run() calls it
+    assert "sym:pkg/main.py::entry" in entry  # nothing in the repo calls it
+    assert "sym:pkg/util.py::helper" not in entry  # Runner.run() calls it
     assert nodes["sym:pkg/main.py::entry"]["reach"] >= 1
 
 
@@ -439,17 +510,94 @@ def test_manifest_describes_the_agent_output(tmp_path, sample_repo):
     assert m["how_to_read"] and m["approximations"]
 
 
+def test_manifest_usage_hints_are_present_and_non_empty(tmp_path, sample_repo):
+    """usage_hints lets an agent orient without a round-trip tool call: every
+    key is populated, and edge_type_meanings/what_is_not_indexed are derived
+    from the same source manifest.json's top-level edge_types and the skip
+    labels write_overview_human's "What was skipped" section uses -- not a
+    second hand-authored copy that can drift."""
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out)])
+    m = json.loads(artifact_path(out, "manifest.json").read_text())
+    hints = m["usage_hints"]
+    for key in (
+        "tool_decision_tree",
+        "confidence_semantics",
+        "edge_type_meanings",
+        "what_is_not_indexed",
+        "dynamic_calls_note",
+    ):
+        assert hints[key], key
+
+    assert hints["edge_type_meanings"] == m["edge_types"]
+    assert set(hints["tool_decision_tree"]) >= {
+        "orient_first",
+        "search_by_question",
+        "trace_relationships",
+        "node_id_format",
+    }
+    assert "1.0" in hints["confidence_semantics"]
+    assert "lt_1.0" in hints["confidence_semantics"]
+    node_id_format = hints["tool_decision_tree"]["node_id_format"]
+    assert "base_edges" in node_id_format
+    assert "caller_edges/callee_edges/base_edges target" in node_id_format
+    assert "prefix 'sym:'" in node_id_format
+
+
 def test_chunks_separate_in_repo_and_external_calls(tmp_path, sample_repo):
     out = tmp_path / "idx"
     main(["build", str(sample_repo), "-o", str(out), "--formats", "jsonl"])
-    chunks = [json.loads(l) for l in
-              artifact_path(out, "chunks.jsonl").read_text().splitlines()]
+    chunks = [json.loads(l) for l in artifact_path(out, "chunks.jsonl").read_text().splitlines()]
     run = next(c for c in chunks if c["qualname"] == "Runner.run")
     assert run["callees"] == ["pkg/util.py::helper"]
     assert run["callees_external"] == ["getpid"]
     assert "# calls: pkg/util.py::helper" in run["text"]
     assert "# calls (outside the repo): getpid" in run["text"]
     assert "# entry point:" in run["text"]
+
+
+def test_chunk_neighbours_carry_structured_edge_info(tmp_path):
+    """caller_edges/callee_edges/base_edges are the additive, structured
+    sibling of callers/callees/bases: same targets, plus edge_type,
+    edge_direction and -- only when ambiguous -- confidence."""
+    (tmp_path / "base.py").write_text("class Base:\n    pass\n")
+    (tmp_path / "sub.py").write_text(
+        "from base import Base\n\n\nclass Sub(Base):\n    def run(self):\n        helper()\n"
+    )
+    (tmp_path / "util.py").write_text("def helper():\n    pass\n")
+    (tmp_path / "other.py").write_text("def helper():\n    pass\n")
+
+    g = build(tmp_path)
+    chunks = {(c["path"], c["qualname"]): c for c in build_chunks(g)}
+
+    sub_class = chunks[("sub.py", "Sub")]
+    assert sub_class["base_edges"] == [
+        {"target": "base.py::Base", "edge_type": "INHERITS", "edge_direction": "outbound"}
+    ]
+    assert "confidence" not in sub_class["base_edges"][0]  # INHERITS is never ambiguous
+
+    run = chunks[("sub.py", "Sub.run")]
+    assert run["base_edges"] == []
+    callee_edges = run["callee_edges"]
+    assert len(callee_edges) == len(run["callees"]) == 2  # helper() is ambiguous: 2 candidates
+    targets = {e["target"] for e in callee_edges}
+    assert targets == {"util.py::helper", "other.py::helper"}
+    for e in callee_edges:
+        assert e["edge_type"] == "CALLS"
+        assert e["edge_direction"] == "outbound"
+        assert 0 < e["confidence"] < 1.0  # ambiguous: must be flagged, not omitted
+
+    helper_chunk = chunks[("util.py", "helper")]
+    assert helper_chunk["caller_edges"] == [
+        {
+            "target": "sub.py::Sub.run",
+            "edge_type": "CALLS",
+            "edge_direction": "inbound",
+            "confidence": next(
+                e["confidence"] for e in callee_edges if e["target"] == "util.py::helper"
+            ),
+        }
+    ]
 
 
 def test_no_chunks_flag(tmp_path, sample_repo):
@@ -484,18 +632,137 @@ def test_graphml_carries_yfiles_layout(tmp_path, sample_repo):
     assert "<y:ShapeNode>" in text
     coords = re.findall(r'<y:Geometry x="([-\d.]+)" y="([-\d.]+)"', text)
     assert len(coords) > 1
-    assert len(set(coords)) == len(coords)   # no stack of boxes at the origin
+    assert len(set(coords)) == len(coords)  # no stack of boxes at the origin
 
 
 def test_overview_lists_hubs(tmp_path, sample_repo):
+    """human/overview.md gets the new structured map (artifact_path resolves human/)."""
     out = tmp_path / "idx"
     main(["build", str(sample_repo), "-o", str(out), "--formats", "overview"])
     text = (artifact_path(out, "overview.md")).read_text()
-    assert "# Repo map:" in text
+    assert "# Repo overview:" in text
+    assert "## At a glance" in text
     assert "pkg/util.py" in text
 
 
+def test_stats_json_carries_hub_nodes_languages_and_schema_version(tmp_path, sample_repo):
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out)])
+    stats = json.loads(artifact_path(out, "stats.json").read_text())
+
+    assert stats["index_schema_version"] == "1"
+    assert stats["has_vectors"] is False
+    assert stats["languages"].get("python", 0) >= 2
+    assert stats["top_hub_nodes"], "sample_repo has real IMPORTS/CALLS in-degree"
+    top = stats["top_hub_nodes"][0]
+    assert {"node_id", "label", "in_degree"} <= set(top)
+    degrees = [n["in_degree"] for n in stats["top_hub_nodes"]]
+    assert degrees == sorted(degrees, reverse=True)
+    assert "co_change_hotspots" not in stats  # no --git-history: nothing to report
+
+
+def test_stats_json_top_hub_nodes_excludes_external_modules():
+    from repo2graph.export import _stats_extra
+    from repo2graph.graph import Graph
+
+    g = Graph(Path("."), "x")
+    g.add_node("file:app.py", type="file", path="app.py")
+    g.add_node("file:utils.py", type="file", path="utils.py")
+    g.add_node("module:json", type="module", name="json", external=True)
+    g.add_node("module:os", type="module", name="os", external=True)
+
+    for i in range(5):
+        fid = f"file:src{i}.py"
+        g.add_node(fid, type="file", path=f"src{i}.py")
+        g.add_edge(fid, "module:json", "IMPORTS")
+        if i < 4:
+            g.add_edge(fid, "module:os", "IMPORTS")
+        if i < 2:
+            g.add_edge(fid, "file:utils.py", "IMPORTS")
+
+    extra = _stats_extra(g)
+    hub_ids = [n["node_id"] for n in extra["top_hub_nodes"]]
+    assert hub_ids == ["file:utils.py"]
+
+
+def test_stats_json_cochange_hotspots_and_built_at_commit(tmp_path):
+    run = lambda *a: subprocess.run(
+        ["git", "-C", str(tmp_path), *a], check=True, capture_output=True
+    )
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
+    run("config", "user.email", "t@example.com")
+    run("config", "user.name", "t")
+    for i in range(3):
+        (tmp_path / "a.py").write_text(f"a = {i}\n")
+        (tmp_path / "b.py").write_text(f"b = {i}\n")
+        run("add", "-A")
+        run("commit", "-qm", f"c{i}")
+
+    out = tmp_path / "idx"
+    main(["build", str(tmp_path), "-o", str(out), "--git-history", "10"])
+    stats = json.loads(artifact_path(out, "stats.json").read_text())
+
+    assert stats["co_change_hotspots"] == [{"file_a": "a.py", "file_b": "b.py", "weight": 3}]
+    assert re.fullmatch(r"[0-9a-f]{7,40}", stats["built_at_commit"])
+
+
+def test_embed_flips_has_vectors_in_stats_json(mini_index, use_stub_embedder, capsys):
+    """has_vectors is read from the same has-vectors-been-written fact
+    register_written already appends vectors.npy for -- not a hardcoded
+    guess, and not re-derived independently."""
+    assert json.loads(artifact_path(mini_index, "stats.json").read_text())["has_vectors"] is False
+    main(["embed", "-o", str(mini_index)])
+    capsys.readouterr()
+    assert json.loads(artifact_path(mini_index, "stats.json").read_text())["has_vectors"] is True
+
+
+def test_write_overview_human_at_a_glance_matches_graph_stats(tmp_path, sample_graph):
+    """New human/overview.md: structured sections whose numbers come from g.stats."""
+    from repo2graph.export import write_overview_human
+
+    out_path = tmp_path / "overview.md"
+    write_overview_human(sample_graph, out_path)
+    text = out_path.read_text(encoding="utf8")
+
+    assert "## At a glance" in text
+    assert "| Metric | Value |" in text
+    files = [n for n in sample_graph.nodes.values() if n["type"] == "file"]
+    assert f"| Files indexed | {len(files)} |" in text
+    assert f"| Functions | {sample_graph.stats.get('symbol:function', 0)} |" in text
+    assert f"| Classes | {sample_graph.stats.get('symbol:class', 0)} |" in text
+    total_edges = sample_graph.stats.get("edges", len(sample_graph.edges))
+    assert f"| Total edges | {total_edges} |" in text
+
+    assert "## Top 10 most-connected files (by in-degree)" in text
+    # helper() is imported and called from main.py, so util.py has incoming edges
+    assert "pkg/util.py" in text.split("## Top 10 most-connected files")[1]
+
+
+def test_agent_overview_keeps_the_old_prose_format(tmp_path, sample_repo, sample_graph):
+    """agent/overview.md must stay byte-for-byte what write_overview() produces today."""
+    from repo2graph.export import write_overview
+
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out), "--formats", "overview"])
+    agent_text = (out / "agent" / "overview.md").read_text(encoding="utf8")
+    human_text = (out / "human" / "overview.md").read_text(encoding="utf8")
+
+    assert agent_text.startswith("# Repo map:")
+    assert "## Most depended-on files" in agent_text
+    assert "## Most called symbols" in agent_text
+    assert "## At a glance" not in agent_text
+
+    assert human_text.startswith("# Repo overview:")
+    assert "## At a glance" in human_text
+    assert agent_text != human_text
+
+    direct_path = tmp_path / "direct_overview.md"
+    write_overview(sample_graph, direct_path)
+    assert agent_text == direct_path.read_text(encoding="utf8")
+
+
 # ---------- html map ----------
+
 
 def test_build_writes_html_map(tmp_path, sample_repo):
     out = tmp_path / "idx"
@@ -563,10 +830,11 @@ def test_html_escapes_a_script_tag_in_the_source(tmp_path):
     # both the classic "</script>" breakout and the "<!--" + "<script" pair that
     # drives the tokeniser into script-data-double-escaped state
     (repo / "x.py").write_text(
-        'def f():\n'
+        "def f():\n"
         '    """</script><script>alert(1)</script>"""\n\n'
-        'def g():\n'
-        '    """open <!-- a comment then a bare <script tag, never closed"""\n')
+        "def g():\n"
+        '    """open <!-- a comment then a bare <script tag, never closed"""\n'
+    )
     out = tmp_path / "idx"
     main(["build", str(repo), "-o", str(out)])
     page = (artifact_path(out, "graph.html")).read_text(encoding="utf8")
@@ -659,6 +927,7 @@ def test_refactor_preserves_graph_shape(sample_repo):
 
 # ---------- Level 2: one regression test per in-scope bug ----------
 
+
 def test_iss22_symbol_chunk_body_survives_unicode_line_separator(tmp_path):
     """AC-1 (ISS-22): a file whose first line holds U+2028 must still slice each
     later symbol's chunk from the right source lines. At HEAD `splitlines()`
@@ -667,10 +936,10 @@ def test_iss22_symbol_chunk_body_survives_unicode_line_separator(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "sep.py").write_text(
-        'MSG = "a\u2028b"\n\ndef uses_sep():\n    return MSG\n', encoding="utf-8")
+        'MSG = "a\u2028b"\n\ndef uses_sep():\n    return MSG\n', encoding="utf-8"
+    )
     g = build(repo)
-    chunk = next(c for c in build_chunks(g)
-                 if c["node_id"] == "sym:sep.py::uses_sep")
+    chunk = next(c for c in build_chunks(g) if c["node_id"] == "sym:sep.py::uses_sep")
     assert "return MSG" in chunk["text"]
     assert 'MSG = "a' not in chunk["text"]
 
@@ -684,13 +953,15 @@ def test_iss22_file_residual_excludes_symbol_body(tmp_path):
     (repo / "sep.py").write_text(
         'MSG = "a\u2028b"\n'
         'EXTRA = "padding padding padding padding padding padding"\n'
-        '\n'
-        'def uses_sep():\n'
-        '    return MSG\n',
-        encoding="utf-8")
+        "\n"
+        "def uses_sep():\n"
+        "    return MSG\n",
+        encoding="utf-8",
+    )
     g = build(repo)
-    residual = [c for c in build_chunks(g)
-                if c["type"] == "file_residual" and c["path"] == "sep.py"]
+    residual = [
+        c for c in build_chunks(g) if c["type"] == "file_residual" and c["path"] == "sep.py"
+    ]
     assert residual, "expected a file_residual chunk for sep.py"
     text = residual[0]["text"]
     assert "MSG = " in text
@@ -705,8 +976,9 @@ def test_iss06_cochange_survives_non_ascii_filenames(tmp_path):
     UnicodeDecodeError on a non-UTF-8 locale)."""
     if shutil.which("git") is None:
         pytest.skip("git not available")
-    run = lambda *a: subprocess.run(["git", "-C", str(tmp_path), *a], check=True,
-                                    capture_output=True)
+    run = lambda *a: subprocess.run(
+        ["git", "-C", str(tmp_path), *a], check=True, capture_output=True
+    )
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
     run("config", "user.email", "t@example.com")
     run("config", "user.name", "t")
@@ -743,20 +1015,27 @@ def test_iss27_graphml_roundtrips_with_a_control_char(tmp_path):
     GraphML unparseable. stdlib only, never skipped. At HEAD ElementTree writes
     the raw \\x0c and ET.parse raises ParseError."""
     import xml.etree.ElementTree as ET
+
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "mod.py").write_text(
-        'def f():\n    "doc with \x0c formfeed"\n    return 1\n', encoding="utf-8")
+        'def f():\n    "doc with \x0c formfeed"\n    return 1\n', encoding="utf-8"
+    )
     out = tmp_path / "idx"
     main(["build", str(repo), "-o", str(out), "--formats", "graphml"])
     gml = artifact_path(out, "graph.graphml")
     ET.parse(gml)  # must not raise
     text = gml.read_text(encoding="utf-8")
-    illegal = [hex(ord(c)) for c in text
-               if not (c in "\t\n\r"
-                       or 0x20 <= ord(c) <= 0xD7FF
-                       or 0xE000 <= ord(c) <= 0xFFFD
-                       or ord(c) >= 0x10000)]
+    illegal = [
+        hex(ord(c))
+        for c in text
+        if not (
+            c in "\t\n\r"
+            or 0x20 <= ord(c) <= 0xD7FF
+            or 0xE000 <= ord(c) <= 0xFFFD
+            or ord(c) >= 0x10000
+        )
+    ]
     assert not illegal, illegal
 
 
@@ -765,18 +1044,23 @@ def test_iss19_parse_spec_rejects_traversal_and_option_specs(spec):
     """AC-6 (ISS-19): traversal / option-like specs must raise. At HEAD
     parse_spec("owner/..") returns ("owner", "..") instead of raising."""
     from repo2graph.fetch import parse_spec
+
     with pytest.raises(ValueError):
         parse_spec(spec)
 
 
-@pytest.mark.parametrize("spec", [
-    "owner/repo",
-    "https://github.com/owner/repo",
-    "git@github.com:owner/repo.git",
-])
+@pytest.mark.parametrize(
+    "spec",
+    [
+        "owner/repo",
+        "https://github.com/owner/repo",
+        "git@github.com:owner/repo.git",
+    ],
+)
 def test_iss19_parse_spec_still_accepts_valid_specs(spec):
     """AC-6 (ISS-19): the hardening must not reject legitimate specs."""
     from repo2graph.fetch import parse_spec
+
     assert parse_spec(spec) == ("owner", "repo")
 
 
@@ -801,6 +1085,7 @@ def test_iss16_token_never_appears_in_clone_argv(tmp_path, monkeypatch):
     """AC-7 (ISS-16): no argv element handed to subprocess.run may contain the
     token. At HEAD the token is interpolated into the clone URL argv element."""
     from repo2graph import fetch
+
     rec = _RunRecorder()
     monkeypatch.setattr(fetch.subprocess, "run", rec)
     token = "s3cr3t-CLONE-token-value"
@@ -815,6 +1100,7 @@ def test_iss18_every_fetch_subprocess_call_passes_timeout(tmp_path, monkeypatch)
     """AC-8 (ISS-18, SH-6): every subprocess.run in fetch.py must carry a timeout
     and specify encoding='utf8' and errors='replace'."""
     from repo2graph import fetch
+
     rec = _RunRecorder()
     monkeypatch.setattr(fetch.subprocess, "run", rec)
     fetch.clone("owner/repo", tmp_path, token="tok")
@@ -842,8 +1128,7 @@ def test_iss13_discover_matches_between_git_and_walk(tmp_path):
 
     walk_set = {rel for rel, _ in discover(tmp_path)}
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True,
-                   capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True, capture_output=True)
     git_set = {rel for rel, _ in discover(tmp_path)}
     assert walk_set == git_set
     assert ".github/workflows/ci.py" in git_set
@@ -883,10 +1168,17 @@ def test_iss07_parse_all_falls_back_when_the_pool_breaks(tmp_path, monkeypatch):
 
     def digest(res):
         return [
-            (rel, lang, None if read is None else (
-                read[0], read[1],
-                None if read[2] is None
-                else [(s.qualname, s.kind) for s in read[2].symbols]))
+            (
+                rel,
+                lang,
+                None
+                if read is None
+                else (
+                    read[0],
+                    read[1],
+                    None if read[2] is None else [(s.qualname, s.kind) for s in read[2].symbols],
+                ),
+            )
             for rel, lang, read in res
         ]
 
@@ -908,6 +1200,7 @@ def test_iss01_iss02_dead_dataclass_fields_are_gone():
 
 # ---------- Level 3: workflow-YAML text assertions ----------
 
+
 def _run_blocks(yaml_text: str):
     """Yield the body of every `run: |` / `run: >` block-scalar in a workflow."""
     lines = yaml_text.splitlines()
@@ -920,8 +1213,8 @@ def _run_blocks(yaml_text: str):
         indent = len(m.group(1))
         body, i = [], i + 1
         while i < len(lines) and (
-                not lines[i].strip()
-                or len(lines[i]) - len(lines[i].lstrip()) > indent):
+            not lines[i].strip() or len(lines[i]) - len(lines[i].lstrip()) > indent
+        ):
             body.append(lines[i])
             i += 1
         blocks.append("\n".join(body))
@@ -932,8 +1225,7 @@ def test_iss44_index_repo_workflow_has_no_run_interpolation():
     """AC-14 (ISS-44): no `${{ inputs. }}` or `${{ github.event. }}` inside any
     run: block of index-repo.yml; the slug is computed from "$R2G_REPO". At HEAD
     the "Compute slug" step interpolates ${{ inputs.repo }} straight into bash."""
-    text = (REPO_ROOT / ".github" / "workflows" / "index-repo.yml").read_text(
-        encoding="utf-8")
+    text = (REPO_ROOT / ".github" / "workflows" / "index-repo.yml").read_text(encoding="utf-8")
     for block in _run_blocks(text):
         assert "${{ inputs." not in block, block
         assert "${{ github.event." not in block, block
@@ -987,8 +1279,9 @@ def _top_block(text, key):
 
 def _declared(text, key):
     """Names declared directly under a top-level mapping (inputs:/outputs:)."""
-    return {m.group(1) for m in
-            re.finditer(r"^  ([A-Za-z][\w-]*):\s*$", _top_block(text, key), re.M)}
+    return {
+        m.group(1) for m in re.finditer(r"^  ([A-Za-z][\w-]*):\s*$", _top_block(text, key), re.M)
+    }
 
 
 def _defaults(text):
@@ -1096,12 +1389,13 @@ def test_action_yml_step_outputs_match_what_the_steps_print():
     $GITHUB_OUTPUT. The two name sets must agree, per step."""
     text = _action_text()
     declared = _top_block(text, "outputs")
-    for step_id, expected in (("build", {"nodes", "edges", "chunks"}),
-                              ("rag", {"pack-file", "pack-chars"})):
+    for step_id, expected in (
+        ("build", {"nodes", "edges", "chunks"}),
+        ("rag", {"pack-file", "pack-chars"}),
+    ):
         body = "\n".join(_run_blocks(_step(text, step_id)))
         printed = set(re.findall(r'print\(f"([\w-]+)=', body))
-        read = set(re.findall(
-            rf"steps\.{step_id}\.outputs\.([\w-]+)", declared))
+        read = set(re.findall(rf"steps\.{step_id}\.outputs\.([\w-]+)", declared))
         assert printed == expected, (step_id, printed)
         assert read == expected, (step_id, read)
 
@@ -1117,8 +1411,16 @@ def test_action_yml_and_ci_artifact_paths_match_the_layout():
     assert f"{HUMAN_DIR}/overview.md" in rels("overview.md")
     assert f"{AGENT_DIR}/chunks.jsonl" in rels("chunks.jsonl")
     assert f"{HUMAN_DIR}/graph.html" in rels("graph.html")
+    assert f"{AGENT_DIR}/stats.json" in rels("stats.json")
+    assert f"{AGENT_DIR}/nodes.jsonl" in rels("nodes.jsonl")
+    assert f"{AGENT_DIR}/edges.jsonl" in rels("edges.jsonl")
 
-    assert '"$R2G_OUT/human/overview.md"' in action
+    # the "Write job summary" step feeds .github/scripts/summary.py the agent
+    # artifacts, not overview.md -- that hand-off is now index-repo.yml's alone
+    assert '"$R2G_OUT/agent/stats.json"' in action
+    assert '"$R2G_OUT/agent/nodes.jsonl"' in action
+    assert '"$R2G_OUT/agent/edges.jsonl"' in action
+    assert '"$R2G_OUT/human/CHANGELOG.md"' in action
     assert '"out/$slug/human/overview.md"' in index_repo
     assert ".r2g/human/graph.html" in ci
     assert ".r2g/agent/chunks.jsonl" in ci
@@ -1168,10 +1470,17 @@ def test_action_yml_query_inputs_match_the_cli_defaults_and_omit_answer():
     assert defaults["query-out"] == ""
 
     # comments may name the surface (they explain why it is absent); code may not
-    lowered = "\n".join(ln for ln in text.split("\n")
-                        if not ln.strip().startswith("#")).lower()
-    for banned in ("--answer", "--provider", "--model",
-                   "gemini", "openai", "anthropic", "ollama", "api_key"):
+    lowered = "\n".join(ln for ln in text.split("\n") if not ln.strip().startswith("#")).lower()
+    for banned in (
+        "--answer",
+        "--provider",
+        "--model",
+        "gemini",
+        "openai",
+        "anthropic",
+        "ollama",
+        "api_key",
+    ):
         assert banned not in lowered, banned
 
 
@@ -1208,6 +1517,7 @@ def test_iss26_auth_env_terminal_prompt_and_config_count(monkeypatch):
     """Issue 26 (NC-4, NC-5): GIT_TERMINAL_PROMPT is 0 unconditionally, and
     GIT_CONFIG_COUNT preserves inherited count."""
     from repo2graph.fetch import _auth_env
+
     env_empty = _auth_env(None)
     assert env_empty.get("GIT_TERMINAL_PROMPT") == "0"
     assert "GIT_CONFIG_KEY_0" not in env_empty
@@ -1226,6 +1536,7 @@ def test_iss26_clone_redacts_base64_and_token(tmp_path, monkeypatch):
     """Issue 26 (SH-3): clone failure error message redacts both raw token and basic credential."""
     import base64
     from repo2graph import fetch
+
     token = "secrettoken123"
     basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
 
@@ -1246,6 +1557,7 @@ def test_iss26_clone_redacts_base64_and_token(tmp_path, monkeypatch):
 def test_iss26_clone_reuses_existing_checkout(tmp_path, monkeypatch):
     """Issue 26 (ISS-21): clone detects an existing checkout and reuses it."""
     from repo2graph import fetch
+
     target = tmp_path / "repo"
     (target / ".git").mkdir(parents=True)
     (target / "dummy.txt").write_text("hello", encoding="utf-8")
@@ -1260,6 +1572,7 @@ def test_iss26_clone_reuses_existing_checkout(tmp_path, monkeypatch):
 
 
 # ---------- Issue #28: Test coverage round 2 (ISS-52, ISS-53, NC-3) ----------
+
 
 @pytest.mark.parametrize(
     "spec,expected",
@@ -1323,7 +1636,9 @@ def test_iss52_clone_argv_construction(tmp_path, monkeypatch):
     target1 = fetch.clone("owner/repo", tmp_path)
     assert target1 == tmp_path / "repo"
     assert rec.calls[-1][0] == [
-        "git", "clone", "--quiet",
+        "git",
+        "clone",
+        "--quiet",
         "https://github.com/owner/repo.git",
         str(tmp_path / "repo"),
     ]
@@ -1332,9 +1647,13 @@ def test_iss52_clone_argv_construction(tmp_path, monkeypatch):
     target2 = fetch.clone("owner/repo", tmp_path, ref="feat", depth=2)
     assert target2 == tmp_path / "repo"
     assert rec.calls[-1][0] == [
-        "git", "clone", "--quiet",
-        "--depth", "2",
-        "--branch", "feat",
+        "git",
+        "clone",
+        "--quiet",
+        "--depth",
+        "2",
+        "--branch",
+        "feat",
         "https://github.com/owner/repo.git",
         str(tmp_path / "repo"),
     ]
@@ -1386,6 +1705,7 @@ def test_iss25_query_constants_and_budget_bounds(tmp_path, sample_repo):
     """Issue 25 (ISS-37, ISS-38, ISS-39): BM25 constants are named, char budget
     is checked before appending to prevent overshooting, and expansion is bounded."""
     from repo2graph.query import BM25_K1, BM25_B, BM25_AVG_LEN, Index
+
     assert BM25_K1 == 1.5
     assert BM25_B == 0.75
     assert BM25_AVG_LEN == 400.0
@@ -1412,6 +1732,7 @@ def test_iss27_skip_dirs_and_discovery_stat(tmp_path):
     """Issue 27 (ISS-15, SH-5): DEFAULT_SKIP_DIRS includes cache dirs (.ruff_cache,
     .eggs, .cache, .gradle, .direnv, .yarn) and discovery method is recorded in stats."""
     from repo2graph.walker import DEFAULT_SKIP_DIRS, discover
+
     for d in (".ruff_cache", ".eggs", ".cache", ".gradle", ".direnv", ".yarn"):
         assert d in DEFAULT_SKIP_DIRS
 
@@ -1442,6 +1763,7 @@ def test_iss21_docstring_inner_quotes_preserved(tmp_path):
 def test_iss21_add_node_preserves_zero_and_false():
     """Issue 21 (ISS-11): add_node preserves legitimate 0 and False values on re-add."""
     from repo2graph.graph import Graph
+
     g = Graph(Path("."), "test")
     g.add_node("n1", count=1, flag=True)
     # Re-add with 0 and False
@@ -1453,6 +1775,7 @@ def test_iss21_add_node_preserves_zero_and_false():
 def test_iss21_cochange_commits_skipped_counter(monkeypatch):
     """Issue 21 (ISS-12): commits touching > 25 files increment stats['cochange_commits_skipped']."""
     from repo2graph.graph import Graph, add_cochange
+
     # 26 files in one commit
     files = [f"f{i}.py" for i in range(26)]
     log = "H1\n" + "\n".join(files) + "\n\n"
@@ -1467,6 +1790,7 @@ def test_iss21_cochange_commits_skipped_counter(monkeypatch):
 def test_iss23_write_jsonl_always_uses_lf_newlines(tmp_path):
     """Issue 23 (ISS-28): write_jsonl writes LF newlines on all platforms, including Windows."""
     from repo2graph.export import write_jsonl
+
     p = tmp_path / "test.jsonl"
     write_jsonl(p, [{"a": 1}, {"b": 2}])
     raw = p.read_bytes()
@@ -1560,10 +1884,10 @@ def test_build_with_viz_nodes_zero_writes_an_empty_map(tmp_path, capsys):
     repo = tmp_path / "src"
     (repo / "pkg").mkdir(parents=True)
     (repo / "pkg" / "a.py").write_text(
-        "TABLE = {'a': 1}\n\n\ndef one():\n    return TABLE\n", encoding="utf8")
+        "TABLE = {'a': 1}\n\n\ndef one():\n    return TABLE\n", encoding="utf8"
+    )
     out = tmp_path / "idx"
-    main(["build", str(repo), "-o", str(out), "--formats", "jsonl,html",
-          "--viz-nodes", "0"])
+    main(["build", str(repo), "-o", str(out), "--formats", "jsonl,html", "--viz-nodes", "0"])
     capsys.readouterr()
 
     html = (out / "human" / "graph.html").read_text(encoding="utf8")
@@ -1579,8 +1903,14 @@ def test_build_with_viz_nodes_zero_writes_an_empty_map(tmp_path, capsys):
 def test_iss22_chunk_caps_and_residual_span(tmp_path):
     """Issue 22 (ISS-23, ISS-26): named constants for chunk caps, and real line spans for residuals."""
     from repo2graph.chunks import (
-        MAX_CALLERS, MAX_CALLEES, MAX_EXT_CALLS, MAX_BASES, MAX_IMPORTS, MAX_DEFINES
+        MAX_CALLERS,
+        MAX_CALLEES,
+        MAX_EXT_CALLS,
+        MAX_BASES,
+        MAX_IMPORTS,
+        MAX_DEFINES,
     )
+
     for cap in (MAX_CALLERS, MAX_CALLEES, MAX_EXT_CALLS, MAX_BASES, MAX_IMPORTS, MAX_DEFINES):
         assert isinstance(cap, int) and cap > 0
 
@@ -1591,7 +1921,7 @@ def test_iss22_chunk_caps_and_residual_span(tmp_path):
         "# Header comment line 1\n# Header comment line 2\n# Header comment line 3\n"
         "def f():\n    return 42\n\n"
         "# Footer comment line 7\n# Footer comment line 8\n# Footer comment line 9\n",
-        encoding="utf-8"
+        encoding="utf-8",
     )
     g = build(repo)
     chunks = build_chunks(g)
@@ -1603,6 +1933,7 @@ def test_iss22_chunk_caps_and_residual_span(tmp_path):
 
 # ---------- follow-up audit round: newly found defects ----------
 
+
 def test_split_does_not_break_a_chunk_on_u2028():
     """_split must cut only on "\\n"; a U+2028 inside a line is not a row break
     for tree-sitter and must not become a chunk boundary (the ISS-22 class)."""
@@ -1610,9 +1941,9 @@ def test_split_does_not_break_a_chunk_on_u2028():
 
     plain = "first line\n" + "x" * 5000 + "\nlast"
     weird = "first   line\n" + "x" * 5000 + "\nlast"
-    assert "".join(_keepends_lf(weird)) == weird           # lossless, "\n"-only
+    assert "".join(_keepends_lf(weird)) == weird  # lossless, "\n"-only
     assert _keepends_lf("a b c\x85d") == ["a b c\x85d"]
-    assert len(_split(plain)) == len(_split(weird))        # separator does not add a split
+    assert len(_split(plain)) == len(_split(weird))  # separator does not add a split
 
 
 def test_import_targets_kotlin_csharp_php():
@@ -1639,13 +1970,41 @@ def test_ruby_call_resolves_to_method_not_receiver():
     assert "logger" not in calls and "User" not in calls
 
 
+def test_parse_source_swift_symbols_calls_and_imports():
+    """Swift LANG_CFG had zero direct parse_source coverage (kind_map/calls/imports)."""
+    src = b"""import Foundation
+
+class Greeter {
+    func greet(name: String) -> String {
+        print(name)
+        return helper(name)
+    }
+}
+
+protocol Named {
+    func label() -> String
+}
+"""
+    pf = parse_source(src, "swift")
+    if not pf.symbols:
+        pytest.skip("swift grammar unavailable")
+    kinds = {s.qualname: s.kind for s in pf.symbols}
+    assert kinds["Greeter"] == "class"
+    assert kinds["Greeter.greet"] == "function"
+    assert kinds["Named"] == "protocol"
+    greet = next(s for s in pf.symbols if s.qualname == "Greeter.greet")
+    assert "print" in greet.calls and "helper" in greet.calls
+    assert any(i.startswith("import Foundation") for i in pf.imports)
+    assert pf.parse_errors == 0
+
+
 def test_glob_re_tolerates_malformed_bracket_classes():
     """A stray/empty bracket in --include/--exclude must not raise re.error."""
     from repo2graph.walker import _glob_re
 
     for pat in ("[]", "[!]", "foo[]", "test[!].py", "unclosed[abc"):
         _glob_re(pat)  # must not raise
-    assert matches_any("foo.c", ["*.[ch]"])          # valid classes still work
+    assert matches_any("foo.c", ["*.[ch]"])  # valid classes still work
     assert matches_any("ayb", ["a[!x]b"])
     assert not matches_any("axb", ["a[!x]b"])
 
@@ -1653,10 +2012,14 @@ def test_glob_re_tolerates_malformed_bracket_classes():
 def test_negative_max_files_is_not_a_tail_slice(sample_repo):
     """`if max_files:` made a negative limit `files[:-n]`, silently dropping the
     last n files instead of being ignored."""
-    full = len({n["path"] for n in build(sample_repo).nodes.values()
-                if n.get("type") == "file"})
-    neg = len({n["path"] for n in build(sample_repo, max_files=-1).nodes.values()
-               if n.get("type") == "file"})
+    full = len({n["path"] for n in build(sample_repo).nodes.values() if n.get("type") == "file"})
+    neg = len(
+        {
+            n["path"]
+            for n in build(sample_repo, max_files=-1).nodes.values()
+            if n.get("type") == "file"
+        }
+    )
     assert neg == full
 
 
@@ -1718,7 +2081,7 @@ def test_index_build_survives_a_null_qualname_in_chunks(tmp_path, sample_repo):
     rows = [json.loads(x) for x in cp.read_text(encoding="utf8").splitlines() if x.strip()]
     rows[0]["qualname"] = None
     cp.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf8", newline="\n")
-    idx = Index(out)                       # must not raise
+    idx = Index(out)  # must not raise
     assert idx.N == len(rows)
 
 
@@ -1751,7 +2114,7 @@ def test_atomic_write_leaves_previous_file_on_failure(tmp_path):
             fh.write("half a line")
             raise RuntimeError("boom before commit")
     assert target.read_text(encoding="utf8") == "OLD GOOD CONTENT\n"
-    assert not list(tmp_path.glob(".*.tmp"))            # temp file cleaned up
+    assert not list(tmp_path.glob(".*.tmp"))  # temp file cleaned up
 
     with atomic_write(target, "w", encoding="utf8", newline="\n") as fh:
         fh.write("NEW\n")
@@ -1759,20 +2122,23 @@ def test_atomic_write_leaves_previous_file_on_failure(tmp_path):
     assert not list(tmp_path.glob(".*.tmp"))
 
 
-@pytest.mark.parametrize("args", [
-    ["build", ".", "--max-files", "-1"],
-    ["build", ".", "--git-history", "-5"],
-    ["build", ".", "--jobs", "-2"],
-    ["build", ".", "--viz-nodes", "-3"],
-    ["github", "o/r", "--depth", "-1"],
-    ["query", "x", "-k", "-1"],
-    ["query", "x", "--hops", "-1"],
-    ["query", "x", "--budget", "-100"],
-])
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["build", ".", "--max-files", "-1"],
+        ["build", ".", "--git-history", "-5"],
+        ["build", ".", "--jobs", "-2"],
+        ["build", ".", "--viz-nodes", "-3"],
+        ["github", "o/r", "--depth", "-1"],
+        ["query", "x", "-k", "-1"],
+        ["query", "x", "--hops", "-1"],
+        ["query", "x", "--budget", "-100"],
+    ],
+)
 def test_cli_rejects_negative_numeric_flags(args):
     with pytest.raises(SystemExit) as exc:
         main(args)
-    assert exc.value.code == 2          # argparse usage error
+    assert exc.value.code == 2  # argparse usage error
 
 
 def test_add_cochange_caps_the_history_window(monkeypatch):
@@ -1796,9 +2162,132 @@ def test_add_cochange_caps_the_history_window(monkeypatch):
     monkeypatch.setattr(graphmod.subprocess, "run", fake_run)
     g = Graph(Path("."), "x")
     g.stats = Counter()
-    add_cochange(g, Path("."), 10 ** 9, set())
+    add_cochange(g, Path("."), 10**9, set())
     assert seen["n"] == f"-n{MAX_COCHANGE_COMMITS}"
-    assert g.stats["cochange_history_capped"] == 10 ** 9
+    assert g.stats["cochange_history_capped"] == 10**9
+
+
+def test_add_cochange_caps_output_bytes_independent_of_commit_count(monkeypatch):
+    """ISS-82: MAX_COCHANGE_COMMITS bounds the commit count, not how many
+    bytes a single pathological commit's file list can still emit. A run that
+    returns a giant stdout must be truncated before it is decoded/processed,
+    and the truncation recorded."""
+    import repo2graph.graph as graphmod
+    from repo2graph.graph import MAX_COCHANGE_BYTES, Graph, add_cochange
+
+    huge = b"H1\n" + b"\n".join(f"f{i}.py".encode() for i in range(3)) + b"\n\n"
+    huge += b"pad " * (MAX_COCHANGE_BYTES // 4 + 1024)  # push stdout past the cap
+
+    class _Res:
+        returncode = 0
+        stdout = huge
+
+    monkeypatch.setattr(graphmod.subprocess, "run", lambda *a, **k: _Res())
+    g = Graph(Path("."), "x")
+    add_cochange(g, Path("."), 1, {"f0.py", "f1.py", "f2.py"})
+    assert g.stats["cochange_output_capped"] == len(huge)
+
+
+def test_add_cochange_no_stat_when_output_is_within_the_byte_cap(monkeypatch):
+    import repo2graph.graph as graphmod
+    from repo2graph.graph import Graph, add_cochange
+
+    class _Res:
+        returncode = 0
+        stdout = b"H1\nf0.py\nf1.py\n\n" * 3
+
+    monkeypatch.setattr(graphmod.subprocess, "run", lambda *a, **k: _Res())
+    g = Graph(Path("."), "x")
+    add_cochange(g, Path("."), 1, {"f0.py", "f1.py"})
+    assert "cochange_output_capped" not in g.stats
+
+
+def test_add_cochange_byte_cap_drops_trailing_partial_commit(monkeypatch):
+    """When stdout exceeds MAX_COCHANGE_BYTES, the cut truncates the oldest
+    commit block. If that commit originally touched > 25 files (a noise commit),
+    truncating it must not leave a surviving slice (<= 25 files) that emits
+    spurious CO_CHANGE pairs."""
+    import repo2graph.graph as graphmod
+    from repo2graph.graph import Graph, add_cochange
+
+    c1 = b"H1\nf0.py\nf1.py\n\n"
+    noise_files = [f"noise{i}.py" for i in range(30)]
+    c2 = b"H2\n" + b"\n".join(f.encode() for f in noise_files) + b"\n\n"
+    cap = len(c1) + 40
+    monkeypatch.setattr(graphmod, "MAX_COCHANGE_BYTES", cap)
+
+    class _Res:
+        returncode = 0
+        stdout = c1 + c2
+
+    monkeypatch.setattr(graphmod.subprocess, "run", lambda *a, **k: _Res())
+    g = Graph(Path("."), "x")
+    add_cochange(g, Path("."), 1, {"f0.py", "f1.py", *noise_files}, min_pairs=1)
+
+    co_edges = [e for e in g.edges if e["type"] == "CO_CHANGE"]
+    assert len(co_edges) == 1
+    assert co_edges[0]["src"] == "file:f0.py"
+    assert co_edges[0]["dst"] == "file:f1.py"
+
+
+def test_add_cochange_byte_cap_drops_trailing_partial_commit_crlf(monkeypatch):
+    """Ensure the cochange byte cap correctly handles Windows CRLF output (\r\n\r\n)."""
+    import repo2graph.graph as graphmod
+    from repo2graph.graph import Graph, add_cochange
+
+    c1 = b"H1\r\nf0.py\r\nf1.py\r\n\r\n"
+    noise_files = [f"noise{i}.py" for i in range(30)]
+    c2 = b"H2\r\n" + b"\r\n".join(f.encode() for f in noise_files) + b"\r\n\r\n"
+    cap = len(c1) + 40
+    monkeypatch.setattr(graphmod, "MAX_COCHANGE_BYTES", cap)
+
+    class _Res:
+        returncode = 0
+        stdout = c1 + c2
+
+    monkeypatch.setattr(graphmod.subprocess, "run", lambda *a, **k: _Res())
+    g = Graph(Path("."), "x")
+    add_cochange(g, Path("."), 1, {"f0.py", "f1.py", *noise_files}, min_pairs=1)
+
+    co_edges = [e for e in g.edges if e["type"] == "CO_CHANGE"]
+    assert len(co_edges) == 1
+    assert co_edges[0]["src"] == "file:f0.py"
+    assert co_edges[0]["dst"] == "file:f1.py"
+
+
+def test_graph_warns_once_past_the_large_graph_threshold(monkeypatch, capsys):
+    """ISS-85: no hard cap (max_files stays opt-in), but a build nobody bounded
+    gets exactly one stderr warning once it grows past the threshold."""
+    from repo2graph.graph import Graph
+
+    monkeypatch.setattr("repo2graph.graph.LARGE_GRAPH_WARN_THRESHOLD", 5)
+    g = Graph(Path("."), "x")
+    for i in range(10):
+        g.add_node(f"file:{i}", type="file")
+    err = capsys.readouterr().err
+    assert err.count("warning: graph has grown past") == 1
+    assert "with no size limit set; pass max_files= to build() to bound memory use." in err
+
+
+def test_graph_warns_with_max_files_context(monkeypatch, capsys):
+    from repo2graph.graph import Graph
+
+    monkeypatch.setattr("repo2graph.graph.LARGE_GRAPH_WARN_THRESHOLD", 5)
+    g = Graph(Path("."), "x", max_files=100)
+    for i in range(10):
+        g.add_node(f"file:{i}", type="file")
+    err = capsys.readouterr().err
+    assert "(max_files=100)." in err
+    assert "no size limit set" not in err
+
+
+def test_graph_stays_quiet_under_the_large_graph_threshold(capsys):
+    from repo2graph.graph import Graph
+
+    g = Graph(Path("."), "x")
+    for i in range(5):
+        g.add_node(f"file:{i}", type="file")
+    assert capsys.readouterr().err == ""
 
 
 def test_read_jsonl_reports_file_and_line_on_bad_json(tmp_path):
@@ -1837,8 +2326,9 @@ def test_index_github_end_to_end_against_a_local_repo(tmp_path, monkeypatch):
 
     def fake_clone(spec, dest, ref=None, depth=0, token=None):
         target = Path(dest) / "repo"
-        subprocess.run(["git", "clone", "-q", origin.as_uri(), str(target)],
-                       check=True, capture_output=True)
+        subprocess.run(
+            ["git", "clone", "-q", origin.as_uri(), str(target)], check=True, capture_output=True
+        )
         return target
 
     monkeypatch.setattr(fetch, "clone", fake_clone)
@@ -1846,7 +2336,7 @@ def test_index_github_end_to_end_against_a_local_repo(tmp_path, monkeypatch):
     meta = fetch.index_github("octocat/repo", out)
     assert meta["repo"] == "octocat/repo"
     assert meta["nodes"] > 0 and meta["chunks"] > 0
-    assert len(meta["commit"]) == 12 and meta["commit"] != "unknown"   # head_sha ran for real
+    assert len(meta["commit"]) == 12 and meta["commit"] != "unknown"  # head_sha ran for real
     assert artifact_path(out, "manifest.json").exists()
     node_lines = artifact_path(out, "nodes.jsonl").read_text(encoding="utf8").splitlines()
     assert "sym:app.py::main" in {json.loads(x)["id"] for x in node_lines if x.strip()}
@@ -1862,19 +2352,19 @@ def test_docstring_raw_and_unicode_prefixes():
 
 def test_docstring_rust_outer_attributes():
     """Verify Rust doc comments above attributes (#[inline], #[derive(...)]) are captured."""
-    src = b'/// Important documentation\n#[inline]\nfn calculate() {}\n'
+    src = b"/// Important documentation\n#[inline]\nfn calculate() {}\n"
     pf = parse_source(src, "rust")
     assert pf.symbols[0].docstring == "/// Important documentation"
 
 
 def test_callee_name_macro_and_fn_pointers():
     """Verify callee extraction handles C function pointer calls and Rust macros."""
-    src_c = b'void run() { (*fn_ptr)(1); (callback)(2); }\n'
+    src_c = b"void run() { (*fn_ptr)(1); (callback)(2); }\n"
     pf_c = parse_source(src_c, "c")
     assert "fn_ptr" in pf_c.symbols[0].calls
     assert "callback" in pf_c.symbols[0].calls
 
-    src_rs = b'fn test() { my_macro!(42); }\n'
+    src_rs = b"fn test() { my_macro!(42); }\n"
     pf_rs = parse_source(src_rs, "rust")
     assert "my_macro" in pf_rs.symbols[0].calls
 
@@ -1882,6 +2372,7 @@ def test_callee_name_macro_and_fn_pointers():
 def test_atomic_write_creates_parent_and_cleans_up(tmp_path):
     """Verify atomic_write automatically creates missing parent directories."""
     from repo2graph.layout import atomic_write
+
     nested = tmp_path / "a" / "b" / "c" / "test.txt"
     with atomic_write(nested, "w", encoding="utf8") as fh:
         fh.write("hello")
@@ -1900,6 +2391,7 @@ def test_atomic_write_creates_parent_and_cleans_up(tmp_path):
 def test_clone_target_is_file_error(tmp_path):
     """Verify clone cleanly raises RuntimeError if destination exists as a file."""
     from repo2graph.fetch import clone
+
     file_dest = tmp_path / "repo"
     file_dest.write_text("not a dir")
     with pytest.raises(RuntimeError, match="exists and is not a directory"):
@@ -1909,6 +2401,7 @@ def test_clone_target_is_file_error(tmp_path):
 def test_redact_url_encoded_token():
     """Verify _redact strips both raw and URL-encoded forms of the token."""
     from repo2graph.fetch import _redact
+
     token = "secret+token/special"
     msg = f"git clone https://x-access-token:{token}@github.com/a/b failed: {token}"
     redacted = _redact(msg, token)
@@ -1943,6 +2436,7 @@ def test_cli_build_nonexistent_repo(tmp_path):
 def test_loaded_graph_corrupted_index_json(tmp_path, sample_repo):
     """Verify LoadedGraph handles corrupted index.json gracefully."""
     from repo2graph.viz import LoadedGraph
+
     out = tmp_path / "idx"
     main(["build", str(sample_repo), "-o", str(out), "--formats", "jsonl"])
     (out / "agent" / "index.json").write_text("invalid json{{{", encoding="utf8")
@@ -1965,8 +2459,10 @@ def test_expand_malformed_confidence(tmp_path):
         encoding="utf8",
     )
     (agent / "nodes.jsonl").write_text(
-        json.dumps({"id": "a", "type": "symbol", "name": "a", "path": "a.py"}) + "\n"
-        + json.dumps({"id": "b", "type": "symbol", "name": "b", "path": "b.py"}) + "\n",
+        json.dumps({"id": "a", "type": "symbol", "name": "a", "path": "a.py"})
+        + "\n"
+        + json.dumps({"id": "b", "type": "symbol", "name": "b", "path": "b.py"})
+        + "\n",
         encoding="utf8",
     )
     (agent / "edges.jsonl").write_text(
@@ -2026,7 +2522,9 @@ def test_index_lazy_overview_and_manifest(tmp_path):
     (agent / "nodes.jsonl").write_text("", encoding="utf8")
     (agent / "edges.jsonl").write_text("", encoding="utf8")
     (human / "overview.md").write_text("# Repo Overview\n", encoding="utf8")
-    (agent / "manifest.json").write_text('{"format": "repo2graph/1", "entrypoints": []}\n', encoding="utf8")
+    (agent / "manifest.json").write_text(
+        '{"format": "repo2graph/1", "entrypoints": []}\n', encoding="utf8"
+    )
 
     idx = Index(out)
     # Unloaded initially
@@ -2047,6 +2545,7 @@ def test_index_lazy_overview_and_manifest(tmp_path):
 def test_is_secret_path():
     """S-6: _is_secret_path() identifies sensitive files and permits safe code."""
     from repo2graph.query import _is_secret_path
+
     # Sensitive paths
     assert _is_secret_path(".env")
     assert _is_secret_path(".env.local")
@@ -2088,19 +2587,31 @@ def test_pack_context_exclude_secrets(tmp_path):
     chunks = [
         {"id": "c1", "node_id": "s1", "path": ".env", "text": "AWS_SECRET_KEY=12345", "name": "c1"},
         {"id": "c2", "node_id": "s2", "path": "main.py", "text": "def run(): pass", "name": "run"},
-        {"id": "c3", "node_id": "s3", "path": "secret.json", "text": '{"token": "xyz"}', "name": "c3"},
+        {
+            "id": "c3",
+            "node_id": "s3",
+            "path": "secret.json",
+            "text": '{"token": "xyz"}',
+            "name": "c3",
+        },
     ]
-    (agent / "chunks.jsonl").write_text("\n".join(json.dumps(c) for c in chunks) + "\n", encoding="utf8")
+    (agent / "chunks.jsonl").write_text(
+        "\n".join(json.dumps(c) for c in chunks) + "\n", encoding="utf8"
+    )
     nodes = [
         {"id": "s1", "type": "symbol", "name": "s1", "path": ".env"},
         {"id": "s2", "type": "symbol", "name": "run", "path": "main.py"},
         {"id": "s3", "type": "symbol", "name": "s3", "path": "secret.json"},
     ]
-    (agent / "nodes.jsonl").write_text("\n".join(json.dumps(n) for n in nodes) + "\n", encoding="utf8")
+    (agent / "nodes.jsonl").write_text(
+        "\n".join(json.dumps(n) for n in nodes) + "\n", encoding="utf8"
+    )
     edges = [
         {"src": "s2", "dst": "s3", "type": "CALLS", "confidence": 1.0},
     ]
-    (agent / "edges.jsonl").write_text("\n".join(json.dumps(e) for e in edges) + "\n", encoding="utf8")
+    (agent / "edges.jsonl").write_text(
+        "\n".join(json.dumps(e) for e in edges) + "\n", encoding="utf8"
+    )
 
     idx = Index(out)
     # With exclude_secrets=False (default), .env or secret.json can be included
@@ -2114,6 +2625,3 @@ def test_pack_context_exclude_secrets(tmp_path):
     assert ".env" not in paths_clean
     assert "secret.json" not in paths_clean
     assert "main.py" in paths_clean
-
-
-

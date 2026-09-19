@@ -1,34 +1,58 @@
 """Discovery, language configs, and tree-sitter based symbol/call extraction."""
+
 import os
 import re
 import stat as statmod
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+from typing import TypedDict, cast
+
+from tree_sitter import Node, Parser
 
 EXT_LANG = {
-    ".py": "python", ".pyi": "python",
-    ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
-    ".ts": "typescript", ".tsx": "tsx",
+    ".py": "python",
+    ".pyi": "python",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    ".ts": "typescript",
+    ".tsx": "tsx",
     ".go": "go",
     ".rs": "rust",
     ".java": "java",
     ".rb": "ruby",
-    ".c": "c", ".h": "c",
-    ".cc": "cpp", ".cpp": "cpp", ".cxx": "cpp", ".hpp": "cpp", ".hh": "cpp",
+    ".c": "c",
+    ".h": "c",
+    ".cc": "cpp",
+    ".cpp": "cpp",
+    ".cxx": "cpp",
+    ".hpp": "cpp",
+    ".hh": "cpp",
     ".cs": "csharp",
     ".php": "php",
     ".kt": "kotlin",
     ".scala": "scala",
     ".swift": "swift",
-    ".sh": "bash", ".bash": "bash",
+    ".sh": "bash",
+    ".bash": "bash",
 }
 
 DOC_EXT = {".md", ".mdx", ".rst", ".txt", ".adoc"}
 CONFIG_EXT = {".json", ".yaml", ".yml", ".toml", ".ini", ".cfg"}
 
-LANG_CFG = {
+
+class LangConfig(TypedDict):
+    kind_map: dict[str, str]
+    call_types: set[str]
+    import_types: set[str]
+    doc: str
+
+
+LANG_CFG: dict[str, LangConfig] = {
     "python": {
         "kind_map": {"function_definition": "function", "class_definition": "class"},
         "call_types": {"call"},
@@ -59,8 +83,12 @@ LANG_CFG = {
     },
     "rust": {
         "kind_map": {
-            "function_item": "function", "struct_item": "struct", "enum_item": "enum",
-            "trait_item": "trait", "impl_item": "impl", "mod_item": "module",
+            "function_item": "function",
+            "struct_item": "struct",
+            "enum_item": "enum",
+            "trait_item": "trait",
+            "impl_item": "impl",
+            "mod_item": "module",
         },
         "call_types": {"call_expression", "macro_invocation"},
         "import_types": {"use_declaration"},
@@ -68,8 +96,10 @@ LANG_CFG = {
     },
     "java": {
         "kind_map": {
-            "method_declaration": "method", "constructor_declaration": "method",
-            "class_declaration": "class", "interface_declaration": "interface",
+            "method_declaration": "method",
+            "constructor_declaration": "method",
+            "class_declaration": "class",
+            "interface_declaration": "interface",
             "enum_declaration": "enum",
         },
         "call_types": {"method_invocation", "object_creation_expression"},
@@ -77,50 +107,79 @@ LANG_CFG = {
         "doc": "jsdoc",
     },
     "ruby": {
-        "kind_map": {"method": "method", "singleton_method": "method",
-                     "class": "class", "module": "module"},
+        "kind_map": {
+            "method": "method",
+            "singleton_method": "method",
+            "class": "class",
+            "module": "module",
+        },
         "call_types": {"call"},
         "import_types": set(),
         "doc": "line",
     },
     "c": {
-        "kind_map": {"function_definition": "function", "struct_specifier": "struct",
-                     "enum_specifier": "enum"},
+        "kind_map": {
+            "function_definition": "function",
+            "struct_specifier": "struct",
+            "enum_specifier": "enum",
+        },
         "call_types": {"call_expression"},
         "import_types": {"preproc_include"},
         "doc": "line",
     },
     "csharp": {
-        "kind_map": {"method_declaration": "method", "class_declaration": "class",
-                     "interface_declaration": "interface", "struct_declaration": "struct"},
+        "kind_map": {
+            "method_declaration": "method",
+            "class_declaration": "class",
+            "interface_declaration": "interface",
+            "struct_declaration": "struct",
+        },
         "call_types": {"invocation_expression", "object_creation_expression"},
         "import_types": {"using_directive"},
         "doc": "line",
     },
     "php": {
-        "kind_map": {"function_definition": "function", "method_declaration": "method",
-                     "class_declaration": "class", "interface_declaration": "interface"},
-        "call_types": {"function_call_expression", "member_call_expression", "object_creation_expression"},
+        "kind_map": {
+            "function_definition": "function",
+            "method_declaration": "method",
+            "class_declaration": "class",
+            "interface_declaration": "interface",
+        },
+        "call_types": {
+            "function_call_expression",
+            "member_call_expression",
+            "object_creation_expression",
+        },
         "import_types": {"namespace_use_declaration"},
         "doc": "jsdoc",
     },
     "kotlin": {
-        "kind_map": {"function_declaration": "function", "class_declaration": "class",
-                     "object_declaration": "object"},
+        "kind_map": {
+            "function_declaration": "function",
+            "class_declaration": "class",
+            "object_declaration": "object",
+        },
         "call_types": {"call_expression"},
         "import_types": {"import_header"},
         "doc": "jsdoc",
     },
     "swift": {
-        "kind_map": {"function_declaration": "function", "class_declaration": "class",
-                     "protocol_declaration": "protocol"},
+        "kind_map": {
+            "function_declaration": "function",
+            "class_declaration": "class",
+            "protocol_declaration": "protocol",
+        },
         "call_types": {"call_expression"},
         "import_types": {"import_declaration"},
         "doc": "line",
     },
     "scala": {
-        "kind_map": {"function_definition": "function", "class_definition": "class",
-                     "object_definition": "object", "trait_definition": "trait"},
+        "kind_map": {
+            "function_definition": "function",
+            "class_definition": "class",
+            "object_definition": "object",
+            "trait_definition": "trait",
+        },
         "call_types": {"call_expression"},
         "import_types": {"import_declaration"},
         "doc": "line",
@@ -132,24 +191,59 @@ LANG_CFG = {
         "doc": "line",
     },
 }
-LANG_CFG["typescript"] = dict(LANG_CFG["javascript"])
+LANG_CFG["typescript"] = cast(LangConfig, dict(LANG_CFG["javascript"]))
 LANG_CFG["typescript"]["kind_map"] = dict(
     LANG_CFG["javascript"]["kind_map"],
-    interface_declaration="interface", type_alias_declaration="type",
-    enum_declaration="enum", abstract_class_declaration="class",
+    interface_declaration="interface",
+    type_alias_declaration="type",
+    enum_declaration="enum",
+    abstract_class_declaration="class",
 )
 LANG_CFG["tsx"] = LANG_CFG["typescript"]
-LANG_CFG["cpp"] = dict(LANG_CFG["c"])
-LANG_CFG["cpp"]["kind_map"] = dict(LANG_CFG["c"]["kind_map"],
-                                   class_specifier="class", namespace_definition="namespace")
+LANG_CFG["cpp"] = cast(LangConfig, dict(LANG_CFG["c"]))
+LANG_CFG["cpp"]["kind_map"] = dict(
+    LANG_CFG["c"]["kind_map"], class_specifier="class", namespace_definition="namespace"
+)
 
 DEFAULT_SKIP_DIRS = {
-    ".git", ".hg", ".svn", "node_modules", "venv", ".venv", "env", "__pycache__",
-    "dist", "build", "target", ".next", ".nuxt", "vendor", ".idea", ".vscode",
-    "site-packages", ".mypy_cache", ".pytest_cache", ".tox", "coverage", ".terraform",
-    ".ruff_cache", ".eggs", ".cache", ".gradle", ".direnv", ".yarn",
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    "venv",
+    ".venv",
+    "env",
+    "__pycache__",
+    "dist",
+    "build",
+    "target",
+    ".next",
+    ".nuxt",
+    "vendor",
+    ".idea",
+    ".vscode",
+    "site-packages",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".tox",
+    "coverage",
+    ".terraform",
+    ".ruff_cache",
+    ".eggs",
+    ".cache",
+    ".gradle",
+    ".direnv",
+    ".yarn",
 }
 MAX_BYTES = 1_500_000
+
+
+@dataclass
+class BuildConfig:
+    max_file_bytes: int = 1_500_000
+    extra_exclude_dirs: list[str] = field(default_factory=list)
+    include_vendor: bool = False
+    chunk_large_files: bool = False
 
 
 def _git_files(root: Path):
@@ -161,9 +255,20 @@ def _git_files(root: Path):
         # fallback -- and a child holding that pipe can swallow frames meant for
         # us. Nothing here ever has anything to say to git on stdin.
         out = subprocess.run(
-            ["git", "-c", "core.quotepath=false", "-C", str(root),
-             "ls-files", "-z", "-co", "--exclude-standard"],
-            capture_output=True, stdin=subprocess.DEVNULL, timeout=60,
+            [
+                "git",
+                "-c",
+                "core.quotepath=false",
+                "-C",
+                str(root),
+                "ls-files",
+                "-z",
+                "-co",
+                "--exclude-standard",
+            ],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=60,
         )
         if out.returncode != 0:
             return None
@@ -173,10 +278,12 @@ def _git_files(root: Path):
         return None
 
 
-def _walk_files(root: Path):
+def _walk_files(root: Path, skip_dirs=None):
+    if skip_dirs is None:
+        skip_dirs = DEFAULT_SKIP_DIRS
     files = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in DEFAULT_SKIP_DIRS]
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
         for fn in filenames:
             files.append(Path(dirpath) / fn)
     return files
@@ -202,7 +309,7 @@ def _glob_re(pattern: str) -> re.Pattern:
             i += 1
         elif pat[i] == "[":
             j = pat.find("]", i + 1)
-            cls = pat[i + 1:j].replace("\\", "\\\\") if j != -1 else ""
+            cls = pat[i + 1 : j].replace("\\", "\\\\") if j != -1 else ""
             body = ("^/" + cls[1:]) if cls.startswith("!") else cls
             if j == -1 or body in ("", "^", "^/"):
                 out.append(re.escape(pat[i]))
@@ -228,15 +335,65 @@ def is_binary(path: Path) -> bool:
         return True
 
 
-def discover(root: Path, include_globs=None, exclude_globs=None, stats=None):
+def _count_gitignored(root: Path) -> int:
+    """How many untracked files .gitignore (or another exclude-standard rule)
+    kept out of _git_files' listing.
+
+    Purely a count for the human overview's "what was skipped" section --
+    `_git_files` already applies `--exclude-standard` itself, so these files
+    never reach `discover()`'s loop below and this never changes what is
+    yielded. Same subprocess pattern as `_git_files`: quotepath=false, bytes
+    decoded with surrogateescape (never text=True -- see AGENTS.md), bounded
+    timeout.
+    """
+    try:
+        out = subprocess.run(
+            [
+                "git",
+                "-c",
+                "core.quotepath=false",
+                "-C",
+                str(root),
+                "ls-files",
+                "-z",
+                "--others",
+                "--ignored",
+                "--exclude-standard",
+            ],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=60,
+        )
+        if out.returncode != 0:
+            return 0
+        names = out.stdout.decode("utf8", "surrogateescape").split("\0")
+        return sum(1 for n in names if n)
+    except (OSError, subprocess.SubprocessError):
+        return 0
+
+
+def discover(
+    root: Path,
+    include_globs=None,
+    exclude_globs=None,
+    stats=None,
+    config: BuildConfig | None = None,
+):
     """Yield (relative_path, absolute_path) for candidate source files."""
+    if config is None:
+        config = BuildConfig()
+    skip_dirs = set(DEFAULT_SKIP_DIRS) | set(config.extra_exclude_dirs)
+    if config.include_vendor:
+        skip_dirs.discard("vendor")
+
     root = root.resolve()
     files = _git_files(root)
     if files is not None:
         if stats is not None:
             stats["discovery"] = "git"
+            stats["skipped_gitignore"] = _count_gitignored(root)
     else:
-        files = _walk_files(root)
+        files = _walk_files(root, skip_dirs=skip_dirs)
         if stats is not None:
             stats["discovery"] = "walk"
     for abspath in files:
@@ -244,23 +401,40 @@ def discover(root: Path, include_globs=None, exclude_globs=None, stats=None):
             rel = abspath.relative_to(root)
         except ValueError:
             continue
-        if any(part in DEFAULT_SKIP_DIRS for part in rel.parts):
+        # A skip_dirs hit is either a hidden/dot directory (.git, .idea, ...)
+        # or a vendor/build directory (node_modules, dist, target, ...); tell
+        # the two apart for the human overview's "what was skipped" section,
+        # without changing which paths get skipped.
+        skip_part = next((part for part in rel.parts if part in skip_dirs), None)
+        if skip_part is not None:
+            if stats is not None:
+                key = "skipped_dotfile" if skip_part.startswith(".") else "skipped_vendor"
+                stats[key] += 1
             continue
         try:
             st = abspath.lstat()
         except OSError:
             continue
-        if not statmod.S_ISREG(st.st_mode) or st.st_size > MAX_BYTES:
-            continue
+        if not statmod.S_ISREG(st.st_mode) or st.st_size > config.max_file_bytes:
+            if st.st_size > config.max_file_bytes and config.chunk_large_files:
+                pass
+            else:
+                if stats is not None and st.st_size > config.max_file_bytes:
+                    stats["skipped_too_large"] += 1
+                continue
         rp = rel.as_posix()
         if include_globs and not matches_any(rp, include_globs):
             continue
         if exclude_globs and matches_any(rp, exclude_globs):
             continue
         if is_binary(abspath):
+            if stats is not None:
+                stats["skipped_binary"] += 1
             continue
         yield rp, abspath
 
+
+_get_parser: Callable[[str], Parser] | None
 try:
     from tree_sitter_language_pack import get_parser as _get_parser
 except ImportError:  # pragma: no cover
@@ -297,10 +471,12 @@ class ParsedFile:
     symbols: list[Symbol]
     imports: list[str]
     parse_errors: int = 0
+    used_cpp: bool = False
+    is_chunked: bool = False
 
 
 def _text(src: bytes, node) -> str:
-    return src[node.start_byte:node.end_byte].decode("utf8", "replace")
+    return src[node.start_byte : node.end_byte].decode("utf8", "replace")
 
 
 def _name_of(src: bytes, node, lang: str) -> str | None:
@@ -333,9 +509,14 @@ def _callee_name(src: bytes, node) -> str | None:
     # fields, so named_children[0] is the receiver — `logger.info(x)` would be
     # recorded as a call to `logger`. Read the method field directly instead.
     # "macro": Rust `macro_invocation` nodes expose the macro name in `macro`.
-    fn = (node.child_by_field_name("function") or node.child_by_field_name("name")
-          or node.child_by_field_name("method") or node.child_by_field_name("constructor")
-          or node.child_by_field_name("macro") or node.child_by_field_name("type"))
+    fn = (
+        node.child_by_field_name("function")
+        or node.child_by_field_name("name")
+        or node.child_by_field_name("method")
+        or node.child_by_field_name("constructor")
+        or node.child_by_field_name("macro")
+        or node.child_by_field_name("type")
+    )
     if fn is None:
         if node.named_child_count:
             fn = node.named_children[0]
@@ -357,8 +538,14 @@ def _callee_name(src: bytes, node) -> str | None:
 
 
 _ATTR_OR_COMMENT_TYPES = (
-    "comment", "line_comment", "block_comment", "doc_comment",
-    "attribute_item", "attribute", "decorator", "annotation",
+    "comment",
+    "line_comment",
+    "block_comment",
+    "doc_comment",
+    "attribute_item",
+    "attribute",
+    "decorator",
+    "annotation",
 )
 _COMMENT_TYPES = ("comment", "line_comment", "block_comment", "doc_comment")
 
@@ -379,8 +566,12 @@ def _docstring(src: bytes, node, lang: str) -> str:
                     pfx += 1
                 body_txt = raw[pfx:]
                 for q in ('"""', "'''", '"', "'"):
-                    if body_txt.startswith(q) and body_txt.endswith(q) and len(body_txt) >= 2 * len(q):
-                        body_txt = body_txt[len(q):-len(q)]
+                    if (
+                        body_txt.startswith(q)
+                        and body_txt.endswith(q)
+                        and len(body_txt) >= 2 * len(q)
+                    ):
+                        body_txt = body_txt[len(q) : -len(q)]
                         break
                 return body_txt.strip()[:600]
         return ""
@@ -396,29 +587,55 @@ def _docstring(src: bytes, node, lang: str) -> str:
 def _signature(src: bytes, node) -> str:
     body = node.child_by_field_name("body")
     end = body.start_byte if body is not None else min(node.end_byte, node.start_byte + 300)
-    return src[node.start_byte:end].decode("utf8", "replace").strip()[:300]
+    return src[node.start_byte : end].decode("utf8", "replace").strip()[:300]
 
 
 # Node types that hold a class's supertypes. Grammars differ: some expose them
 # through a field, others only as an unnamed child clause.
 _BASE_NODES = {
-    "class_heritage", "extends_clause", "implements_clause", "superclass",
-    "super_interfaces", "type_list", "base_list", "base_clause",
-    "class_interface_clause", "delegation_specifier", "inheritance_specifier",
+    "class_heritage",
+    "extends_clause",
+    "implements_clause",
+    "superclass",
+    "super_interfaces",
+    "type_list",
+    "base_list",
+    "base_clause",
+    "class_interface_clause",
+    "delegation_specifier",
+    "inheritance_specifier",
     "base_class_clause",
 }
 # Keywords and access specifiers that sit inside those clauses.
 _BASE_WORDS = {
-    "extends", "implements", "with", "public", "private", "protected", "internal",
-    "virtual", "open", "abstract", "final", "sealed", "override", "case", "class",
-    "interface", "struct", "typename",
+    "extends",
+    "implements",
+    "with",
+    "public",
+    "private",
+    "protected",
+    "internal",
+    "virtual",
+    "open",
+    "abstract",
+    "final",
+    "sealed",
+    "override",
+    "case",
+    "class",
+    "interface",
+    "struct",
+    "typename",
 }
 
 
 def _clean_base(text: str) -> str:
     """'public B', 'extends B', '< B' -> 'B'."""
-    words = [w for w in text.replace(":", " ").replace("<", " <").split()
-             if w and w not in _BASE_WORDS and w not in ("<", ">", "&", "*", ",")]
+    words = [
+        w
+        for w in text.replace(":", " ").replace("<", " <").split()
+        if w and w not in _BASE_WORDS and w not in ("<", ">", "&", "*", ",")
+    ]
     return words[0].split("(")[0].strip(",;") if words else ""
 
 
@@ -455,25 +672,69 @@ def _bases(src: bytes, node, lang: str) -> list[str]:
     return uniq[:8]
 
 
-def parse_source(source: bytes, lang: str) -> ParsedFile:
+def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -> ParsedFile:
     cfg = LANG_CFG.get(lang)
     parser = parser_for(lang)
     if cfg is None or parser is None:
         return ParsedFile(lang=lang, symbols=[], imports=[])
     tree = parser.parse(source)
+
+    def _count_errors(node):
+        errs = 0
+        stack = [node]
+        while stack:
+            n = stack.pop()
+            if n.type == "ERROR":
+                errs += 1
+            stack.extend(n.children)
+        return errs
+
+    errors = _count_errors(tree.root_node)
+    used_cpp = False
+
+    if errors > 0 and lang in ("c", "cpp") and filepath is not None:
+        try:
+            if Path(filepath).suffix.lower() in (".c", ".cc", ".cpp", ".h", ".hpp"):
+                try:
+                    subprocess.run(["cpp", "--version"], capture_output=True, timeout=5, check=True)
+                    out = subprocess.run(
+                        ["cpp", "-w", "-P", "-undef", str(filepath)],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    if out.returncode == 0:
+                        cpp_bytes = out.stdout.encode("utf8", "replace")
+                        if len(cpp_bytes) <= 2 * len(source):
+                            cpp_tree = parser.parse(cpp_bytes)
+                            cpp_errors = _count_errors(cpp_tree.root_node)
+                            if cpp_errors < errors:
+                                tree = cpp_tree
+                                source = cpp_bytes
+                                errors = cpp_errors
+                                used_cpp = True
+                        else:
+                            import logging
+
+                            logging.warning(f"cpp output for {filepath} is too large, skipping")
+                except (OSError, subprocess.SubprocessError):
+                    pass
+        except Exception:
+            pass
+
     kind_map, call_types, import_types = cfg["kind_map"], cfg["call_types"], cfg["import_types"]
     symbols: list[Symbol] = []
     imports: list[str] = []
-    errors = 0
+    final_errors = 0
 
     # Explicit stack rather than recursion: tree-sitter trees nest deeply enough
     # (long chained expressions, big literals) to blow the interpreter's limit.
-    stack: list[tuple[object, tuple[str, ...], Symbol | None]] = [(tree.root_node, (), None)]
+    stack: list[tuple[Node, tuple[str, ...], Symbol | None]] = [(tree.root_node, (), None)]
     while stack:
         node, scope, owner = stack.pop()
         ntype = node.type
         if ntype == "ERROR":
-            errors += 1
+            final_errors += 1
         if ntype in import_types:
             raw = _text(source, node).strip()
             if raw:
@@ -491,14 +752,20 @@ def parse_source(source: bytes, lang: str) -> ParsedFile:
             if kind == "maybe_function":
                 value = node.child_by_field_name("value")
                 if value is None or value.type not in (
-                        "arrow_function", "function", "function_expression"):
+                    "arrow_function",
+                    "function",
+                    "function_expression",
+                ):
                     kind = None
                 else:
                     kind = "function"
             if kind and name:
                 sym = Symbol(
-                    name=name, qualname=".".join(scope + (name,)), kind=kind,
-                    start_line=node.start_point[0] + 1, end_line=node.end_point[0] + 1,
+                    name=name,
+                    qualname=".".join(scope + (name,)),
+                    kind=kind,
+                    start_line=node.start_point[0] + 1,
+                    end_line=node.end_point[0] + 1,
                     parent=".".join(scope) or None,
                     signature=_signature(source, node),
                     docstring=_docstring(source, node, lang),
@@ -511,5 +778,6 @@ def parse_source(source: bytes, lang: str) -> ParsedFile:
         # reversed: the stack pops last-pushed first, so this keeps source order
         for c in reversed(node.named_children):
             stack.append((c, child_scope, child_owner))
-    return ParsedFile(lang=lang, symbols=symbols, imports=imports,
-                      parse_errors=errors)
+    return ParsedFile(
+        lang=lang, symbols=symbols, imports=imports, parse_errors=final_errors, used_cpp=used_cpp
+    )

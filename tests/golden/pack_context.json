@@ -2,8 +2,11 @@
   "default": {
     "chunks": [
       {
+        "base_edges": [],
+        "callee_edges": [],
         "callees": [],
         "callees_external": [],
+        "caller_edges": [],
         "callers": [],
         "end_line": 5,
         "entrypoint": false,
@@ -21,8 +24,11 @@
         "why": "seed"
       },
       {
+        "base_edges": [],
+        "callee_edges": [],
         "callees": [],
         "callees_external": [],
+        "caller_edges": [],
         "callers": [],
         "end_line": 10,
         "entrypoint": false,
@@ -40,8 +46,17 @@
         "why": "seed"
       },
       {
+        "base_edges": [],
+        "callee_edges": [],
         "callees": [],
         "callees_external": [],
+        "caller_edges": [
+          {
+            "edge_direction": "inbound",
+            "edge_type": "CALLS",
+            "target": "pkg/gateway.py::route_request"
+          }
+        ],
         "callers": [
           "pkg/gateway.py::route_request"
         ],
@@ -61,12 +76,21 @@
         "why": "seed"
       },
       {
+        "base_edges": [],
+        "callee_edges": [
+          {
+            "edge_direction": "outbound",
+            "edge_type": "CALLS",
+            "target": "pkg/audit.py::audit_event"
+          }
+        ],
         "callees": [
           "pkg/audit.py::audit_event"
         ],
         "callees_external": [
           "get"
         ],
+        "caller_edges": [],
         "callers": [],
         "end_line": 13,
         "entrypoint": true,
@@ -88,8 +112,11 @@
     "neighbors": [],
     "seeds": [
       {
+        "base_edges": [],
+        "callee_edges": [],
         "callees": [],
         "callees_external": [],
+        "caller_edges": [],
         "callers": [],
         "end_line": 5,
         "entrypoint": false,
@@ -107,8 +134,11 @@
         "why": "seed"
       },
       {
+        "base_edges": [],
+        "callee_edges": [],
         "callees": [],
         "callees_external": [],
+        "caller_edges": [],
         "callers": [],
         "end_line": 10,
         "entrypoint": false,
@@ -126,8 +156,17 @@
         "why": "seed"
       },
       {
+        "base_edges": [],
+        "callee_edges": [],
         "callees": [],
         "callees_external": [],
+        "caller_edges": [
+          {
+            "edge_direction": "inbound",
+            "edge_type": "CALLS",
+            "target": "pkg/gateway.py::route_request"
+          }
+        ],
         "callers": [
           "pkg/gateway.py::route_request"
         ],
@@ -147,12 +186,21 @@
         "why": "seed"
       },
       {
+        "base_edges": [],
+        "callee_edges": [
+          {
+            "edge_direction": "outbound",
+            "edge_type": "CALLS",
+            "target": "pkg/audit.py::audit_event"
+          }
+        ],
         "callees": [
           "pkg/audit.py::audit_event"
         ],
         "callees_external": [
           "get"
         ],
+        "caller_edges": [],
         "callers": [],
         "end_line": 13,
         "entrypoint": true,
@@ -175,12 +223,21 @@
   "tight": {
     "chunks": [
       {
+        "base_edges": [],
+        "callee_edges": [
+          {
+            "edge_direction": "outbound",
+            "edge_type": "CALLS",
+            "target": "pkg/audit.py::audit_event"
+          }
+        ],
         "callees": [
           "pkg/audit.py::audit_event"
         ],
         "callees_external": [
           "get"
         ],
+        "caller_edges": [],
         "callers": [],
         "end_line": 13,
         "entrypoint": true,
@@ -202,12 +259,21 @@
     "neighbors": [],
     "seeds": [
       {
+        "base_edges": [],
+        "callee_edges": [
+          {
+            "edge_direction": "outbound",
+            "edge_type": "CALLS",
+            "target": "pkg/audit.py::audit_event"
+          }
+        ],
         "callees": [
           "pkg/audit.py::audit_event"
         ],
         "callees_external": [
           "get"
         ],
+        "caller_edges": [],
         "callers": [],
         "end_line": 13,
         "entrypoint": true,
@@ -230,8 +296,11 @@
   "unbounded": {
     "chunks": [
       {
+        "base_edges": [],
+        "callee_edges": [],
         "callees": [],
         "callees_external": [],
+        "caller_edges": [],
         "callers": [],
         "end_line": 5,
         "entrypoint": false,
@@ -249,8 +318,11 @@
         "why": "seed"
       },
       {
+        "base_edges": [],
+        "callee_edges": [],
         "callees": [],
         "callees_external": [],
+        "caller_edges": [],
         "callers": [],
         "end_line": 10,
         "entrypoint": false,
@@ -268,8 +340,17 @@
         "why": "seed"
       },
       {
+        "base_edges": [],
+        "callee_edges": [],
         "callees": [],
         "callees_external": [],
+        "caller_edges": [
+          {
+            "edge_direction": "inbound",
+            "edge_type": "CALLS",
+            "target": "pkg/gateway.py::route_request"
+          }
+        ],
         "callers": [
           "pkg/gateway.py::route_request"
         ],
@@ -289,12 +370,21 @@
         "why": "seed"
       },
       {
+        "base_edges": [],
+        "callee_edges": [
+          {
+            "edge_direction": "outbound",
+            "edge_type": "CALLS",
+            "target": "pkg/audit.py::audit_event"
+          }
+        ],
         "callees": [
           "pkg/audit.py::audit_event"
         ],
         "callees_external": [
           "get"
         ],
+        "caller_edges": [],
         "callers": [],
         "end_line": 13,
         "entrypoint": true,
@@ -316,8 +406,11 @@
     "neighbors": [],
     "seeds": [
       {
+        "base_edges": [],
+        "callee_edges": [],
         "callees": [],
         "callees_external": [],
+        "caller_edges": [],
         "callers": [],
         "end_line": 5,
         "entrypoint": false,
@@ -335,8 +428,11 @@
         "why": "seed"
       },
       {
+        "base_edges": [],
+        "callee_edges": [],
         "callees": [],
         "callees_external": [],
+        "caller_edges": [],
         "callers": [],
         "end_line": 10,
         "entrypoint": false,
@@ -354,8 +450,17 @@
         "why": "seed"
       },
       {
+        "base_edges": [],
+        "callee_edges": [],
         "callees": [],
         "callees_external": [],
+        "caller_edges": [
+          {
+            "edge_direction": "inbound",
+            "edge_type": "CALLS",
+            "target": "pkg/gateway.py::route_request"
+          }
+        ],
         "callers": [
           "pkg/gateway.py::route_request"
         ],
@@ -375,12 +480,21 @@
         "why": "seed"
       },
       {
+        "base_edges": [],
+        "callee_edges": [
+          {
+            "edge_direction": "outbound",
+            "edge_type": "CALLS",
+            "target": "pkg/audit.py::audit_event"
+          }
+        ],
         "callees": [
           "pkg/audit.py::audit_event"
         ],
         "callees_external": [
           "get"
         ],
+        "caller_edges": [],
         "callers": [],
         "end_line": 13,
         "entrypoint": true,

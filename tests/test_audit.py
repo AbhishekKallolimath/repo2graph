@@ -8,13 +8,13 @@ tests below therefore check both directions: that credentials never survive, and
 that ordinary arguments are *not* mangled, because a log that redacts everything
 is as useless as one that redacts nothing.
 """
+
 import io
 import json
 
 import pytest
 
-from repo2graph.audit import (AuditConfig, AuditLogger, sanitize_params,
-                              sanitize_value, timer)
+from repo2graph.audit import AuditConfig, AuditLogger, sanitize_params, sanitize_value, timer
 
 
 def logger(level="all", path=None):
@@ -29,17 +29,32 @@ def lines(stream):
 
 # ------------------------------------------------------------- records ----
 
+
 def test_a_successful_call_records_every_required_field():
     log, stream = logger()
     with timer() as t:
         pass
-    log.record("repo_search", {"query": "how does routing work", "k": 8},
-               identity="user-42", outcome="success", duration_ms=t.ms,
-               result_tokens=1200)
+    log.record(
+        "repo_search",
+        {"query": "how does routing work", "k": 8},
+        identity="user-42",
+        outcome="success",
+        duration_ms=t.ms,
+        result_tokens=1200,
+    )
 
     (record,) = lines(stream)
-    assert set(record) == {"ts", "event", "tool", "params", "identity",
-                           "outcome", "duration_ms", "result_tokens", "error"}
+    assert set(record) == {
+        "ts",
+        "event",
+        "tool",
+        "params",
+        "identity",
+        "outcome",
+        "duration_ms",
+        "result_tokens",
+        "error",
+    }
     assert record["event"] == "tool_call"
     assert record["tool"] == "repo_search"
     assert record["outcome"] == "success"
@@ -64,13 +79,18 @@ def test_the_timestamp_is_iso8601_with_milliseconds():
     log.record("repo_map", {})
     ts = lines(stream)[0]["ts"]
     assert ts.endswith("Z") and "T" in ts
-    assert len(ts.split(".")[-1]) == 4, ts       # 3 digits + "Z"
+    assert len(ts.split(".")[-1]) == 4, ts  # 3 digits + "Z"
 
 
 def test_an_auth_rejection_is_recorded_as_such():
     log, stream = logger()
-    log.record("repo_search", {"query": "x"}, identity="anonymous",
-               outcome="auth_rejected", error="invalid bearer token")
+    log.record(
+        "repo_search",
+        {"query": "x"},
+        identity="anonymous",
+        outcome="auth_rejected",
+        error="invalid bearer token",
+    )
     (record,) = lines(stream)
     assert record["outcome"] == "auth_rejected"
     assert record["error"] == "invalid bearer token"
@@ -78,10 +98,26 @@ def test_an_auth_rejection_is_recorded_as_such():
 
 def test_an_error_carries_its_message():
     log, stream = logger()
-    log.record("repo_neighbours", {"node_id": "sym:x"}, outcome="error",
-               error="node not found")
+    log.record("repo_neighbours", {"node_id": "sym:x"}, outcome="error", error="node not found")
     (record,) = lines(stream)
     assert record["outcome"] == "error" and record["error"] == "node not found"
+
+
+def test_a_secret_embedded_in_an_error_message_is_redacted():
+    """A downstream exception's str() can echo caller input verbatim -- e.g. a
+    malformed request or an OS error including a path with an embedded token.
+    The error field must go through the same redaction as every other value.
+    """
+    log, stream = logger()
+    log.record(
+        "repo_search",
+        {"query": "x"},
+        outcome="error",
+        error="upstream rejected token ghp_" + "k" * 36,
+    )
+    (record,) = lines(stream)
+    assert "ghp_" + "k" * 36 not in record["error"]
+    assert record["error"].startswith("[redacted:github_token")
 
 
 def test_anonymous_is_the_default_identity():
@@ -91,6 +127,7 @@ def test_anonymous_is_the_default_identity():
 
 
 # --------------------------------------------------------------- level ----
+
 
 def test_level_none_emits_nothing():
     log, stream = logger(level="none")
@@ -117,16 +154,20 @@ def test_an_unknown_level_is_refused_at_construction():
 
 # ------------------------------------------------------------ redaction ----
 
-@pytest.mark.parametrize("value,shape", [
-    ("AKIAIOSFODNN7EXAMPLE", "aws_access_key"),
-    ("ghp_" + "a" * 36, "github_token"),
-    ("xoxb-123456789012-abcdefghijkl", "slack_token"),
-    ("sk-" + "A" * 32, "openai_key"),
-    ("AIza" + "B" * 35, "google_key"),
-    ("-----BEGIN RSA PRIVATE KEY-----", "private_key"),
-    ("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl", "jwt"),
-    ("https://user:hunter2@example.com/repo.git", "basic_auth_url"),
-])
+
+@pytest.mark.parametrize(
+    "value,shape",
+    [
+        ("AKIAIOSFODNN7EXAMPLE", "aws_access_key"),
+        ("ghp_" + "a" * 36, "github_token"),
+        ("xoxb-123456789012-abcdefghijkl", "slack_token"),
+        ("sk-" + "A" * 32, "openai_key"),
+        ("AIza" + "B" * 35, "google_key"),
+        ("-----BEGIN RSA PRIVATE KEY-----", "private_key"),
+        ("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl", "jwt"),
+        ("https://user:hunter2@example.com/repo.git", "basic_auth_url"),
+    ],
+)
 def test_credential_shapes_are_redacted_wherever_they_appear(value, shape):
     """Shape, not key name: a model can put a secret in any field."""
     got = sanitize_value("query", value)
@@ -134,10 +175,21 @@ def test_credential_shapes_are_redacted_wherever_they_appear(value, shape):
     assert got.startswith(f"[redacted:{shape}")
 
 
-@pytest.mark.parametrize("key", [
-    "password", "api_key", "apiKey", "secret", "token", "authorization",
-    "private_key", "session", "cookie", "access-key",
-])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "password",
+        "api_key",
+        "apiKey",
+        "secret",
+        "token",
+        "authorization",
+        "private_key",
+        "session",
+        "cookie",
+        "access-key",
+    ],
+)
 def test_secret_named_fields_are_redacted_whatever_they_hold(key):
     """A credential in an obviously named field may look unremarkable."""
     got = sanitize_value(key, "cat")
@@ -157,8 +209,7 @@ def test_a_redacted_value_keeps_its_length_and_a_fingerprint():
 
 def test_paths_matching_exclude_secrets_are_redacted():
     """The same definition the retrieval layer refuses to return."""
-    for path in ("app/.env", "config/secrets.yaml", "home/.ssh/id_rsa",
-                 "deploy/server.pem"):
+    for path in ("app/.env", "config/secrets.yaml", "home/.ssh/id_rsa", "deploy/server.pem"):
         got = sanitize_value("path", path)
         assert got.startswith("[redacted:secret_path"), (path, got)
         assert path not in got
@@ -166,13 +217,18 @@ def test_paths_matching_exclude_secrets_are_redacted():
 
 def test_ordinary_arguments_survive_untouched():
     """A log that redacts everything is as useless as one that redacts nothing."""
-    params = sanitize_params({
-        "query": "how does the pack stay inside its budget",
-        "node_id": "sym:repo2graph/cli.py::cmd_rag",
-        "k": 8, "hops": 2, "budget_tokens": 6000,
-        "exclude": False, "nothing": None,
-        "path": "repo2graph/query.py",
-    })
+    params = sanitize_params(
+        {
+            "query": "how does the pack stay inside its budget",
+            "node_id": "sym:repo2graph/cli.py::cmd_rag",
+            "k": 8,
+            "hops": 2,
+            "budget_tokens": 6000,
+            "exclude": False,
+            "nothing": None,
+            "path": "repo2graph/query.py",
+        }
+    )
     assert params["query"] == "how does the pack stay inside its budget"
     assert params["node_id"] == "sym:repo2graph/cli.py::cmd_rag"
     assert params["k"] == 8 and params["hops"] == 2
@@ -181,8 +237,9 @@ def test_ordinary_arguments_survive_untouched():
 
 
 def test_redaction_recurses_into_containers():
-    got = sanitize_params({"outer": {"inner": {"password": "hunter2"}},
-                           "list": ["ghp_" + "q" * 36, "fine"]})
+    got = sanitize_params(
+        {"outer": {"inner": {"password": "hunter2"}}, "list": ["ghp_" + "q" * 36, "fine"]}
+    )
     assert "hunter2" not in json.dumps(got)
     assert got["outer"]["inner"]["password"].startswith("[redacted:key:")
     assert got["list"][0].startswith("[redacted:github_token")
@@ -202,17 +259,21 @@ def test_a_high_entropy_blob_is_redacted():
 
 def test_prose_is_not_mistaken_for_a_credential():
     """The entropy rule must not fire on real questions."""
-    for text in ("how does authentication work",
-                 "where is the password reset handler defined",
-                 "repo2graph/query.py"):
+    for text in (
+        "how does authentication work",
+        "where is the password reset handler defined",
+        "repo2graph/query.py",
+    ):
         assert not sanitize_value("query", text).startswith("[redacted")
 
 
 def test_the_whole_record_never_contains_a_secret():
     log, stream = logger()
-    log.record("repo_search",
-               {"query": "deploy with ghp_" + "k" * 36, "token": "hunter2"},
-               identity="user-1")
+    log.record(
+        "repo_search",
+        {"query": "deploy with ghp_" + "k" * 36, "token": "hunter2"},
+        identity="user-1",
+    )
     raw = stream.getvalue()
     assert "hunter2" not in raw
     assert "ghp_" + "k" * 36 not in raw
@@ -220,14 +281,16 @@ def test_the_whole_record_never_contains_a_secret():
 
 # ---------------------------------------------------------------- file ----
 
+
 def test_the_file_sink_receives_the_same_lines(tmp_path):
     path = tmp_path / "audit.log"
     log, stream = logger(path=str(path))
     log.record("repo_map", {}, identity="user-9")
     log.close()
 
-    on_disk = [json.loads(line) for line in
-               path.read_text(encoding="utf8").splitlines() if line.strip()]
+    on_disk = [
+        json.loads(line) for line in path.read_text(encoding="utf8").splitlines() if line.strip()
+    ]
     assert on_disk == lines(stream)
 
 
@@ -262,15 +325,15 @@ def test_two_loggers_on_one_file_interleave_whole_lines(tmp_path):
     rows = [line for line in path.read_text(encoding="utf8").splitlines() if line.strip()]
     assert len(rows) == 20
     for line in rows:
-        json.loads(line)          # every line is whole and parseable
+        json.loads(line)  # every line is whole and parseable
 
 
 def test_an_unwritable_file_sink_does_not_take_the_server_down(tmp_path):
     """A broken audit sink is a degraded log, not an outage."""
     path = tmp_path / "audit.log"
     log = AuditLogger(AuditConfig(path=str(path)), stream=io.StringIO())
-    log._file._fh.close()                 # simulate the sink failing mid-run
-    log.record("repo_map", {})            # must not raise
+    log._file._fh.close()  # simulate the sink failing mid-run
+    log.record("repo_map", {})  # must not raise
     log.close()
 
 

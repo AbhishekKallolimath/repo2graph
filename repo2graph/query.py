@@ -1,4 +1,5 @@
 """Graph-aware retrieval over a built index: lexical seeds + k-hop expansion."""
+
 import json
 import math
 import re
@@ -49,31 +50,80 @@ ALL_EDGE_DIRS: dict = {}
 CHARS_PER_TOKEN = 4
 
 # pack_context layout constants.
-MAP_BUDGET_FRAC = 0.2          # at most this share of the budget goes to the map
-MAP_ENTRYPOINTS = 10           # entry points listed in the map prepend
+MAP_BUDGET_FRAC = 0.2  # at most this share of the budget goes to the map
+MAP_ENTRYPOINTS = 10  # entry points listed in the map prepend
 PACK_SEPARATOR = "\n\n---\n\n"  # between the map prepend and the first citation
 
 # Sensitive file detection for pack_context(exclude_secrets=True)
-SECRET_EXTS = frozenset({
-    ".pem", ".key", ".p12", ".pfx", ".pkcs12", ".p8",
-    ".asc", ".gpg", ".der", ".cer", ".crt", ".ovpn",
-    ".kdbx", ".keystore", ".jks",
-})
-SECRET_CONFIG_EXTS = frozenset({
-    ".json", ".yaml", ".yml", ".toml", ".xml", ".ini",
-    ".env", ".properties", ".conf", ".cfg", ".txt",
-})
-SECRET_KEYWORDS = (
-    "secret", "credential", "token", "service-account", "service_account",
-    "password", "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa",
+SECRET_EXTS = frozenset(
+    {
+        ".pem",
+        ".key",
+        ".p12",
+        ".pfx",
+        ".pkcs12",
+        ".p8",
+        ".asc",
+        ".gpg",
+        ".der",
+        ".cer",
+        ".crt",
+        ".ovpn",
+        ".kdbx",
+        ".keystore",
+        ".jks",
+    }
 )
-SECRET_EXACT_NAMES = frozenset({
-    ".netrc", ".npmrc", ".dockercfg", ".git-credentials", ".pgpass", ".htpasswd",
-    "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519",
-})
-SECRET_DIR_NAMES = frozenset({
-    ".ssh", ".aws", ".kube", "secrets", "credentials",
-})
+SECRET_CONFIG_EXTS = frozenset(
+    {
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".xml",
+        ".ini",
+        ".env",
+        ".properties",
+        ".conf",
+        ".cfg",
+        ".txt",
+    }
+)
+SECRET_KEYWORDS = (
+    "secret",
+    "credential",
+    "token",
+    "service-account",
+    "service_account",
+    "password",
+    "id_rsa",
+    "id_ed25519",
+    "id_ecdsa",
+    "id_dsa",
+)
+SECRET_EXACT_NAMES = frozenset(
+    {
+        ".netrc",
+        ".npmrc",
+        ".dockercfg",
+        ".git-credentials",
+        ".pgpass",
+        ".htpasswd",
+        "id_rsa",
+        "id_dsa",
+        "id_ecdsa",
+        "id_ed25519",
+    }
+)
+SECRET_DIR_NAMES = frozenset(
+    {
+        ".ssh",
+        ".aws",
+        ".kube",
+        "secrets",
+        "credentials",
+    }
+)
 
 
 def _is_secret_path(path: str) -> bool:
@@ -149,8 +199,7 @@ class Index:
     def __init__(self, outdir: Path):
         self.dir = Path(outdir)
         self.chunks = read_jsonl(artifact_path(self.dir, "chunks.jsonl"))
-        self.nodes = {n["id"]: n
-                      for n in read_jsonl(artifact_path(self.dir, "nodes.jsonl"))}
+        self.nodes = {n["id"]: n for n in read_jsonl(artifact_path(self.dir, "nodes.jsonl"))}
         self.edges = read_jsonl(artifact_path(self.dir, "edges.jsonl"))
         self.adj = defaultdict(list)
         for e in self.edges:
@@ -174,8 +223,7 @@ class Index:
         for i, c in enumerate(self.chunks):
             # `or ""`: a hand-edited chunks.jsonl (the manifest says records are
             # inspectable) with a null text/qualname must not TypeError in re.findall.
-            counts = Counter(tokenize(c.get("text") or "")
-                             + tokenize(c.get("qualname") or "") * 3)
+            counts = Counter(tokenize(c.get("text") or "") + tokenize(c.get("qualname") or "") * 3)
             self.lengths.append(sum(counts.values()) or 1)
             for term, n in counts.items():
                 self.postings[term].append((i, n))
@@ -200,6 +248,7 @@ class Index:
             return
         try:
             from .embed import load_vectors
+
             by_id, meta = load_vectors(npy)
         except Exception:
             # OSError, ValueError, a malformed meta -- all the same answer.
@@ -218,9 +267,11 @@ class Index:
         refusal naming both sides rather than a best effort.
         """
         if not self.vectors or not self.vector_meta:
-            return False, (f"no vectors in the index at {self.dir}: run "
-                           f"`repo2graph embed -o {self.dir}` first")
+            return False, (
+                f"no vectors in the index at {self.dir}: run `repo2graph embed -o {self.dir}` first"
+            )
         from .embed import dim_of, model_id_of
+
         index_model = self.vector_meta.get("model_id")
         query_model = model_id_of(embedder)
         if index_model != query_model:
@@ -228,7 +279,8 @@ class Index:
                 f"embedding model mismatch: the index was built with "
                 f"{index_model!r} but the active embedder is {query_model!r}; "
                 f"re-run `repo2graph embed -o {self.dir} --model {index_model}` "
-                f"or query with --no-vectors")
+                f"or query with --no-vectors"
+            )
         index_dim = self.vector_meta.get("dim")
         try:
             query_dim = dim_of(embedder)
@@ -237,7 +289,8 @@ class Index:
         if index_dim != query_dim:
             return False, (
                 f"embedding width mismatch: the index vectors are {index_dim} "
-                f"wide but the active embedder returns {query_dim}")
+                f"wide but the active embedder returns {query_dim}"
+            )
         return True, ""
 
     def _load_text(self, name: str) -> str:
@@ -246,8 +299,19 @@ class Index:
         newline="\n" for the same reason read_jsonl uses it: universal-newline
         mode rewrites U+2028/U+2029/U+0085 line ends and would desync the text
         from what was written.
+
+        overview.md is the one artifact split across two sections with
+        different content: human/overview.md is the structured table view for
+        a person, agent/overview.md is the terse prose the GraphRAG protocol
+        (and this repo map) are built around. Try the agent copy first so
+        pack_context/rag output keeps reading the prose; fall back to human/
+        only when agent/overview.md is missing, e.g. a hand-built fixture that
+        writes just one copy.
         """
-        for p in artifact_paths(self.dir, name):
+        paths = artifact_paths(self.dir, name)
+        if name == "overview.md" and len(paths) > 1:
+            paths = list(reversed(paths))
+        for p in paths:
             try:
                 with open(p, encoding="utf8", newline="\n") as fh:
                     return fh.read()
@@ -257,8 +321,9 @@ class Index:
 
     def _load_manifest(self) -> dict:
         try:
-            with open(artifact_path(self.dir, "manifest.json"),
-                      encoding="utf8", newline="\n") as fh:
+            with open(
+                artifact_path(self.dir, "manifest.json"), encoding="utf8", newline="\n"
+            ) as fh:
                 data = json.load(fh)
         except (OSError, UnicodeDecodeError, ValueError):
             # ValueError covers json.JSONDecodeError: a truncated manifest is a
@@ -298,7 +363,11 @@ class Index:
             idf = math.log(1 + self.N / (1 + self.df[term]))
             for i, cnt in posting:
                 length = self.lengths[i]
-                acc[i] += qn * idf * (cnt / (cnt + BM25_K1 * ((1.0 - BM25_B) + BM25_B * length / BM25_AVG_LEN)))
+                acc[i] += (
+                    qn
+                    * idf
+                    * (cnt / (cnt + BM25_K1 * ((1.0 - BM25_B) + BM25_B * length / BM25_AVG_LEN)))
+                )
         self._boost_identifiers(query, acc)
         scored = [(s, i) for i, s in acc.items() if s]
         scored.sort(reverse=True)
@@ -351,14 +420,21 @@ class Index:
             # means a lexical answer to a question the caller explicitly asked
             # to be answered densely. Say so instead.
             from .events import emit
-            emit("rag_fusion_disabled", level="warning", reason=why,
-                 candidates=len(candidates), fused=0,
-                 action="re-run `repo2graph embed` to vectorise every chunk")
+
+            emit(
+                "rag_fusion_disabled",
+                level="warning",
+                reason=why,
+                candidates=len(candidates),
+                fused=0,
+                action="re-run `repo2graph embed` to vectorise every chunk",
+            )
             self.fusion_coverage = (0, len(candidates))
             return base
         self.fusion_coverage = (len(cvecs), len(candidates))
-        by_sim = sorted(range(len(candidates)),
-                        key=lambda p: (-_cosine(qvec, cvecs[p]), candidates[p]))
+        by_sim = sorted(
+            range(len(candidates)), key=lambda p: (-_cosine(qvec, cvecs[p]), candidates[p])
+        )
         vec_rank = {candidates[p]: r for r, p in enumerate(by_sim, 1)}
         fused = []
         for rank, (_s, i) in enumerate(base, 1):
@@ -394,27 +470,38 @@ class Index:
                 # different scale. Count how many are actually missing so the
                 # message can say whether this is one stale chunk or all of them.
                 missing = sum(1 for i in candidates if not _has_vector(vectors, i))
-                return None, [], (
-                    f"{missing} of {len(candidates)} BM25 candidates have no "
-                    f"vector; chunks.jsonl was likely rebuilt without re-running "
-                    f"`repo2graph embed`")
+                return (
+                    None,
+                    [],
+                    (
+                        f"{missing} of {len(candidates)} BM25 candidates have no "
+                        f"vector; chunks.jsonl was likely rebuilt without re-running "
+                        f"`repo2graph embed`"
+                    ),
+                )
             if qvec is None and embedder is not None:
                 qvec = _first(embedder.encode([query]))
             if qvec is None:
-                return None, [], ("no query vector: neither the vectors mapping "
-                                  "nor an embedder supplied one")
+                return (
+                    None,
+                    [],
+                    ("no query vector: neither the vectors mapping nor an embedder supplied one"),
+                )
             return qvec, cvecs, ""
         texts = [self.chunks[i].get("text") or "" for i in candidates]
         encoded = embedder.encode([query] + texts)
         encoded = list(encoded)
         if len(encoded) != len(texts) + 1:
-            return None, [], (
-                f"embedder returned {len(encoded)} vectors for "
-                f"{len(texts) + 1} texts")
+            return (
+                None,
+                [],
+                (f"embedder returned {len(encoded)} vectors for {len(texts) + 1} texts"),
+            )
         return encoded[0], encoded[1:], ""
 
-    def expand(self, seed_nodes, hops=1, edge_types=None, per_hop=6,
-               min_confidence=1.0, edge_dirs=None):
+    def expand(
+        self, seed_nodes, hops=1, edge_types=None, per_hop=6, min_confidence=1.0, edge_dirs=None
+    ):
         """Walk `hops` edges out from `seed_nodes`, newest frontier first.
 
         `min_confidence` gates CALLS edges only: call resolution is name-based
@@ -429,7 +516,7 @@ class Index:
         for _ in range(hops):
             if not frontier:
                 break
-            nxt = []
+            nxt: list[str] = []
             # The cap is per hop, not per frontier node: breaking only the inner
             # loop let each later frontier node add another 60 edges after the
             # budget was already spent.
@@ -460,8 +547,17 @@ class Index:
             frontier = nxt
         return order
 
-    def retrieve(self, query: str, k: int = 8, hops: int = 1, budget_chars: int = 24000,
-                 *, min_confidence: float | None = None, vectors=None, embedder=None):
+    def retrieve(
+        self,
+        query: str,
+        k: int = 8,
+        hops: int = 1,
+        budget_chars: int = 24000,
+        *,
+        min_confidence: float | None = None,
+        vectors=None,
+        embedder=None,
+    ):
         """Lexical seeds plus their graph neighbours, budgeted on chunk text.
 
         `budget_chars` bounds the sum of the returned chunks' `text` only — it
@@ -473,10 +569,16 @@ class Index:
         have; supply either and they come from the fused ranking instead.
         """
         conf = 0.0 if min_confidence is None else min_confidence
-        ranked = (self.score(query) if vectors is None and embedder is None
-                  else self.score_rrf(query, vectors=vectors, embedder=embedder))
+        ranked = (
+            self.score(query)
+            if vectors is None and embedder is None
+            else self.score_rrf(query, vectors=vectors, embedder=embedder)
+        )
         scored = ranked[: k * 3]
-        picked, seen_nodes_list, seen_nodes_set, used = [], [], set(), 0
+        picked: list[dict] = []
+        seen_nodes_list: list[str] = []
+        seen_nodes_set: set[str] = set()
+        used = 0
         for s, i in scored:
             c = self.chunks[i]
             nid = c["node_id"]
@@ -497,9 +599,9 @@ class Index:
         # edge_dirs=ALL_EDGE_DIRS, not the default: this method predates
         # DEFAULT_EDGE_DIRS and must keep returning DEFINES-out / IMPORTS-in /
         # INHERITS-in neighbours (D1 — `repo2graph query` output is unchanged).
-        for nid, etype, direction, src in self.expand(seen_nodes_list, hops=hops,
-                                                      min_confidence=conf,
-                                                      edge_dirs=ALL_EDGE_DIRS):
+        for nid, etype, direction, src in self.expand(
+            seen_nodes_list, hops=hops, min_confidence=conf, edge_dirs=ALL_EDGE_DIRS
+        ):
             if len(picked) >= max_total or used >= budget_chars:
                 break
             for c in self.by_node.get(nid, [])[:1]:
@@ -507,8 +609,7 @@ class Index:
                 if used + chunk_len > budget_chars:
                     break
                 src_name = self.nodes.get(src, {}).get("name") or src
-                picked.append({**c, "score": 0.0,
-                               "why": f"{etype} {direction} of {src_name}"})
+                picked.append({**c, "score": 0.0, "why": f"{etype} {direction} of {src_name}"})
                 used += chunk_len
                 if len(picked) >= max_total or used >= budget_chars:
                     break
@@ -541,10 +642,20 @@ class Index:
                 parts.append("\n".join(lines))
         return "\n\n".join(parts)
 
-    def pack_context(self, query: str, k: int = 8, hops: int = 1, budget_chars: int = 24000,
-                     min_confidence: float = 1.0, expand_graph: bool = True,
-                     vectors=None, embedder=None, exclude_secrets: bool = False,
-                     budget_tokens: int | None = None, count_tokens=None) -> dict:
+    def pack_context(
+        self,
+        query: str,
+        k: int = 8,
+        hops: int = 1,
+        budget_chars: int = 24000,
+        min_confidence: float = 1.0,
+        expand_graph: bool = True,
+        vectors=None,
+        embedder=None,
+        exclude_secrets: bool = False,
+        budget_tokens: int | None = None,
+        count_tokens=None,
+    ) -> dict:
         """An agent-ready markdown pack: repo map, `---`, then cited chunks.
 
         `budget_chars` bounds the WHOLE returned markdown — map prepend, `---`
@@ -569,7 +680,7 @@ class Index:
         # accounting below reduces to exactly the arithmetic this method has
         # always done when budget_tokens is None (D1: byte-identical output).
         measure = measure_tokens if use_tokens else len
-        budget = budget_tokens if use_tokens else budget_chars
+        budget = budget_tokens if budget_tokens is not None else budget_chars
         bounded = budget > 0
         seeds, seen_nodes = [], set()
         for s, i in self.score_rrf(query, vectors=vectors, embedder=embedder)[: k * 3]:
@@ -589,8 +700,8 @@ class Index:
         neighbours = []
         if expand_graph and seeds:
             for nid, etype, direction, src in self.expand(
-                    [c["node_id"] for c in seeds], hops=hops,
-                    min_confidence=min_confidence):
+                [c["node_id"] for c in seeds], hops=hops, min_confidence=min_confidence
+            ):
                 if nid in seen_nodes:
                     continue
                 node_chunks = self.by_node.get(nid, [])
@@ -602,19 +713,19 @@ class Index:
                 if exclude_secrets and _is_secret_path(c_path):
                     continue
                 src_name = self.nodes.get(src, {}).get("name") or src
-                neighbours.append({**c, "score": 0.0,
-                                   "why": f"{etype} {direction} of {src_name}"})
+                neighbours.append({**c, "score": 0.0, "why": f"{etype} {direction} of {src_name}"})
 
         full_map = self.map_prepend()
         shown_map = full_map
         if bounded:
-            shown_map = _fit_lines(full_map, int(budget * MAP_BUDGET_FRAC)
-                                   - measure(PACK_SEPARATOR), measure)
+            shown_map = _fit_lines(
+                full_map, int(budget * MAP_BUDGET_FRAC) - measure(PACK_SEPARATOR), measure
+            )
         head = shown_map.rstrip("\n") + PACK_SEPARATOR if shown_map.strip() else ""
         truncated = shown_map != full_map
 
         picked = []
-        body = ""          # everything accepted so far, for cumulative measuring
+        body = ""  # everything accepted so far, for cumulative measuring
 
         def fits(block: str) -> bool:
             return measure(head + body + block) <= budget
@@ -651,8 +762,13 @@ class Index:
                 body += block
             truncated = True
 
-        picked.sort(key=lambda p: (p[0].get("path") or "", p[0].get("start_line") or 0,
-                                   p[0].get("id") or ""))
+        picked.sort(
+            key=lambda p: (
+                p[0].get("path") or "",
+                p[0].get("start_line") or 0,
+                p[0].get("id") or "",
+            )
+        )
         markdown = head + "".join(_cite_block(c, text) for c, text in picked)
         chunks = [{**c, "text": text} for c, text in picked]
         return {
@@ -709,8 +825,8 @@ def _fit_lines(text: str, limit: int, measure=len) -> str:
     """
     if limit <= 0:
         return ""
-    kept = []
-    for line in text.split("\n"):     # never splitlines(): see AGENTS.md
+    kept: list[str] = []
+    for line in text.split("\n"):  # never splitlines(): see AGENTS.md
         candidate = "\n".join([*kept, line])
         if measure(candidate) > limit:
             break
@@ -724,7 +840,7 @@ def _compress(text: str) -> str:
     chunks.build_chunks always emits `# file:` / `# <kind>:` header lines ahead
     of the body, so the first non-blank line after them is the def/class line.
     """
-    lines = text.split("\n")          # never splitlines(): see AGENTS.md
+    lines = text.split("\n")  # never splitlines(): see AGENTS.md
     i = 0
     while i < len(lines) and lines[i].startswith("#"):
         i += 1
@@ -741,11 +857,11 @@ def _cite_block(chunk: dict, text: str) -> str:
     qual = chunk.get("qualname") or chunk.get("name") or ""
     start = chunk.get("start_line") or 1
     end = chunk.get("end_line") or start
-    head = (f"### [cite: {chunk.get('path') or ''}:{start}-"
-            f"{end}] `{qual}` ({chunk.get('why') or ''})")
+    head = (
+        f"### [cite: {chunk.get('path') or ''}:{start}-{end}] `{qual}` ({chunk.get('why') or ''})"
+    )
     disarmed = "\n".join(
-        "\\" + ln if ln.lstrip().startswith("### [cite:") else ln
-        for ln in text.split("\n")
+        "\\" + ln if ln.lstrip().startswith("### [cite:") else ln for ln in text.split("\n")
     )
     return f"{head}\n{disarmed}\n\n"
 

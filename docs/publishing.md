@@ -46,24 +46,58 @@ workflow's OIDC token, so there is no account to create and no secret to store.
 The namespace `io.github.Srinivasan-78/*` is yours automatically because it
 matches the repo owner.
 
+### 4. GitHub Marketplace listing is manual, and does not survive automation
+
+`publish.yml`'s `release` job creates every GitHub Release via `gh release
+create`. Neither the GitHub REST API nor the `gh` CLI exposes the "Publish
+this Action to the GitHub Marketplace" flag — that checkbox exists only on
+GitHub's own **Draft a new release** web page. An automated release can never
+create or renew a Marketplace listing, no matter how `publish.yml` is
+written; this is a GitHub platform limitation, not a bug in this repo's
+pipeline.
+
+Practical consequence: if `repo2graph` needs to be (re-)listed on the
+Marketplace, do it by hand, once, against whatever tag is current:
+
+1. Go to **Releases** → find the release for the current tag (e.g. the
+   latest `vX.Y.Z` `publish.yml` created) → **Edit release** (pencil icon).
+2. Check **"Publish this Action to the GitHub Marketplace"**.
+3. Pick a primary category (and a second one if relevant) — required the
+   first time a listing is created.
+4. Save. This re-publishes the *existing* release; it does not create a new
+   tag or trigger `publish.yml`, so it's safe to do at any time independent
+   of a version bump.
+
+There is no way to script step 2 onward; it requires being logged in as the
+repo owner (or an org member with the right role) in a browser.
+
 ---
 
 ## Cutting a release
 
-1. Bump the version in **both** places — they are checked against the tag before
-   anything is published:
-   - `pyproject.toml` → `[project] version`
-   - `server.json` → `version` **and** `packages[0].version`
-2. Commit, and re-stamp the watermarks (see [AGENTS.md](../AGENTS.md)).
-3. Publish a GitHub Release with tag `vX.Y.Z`.
+Releasing is fully automated via **`.github/workflows/publish.yml`**, which runs in three sequential stages:
+$$\text{prepare-release} \longrightarrow \text{publish} \longrightarrow \text{release}$$
 
-That one event runs two workflows:
+### Option 1: Zero-input release via GitHub Actions (Recommended)
+1. In GitHub, go to **Actions** → **Publish** → click **Run workflow** (no typing or inputs needed).
+2. The workflow automatically:
+   - Scans commits and `CHANGELOG.md` since the previous release tag to auto-determine `major`, `minor`, or `patch`.
+   - Updates `pyproject.toml`, `server.json`, `repo2graph/__init__.py`, and `uv.lock`.
+   - Promotes `[Unreleased]` in `CHANGELOG.md` to `[<version>] — <date>`.
+   - Commits and pushes the version bump to `main` and creates Git tag `v<version>`.
+   - Runs tests, builds wheels/sdist, and publishes to PyPI via Trusted Publishing.
+   - Waits for PyPI CDN and publishes `server.json` to the MCP Registry.
+   - Creates the GitHub Release with changelog notes and advances the floating `v1` tag.
 
-- `release.yml` moves the floating `v1` tag, so `uses: Srinivasan-78/repo2graph@v1`
-  keeps working.
-- `publish.yml` checks the versions agree, runs the tests, builds, uploads to
-  PyPI, waits for PyPI to actually serve the new version, then publishes
-  `server.json` to the MCP Registry.
+### Option 2: Local bump + Tag push
+If you prefer bumping locally before pushing:
+```bash
+python scripts/bump_version.py 1.5.2   # or patch / minor / major
+git commit -am "chore(release): bump version to 1.5.2"
+git tag v1.5.2
+git push origin main --follow-tags
+```
+Pushing tag `v1.5.2` automatically triggers `publish.yml` to publish and release.
 
 Verify:
 

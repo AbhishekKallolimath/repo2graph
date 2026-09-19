@@ -1,28 +1,40 @@
 """Build the repository graph: nodes + edges."""
+
 import hashlib
 import itertools
 import os
 import re
 import subprocess
+import sys
 from collections import Counter, defaultdict
 from dataclasses import asdict
 from pathlib import Path
 
-from .parse import (CONFIG_EXT, DOC_EXT, EXT_LANG, ParsedFile, Symbol, discover,
-                    parse_source)
+from .parse import CONFIG_EXT, DOC_EXT, EXT_LANG, ParsedFile, Symbol, discover, parse_source
 
-MAX_CALL_CANDIDATES = 5
 # Under this many files a process pool costs more to start than it saves.
 PARALLEL_MIN_FILES = 64
 # `git log --name-only` output is captured whole; a request for millions of
 # commits would buffer gigabytes. Co-change signal saturates long before this,
 # so cap the window and record when we did.
 MAX_COCHANGE_COMMITS = 5000
+# Independent of MAX_COCHANGE_COMMITS (ISS-82): that bounds how many commits
+# are requested, but a single pathological commit -- a vendor import touching
+# hundreds of thousands of files -- can still emit an unbounded blob of paths
+# within that commit count. Enforced during the read, not after a full
+# capture_output() buffer has already grown past it.
+MAX_COCHANGE_BYTES = 10 * 1024 * 1024  # 10 MB
+# max_files bounds file count and is opt-in; nobody has to remember to pass
+# it. This is not a hard cap (ISS-85 asks for a soft one) -- past this many
+# nodes or edges a build just tells the operator on stderr, once, that memory
+# use is growing unbounded and how to bound it.
+LARGE_GRAPH_WARN_THRESHOLD = 50_000
 
 
 class Graph:
-    def __init__(self, root: Path, name: str):
+    def __init__(self, root: Path, name: str, max_files: int = 0):
         self.root, self.name = root, name
+        self.max_files = max_files
         self.nodes: dict[str, dict] = {}
         self.edges: list[dict] = []
         self._edge_seen: set[tuple] = set()
@@ -40,14 +52,23 @@ class Graph:
         # incremental build must produce byte-identical artifacts to a full one,
         # and a hit/miss count differs by construction between the two.
         self.incremental: dict[str, int] | None = None
+        self._warned_large = False
 
     def add_node(self, nid: str, **attrs):
         if nid in self.nodes:
             # ISS-11: preserve legitimate 0 and False values on re-add
-            self.nodes[nid].update({k: v for k, v in attrs.items()
-                                    if v is not None and v != "" and (not isinstance(v, (list, tuple)) or len(v) > 0)})
+            self.nodes[nid].update(
+                {
+                    k: v
+                    for k, v in attrs.items()
+                    if v is not None
+                    and v != ""
+                    and (not isinstance(v, (list, tuple)) or len(v) > 0)
+                }
+            )
         else:
             self.nodes[nid] = dict(id=nid, **attrs)
+        self._warn_if_large()
         return nid
 
     def add_edge(self, src: str, dst: str, etype: str, **attrs):
@@ -57,6 +78,25 @@ class Graph:
         self._edge_seen.add(key)
         self.edges.append(dict(src=src, dst=dst, type=etype, **attrs))
         self.stats[f"edge:{etype}"] += 1
+        self._warn_if_large()
+
+    def _warn_if_large(self) -> None:
+        if self._warned_large:
+            return
+        if (
+            len(self.nodes) > LARGE_GRAPH_WARN_THRESHOLD
+            or len(self.edges) > LARGE_GRAPH_WARN_THRESHOLD
+        ):
+            self._warned_large = True
+            msg = (
+                f"repo2graph: warning: graph has grown past {LARGE_GRAPH_WARN_THRESHOLD} "
+                f"nodes/edges ({len(self.nodes)} nodes, {len(self.edges)} edges)"
+            )
+            if self.max_files > 0:
+                msg += f" (max_files={self.max_files})."
+            else:
+                msg += " with no size limit set; pass max_files= to build() to bound memory use."
+            print(msg, file=sys.stderr)
 
 
 # ---------- import parsing ----------
@@ -84,8 +124,15 @@ def import_targets(raw: str, lang: str) -> list[str]:
         return [p.strip().split(" as ")[0].strip() for p in m.group(2).split(",") if p.strip()]
     # Kotlin/Swift/Scala all import with `import a.b.C`, like Java; C# uses
     # `using`, PHP uses `use A\B` — both need their own pattern, not Java's.
-    key = {"javascript": "js", "typescript": "js", "tsx": "js",
-           "kotlin": "java", "swift": "java", "scala": "java", "cpp": "c"}.get(lang, lang)
+    key = {
+        "javascript": "js",
+        "typescript": "js",
+        "tsx": "js",
+        "kotlin": "java",
+        "swift": "java",
+        "scala": "java",
+        "cpp": "c",
+    }.get(lang, lang)
     rx = _IMPORT_RE.get(key)
     if rx is None:
         return []
@@ -108,8 +155,9 @@ def path_index(file_index) -> dict:
     return {"by_name": by_name, "by_dir": by_dir}
 
 
-def resolve_import(target: str, from_path: str, lang: str, file_index: set[str],
-                   ctx: dict | None = None) -> str | None:
+def resolve_import(
+    target: str, from_path: str, lang: str, file_index: set[str], ctx: dict | None = None
+) -> str | None:
     """Map an import target to an in-repo file path when possible."""
     if ctx is None:
         ctx = path_index(file_index)
@@ -152,15 +200,23 @@ def resolve_import(target: str, from_path: str, lang: str, file_index: set[str],
     elif lang == "go":
         module = ctx.get("go_module")
         if module and (target == module or target.startswith(module + "/")):
-            pkg_dir = target[len(module):].strip("/")
-            cands = [p for p in by_dir.get(pkg_dir, [])
-                     if p.endswith(".go") and not p.endswith("_test.go")][:1]
+            pkg_dir = target[len(module) :].strip("/")
+            cands = [
+                p
+                for p in by_dir.get(pkg_dir, [])
+                if p.endswith(".go") and not p.endswith("_test.go")
+            ][:1]
         elif module:
             cands = []  # module path known: anything outside it is a third-party package
         else:
             tail = target.split("/")[-1]
-            cands = [p for d, paths in sorted(by_dir.items()) if d.split("/")[-1] == tail
-                     for p in paths if p.endswith(".go")][:1]
+            cands = [
+                p
+                for d, paths in sorted(by_dir.items())
+                if d.split("/")[-1] == tail
+                for p in paths
+                if p.endswith(".go")
+            ][:1]
     elif lang in ("c", "cpp"):
         cands = by_name.get(target.split("/")[-1], [])[:1]
     elif lang == "java":
@@ -187,6 +243,77 @@ def repo_context(root: Path) -> dict:
 
 
 # ---------- parsing ----------
+def _chunk_and_parse(rel, abspath, lang, config, size):
+    chunk_size = config.max_file_bytes
+    all_symbols = []
+    all_imports = []
+    total_parse_errors = 0
+    used_cpp = False
+
+    line_offset = 0
+    raw_content = bytearray()
+
+    with open(abspath, "rb") as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            raw_content.extend(chunk)
+            try:
+                chunk.decode("utf-8")
+            except UnicodeDecodeError:
+                line_offset += chunk.count(b"\n")
+                continue
+
+            pf = parse_source(chunk, lang, filepath=None)
+            if pf is None:
+                line_offset += chunk.count(b"\n")
+                continue
+
+            for sym in pf.symbols:
+                sym.start_line += line_offset
+                sym.end_line += line_offset
+                all_symbols.append(sym)
+
+            all_imports.extend(pf.imports)
+            total_parse_errors += pf.parse_errors
+            if pf.used_cpp:
+                used_cpp = True
+
+            line_offset += chunk.count(b"\n")
+
+    seen = set()
+    deduped_symbols = []
+    qualname_counts: Counter[str] = Counter()
+
+    for sym in all_symbols:
+        key = (sym.name, sym.start_line)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        original_qualname = sym.qualname
+        count = qualname_counts[original_qualname]
+        if count > 0:
+            sym.qualname = f"{original_qualname}_{count}"
+        qualname_counts[original_qualname] += 1
+
+        deduped_symbols.append(sym)
+
+    pf = ParsedFile(
+        lang=lang,
+        symbols=deduped_symbols,
+        imports=list(set(all_imports)),
+        parse_errors=total_parse_errors,
+        used_cpp=used_cpp,
+        is_chunked=True,
+    )
+
+    digest = hashlib.sha256(raw_content).hexdigest()
+    lines = raw_content.count(b"\n") + 1
+    return rel, lang, (len(raw_content), lines, pf, digest)
+
+
 def _read_and_parse(item):
     """Read one file and parse it if it is code.
 
@@ -195,20 +322,32 @@ def _read_and_parse(item):
     tuple is the sha256 of the bytes just parsed: it is computed here because
     this is the only place that holds them, and build() never keeps them.
     """
-    rel, abspath, lang = item
+    rel, abspath, lang, config = item
+    if config is None:
+        from .parse import BuildConfig
+
+        config = BuildConfig()
+
+    try:
+        st = abspath.lstat()
+        size = st.st_size
+        if size > config.max_file_bytes and config.chunk_large_files:
+            return _chunk_and_parse(rel, abspath, lang, config, size)
+    except OSError:
+        pass
+
     try:
         raw = abspath.read_bytes()
     except OSError:
         return rel, lang, None
     try:
-        pf = parse_source(raw, lang) if lang else None
+        pf = parse_source(raw, lang, filepath=abspath) if lang else None
     except Exception:
         # A grammar that raises on one pathological file must not abort the
         # whole build (nor trigger a pointless serial retry that raises again):
         # count the file, drop its symbols, same as an unavailable parser.
         pf = None
-    return rel, lang, (len(raw), raw.count(b"\n") + 1, pf,
-                       hashlib.sha256(raw).hexdigest())
+    return rel, lang, (len(raw), raw.count(b"\n") + 1, pf, hashlib.sha256(raw).hexdigest())
 
 
 # ---------- parse cache (incremental builds) ----------
@@ -239,9 +378,13 @@ def cache_entry(lang: str | None, size: int, lines: int, pf, digest: str) -> dic
         "lang": lang or "",
         "size": size,
         "lines": lines,
-        "parsed": None if pf is None else {
+        "parsed": None
+        if pf is None
+        else {
             "lang": pf.lang,
             "parse_errors": pf.parse_errors,
+            "used_cpp": pf.used_cpp,
+            "is_chunked": getattr(pf, "is_chunked", False),
             "imports": list(pf.imports),
             "symbols": [asdict(s) for s in pf.symbols],
         },
@@ -267,15 +410,20 @@ def entry_read(entry: dict) -> tuple | None:
         if raw is None:
             return size, lines, None, digest
         symbols = [Symbol(**s) for s in raw["symbols"]]
-        pf = ParsedFile(lang=str(raw["lang"]), symbols=symbols,
-                        imports=[str(i) for i in raw["imports"]],
-                        parse_errors=int(raw.get("parse_errors") or 0))
+        pf = ParsedFile(
+            lang=str(raw["lang"]),
+            symbols=symbols,
+            imports=[str(i) for i in raw["imports"]],
+            parse_errors=int(raw.get("parse_errors") or 0),
+            used_cpp=bool(raw.get("used_cpp") or False),
+            is_chunked=bool(raw.get("is_chunked") or False),
+        )
         return size, lines, pf, digest
     except (KeyError, TypeError, ValueError):
         return None
 
 
-def parse_incremental(files, jobs: int, cache: dict, counts: dict):
+def parse_incremental(files, jobs: int, cache: dict, counts: dict, config=None):
     """Read every file, but re-parse only the ones whose bytes changed.
 
     A file's `ParsedFile` is a pure function of its bytes and its language and
@@ -294,6 +442,7 @@ def parse_incremental(files, jobs: int, cache: dict, counts: dict):
         jobs: Parser process count, passed through to `parse_all`.
         cache: `{relpath: entry}` loaded from a previous build's parse cache.
         counts: Mutated in place with "cached" and "reparsed" tallies.
+        config: BuildConfig
 
     Returns:
         The same list of `(rel, lang, read)` tuples `parse_all` returns, in
@@ -316,8 +465,11 @@ def parse_incremental(files, jobs: int, cache: dict, counts: dict):
         # The language must match too: the same bytes parsed as a different
         # language yield different symbols, and a renamed extension changes the
         # language without changing the content hash.
-        if isinstance(entry, dict) and entry.get("sha256") == digest \
-                and entry.get("lang") == (lang or ""):
+        if (
+            isinstance(entry, dict)
+            and entry.get("sha256") == digest
+            and entry.get("lang") == (lang or "")
+        ):
             read = entry_read(entry)
         if read is None:
             stale.append((rel, abspath))
@@ -325,7 +477,7 @@ def parse_incremental(files, jobs: int, cache: dict, counts: dict):
             results[rel] = (rel, lang, read)
             counts["cached"] = counts.get("cached", 0) + 1
     counts["reparsed"] = len(stale)
-    for rel, lang, read in parse_all(stale, jobs):
+    for rel, lang, read in parse_all(stale, jobs, config=config):
         results[rel] = (rel, lang, read)
     return [results[rel] for rel in order]
 
@@ -337,7 +489,7 @@ def resolve_jobs(jobs: int) -> int:
     return max(1, min(os.cpu_count() or 1, 8))
 
 
-def parse_all(files, jobs: int):
+def parse_all(files, jobs: int, config=None):
     """Read and parse every file, in discovery order, across `jobs` processes.
 
     tree-sitter parsing is CPU bound and dominates a large build, so this is
@@ -345,16 +497,17 @@ def parse_all(files, jobs: int):
     keeps node ids and edge order identical to a serial run.
     """
     jobs = resolve_jobs(jobs)
-    items = [(rel, abspath, EXT_LANG.get(abspath.suffix.lower()))
-             for rel, abspath in files]
+    items = [(rel, abspath, EXT_LANG.get(abspath.suffix.lower()), config) for rel, abspath in files]
     if jobs == 1 or len(items) < PARALLEL_MIN_FILES:
         return [_read_and_parse(i) for i in items]
     import concurrent.futures
+
     try:
         # Note: accessed as concurrent.futures.ProcessPoolExecutor to allow monkeypatching in tests (NC-6)
         with concurrent.futures.ProcessPoolExecutor(max_workers=jobs) as pool:
-            return list(pool.map(_read_and_parse, items,
-                                 chunksize=max(1, len(items) // (jobs * 8))))
+            return list(
+                pool.map(_read_and_parse, items, chunksize=max(1, len(items) // (jobs * 8)))
+            )
     except Exception:
         # No fork / no POSIX semaphores to build on, a BrokenProcessPool, a
         # worker ImportError, or a pickling failure on the call or its result:
@@ -364,8 +517,17 @@ def parse_all(files, jobs: int):
 
 
 # ---------- build ----------
-def build(root: Path, include=None, exclude=None, git_history: int = 0,
-          max_files: int = 0, jobs: int = 0, cache: dict | None = None) -> Graph:
+def build(
+    root: Path,
+    include=None,
+    exclude=None,
+    git_history: int = 0,
+    max_files: int = 0,
+    jobs: int = 0,
+    cache: dict | None = None,
+    max_call_candidates: int = 5,
+    config=None,
+) -> Graph:
     """Parse `root` into a Graph.
 
     Args:
@@ -379,30 +541,33 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
             files whose sha256 and language both still match are not re-parsed.
             Resolution is recomputed in full either way, so the resulting Graph
             is identical to one built with `cache=None`.
+        config: BuildConfig
 
     Returns:
         The populated Graph. `parse_cache` holds the cache for the *next*
         build; `incremental` holds hit/miss counts when `cache` was supplied.
     """
+    max_call_candidates = max(1, max_call_candidates)
     root = Path(root).resolve()
-    g = Graph(root, root.name)
+    g = Graph(root, root.name, max_files=max_files)
     repo_id = f"repo:{root.name}"
     g.add_node(repo_id, type="repo", name=root.name, path=".")
 
-    files = list(discover(root, include, exclude, stats=g.stats))
+    files = list(discover(root, include, exclude, stats=g.stats, config=config))
     if max_files > 0:  # a negative limit must not become files[:-n] and drop the tail
         files = files[:max_files]
     file_index = {rel for rel, _ in files}
     ctx = repo_context(root)
     ctx.update(path_index(file_index))
-    parsed: dict[str, object] = {}  # ParsedFile only: keeping raw bytes here
-                                    # would hold the whole repo in memory
+    # Only ParsedFile, never the raw bytes -- keeping those too would hold the
+    # whole repo in memory.
+    parsed: dict[str, ParsedFile] = {}
 
     if cache is None:
-        results = parse_all(files, resolve_jobs(jobs))
+        results = parse_all(files, resolve_jobs(jobs), config=config)
     else:
         counts: dict[str, int] = {"cached": 0, "reparsed": 0}
-        results = parse_incremental(files, resolve_jobs(jobs), cache, counts)
+        results = parse_incremental(files, resolve_jobs(jobs), cache, counts, config=config)
         g.incremental = counts
 
     for rel, lang, read in results:
@@ -412,11 +577,25 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
         g.file_hashes[rel] = digest
         g.parse_cache[rel] = cache_entry(lang, size, lines, pf, digest)
         ext = Path(rel).suffix.lower()
-        ftype = "code" if lang else ("doc" if ext in DOC_EXT else
-                                     "config" if ext in CONFIG_EXT else "other")
+        ftype = (
+            "code"
+            if lang
+            else ("doc" if ext in DOC_EXT else "config" if ext in CONFIG_EXT else "other")
+        )
         fid = f"file:{rel}"
-        g.add_node(fid, type="file", name=Path(rel).name, path=rel, lang=lang or ext.lstrip("."),
-                   file_type=ftype, size=size, lines=lines)
+        is_chunked = getattr(pf, "is_chunked", False) if pf else False
+        g.add_node(
+            fid,
+            type="file",
+            name=Path(rel).name,
+            path=rel,
+            lang=lang or ext.lstrip("."),
+            file_type=ftype,
+            size=size,
+            lines=lines,
+            parse_errors=pf.parse_errors if pf else 0,
+            chunked=is_chunked,
+        )
         g.stats["files"] += 1
 
         # directory chain
@@ -435,12 +614,26 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
         parsed[rel] = pf
         g.stats["parsed"] += 1
         g.stats["parse_errors"] += pf.parse_errors
+        if pf.parse_errors > 0:
+            g.stats["files_with_parse_errors"] += 1
+        if getattr(pf, "used_cpp", False):
+            g.stats["cpp_fallback_files"] += 1
 
         for sym in pf.symbols:
             sid = f"sym:{rel}::{sym.qualname}"
-            g.add_node(sid, type="symbol", name=sym.name, qualname=sym.qualname, kind=sym.kind,
-                       path=rel, lang=lang, start_line=sym.start_line, end_line=sym.end_line,
-                       signature=sym.signature, docstring=sym.docstring)
+            g.add_node(
+                sid,
+                type="symbol",
+                name=sym.name,
+                qualname=sym.qualname,
+                kind=sym.kind,
+                path=rel,
+                lang=lang,
+                start_line=sym.start_line,
+                end_line=sym.end_line,
+                signature=sym.signature,
+                docstring=sym.docstring,
+            )
             g.stats[f"symbol:{sym.kind}"] += 1
             owner = f"sym:{rel}::{sym.parent}" if sym.parent else fid
             g.add_edge(owner, sid, "DEFINES")
@@ -456,6 +649,13 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
                     g.add_edge(fid, mid, "IMPORTS", target=target, internal=False)
 
     # ----- name index for call/inheritance resolution -----
+    imported_files: dict[str, set[str]] = defaultdict(set)
+    for e in g.edges:
+        if e["type"] == "IMPORTS" and e["src"].startswith("file:") and e["dst"].startswith("file:"):
+            caller_rel = e["src"].split(":", 1)[1]
+            callee_rel = e["dst"].split(":", 1)[1]
+            imported_files[caller_rel].add(callee_rel)
+
     by_name: dict[str, list[str]] = defaultdict(list)
     for nid, n in g.nodes.items():
         if n["type"] == "symbol":
@@ -474,15 +674,62 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
                     g.add_edge(sid, eid, "CALLS_EXTERNAL", count=count)
                 elif len(pick) == 1:
                     g.add_edge(sid, pick[0], "CALLS", count=count, confidence=1.0)
-                elif len(pick) <= MAX_CALL_CANDIDATES:
-                    for c in pick:
-                        g.add_edge(sid, c, "CALLS", count=count,
-                                   confidence=round(1 / len(pick), 3))
                 else:
-                    g.stats["ambiguous_calls"] += 1
+                    # Apply heuristics
+                    scores = {}
+                    for c in pick:
+                        c_rel = g.nodes[c]["path"]
+                        score = 1.0
+                        if c_rel == rel:
+                            score *= 2.0
+                        if Path(c_rel).parent == Path(rel).parent:
+                            score *= 1.5
+                        if c_rel in imported_files.get(rel, set()):
+                            score *= 3.0
+                        scores[c] = score
+
+                    total_score = sum(scores.values())
+                    norm_scores = {c: s / total_score for c, s in scores.items()}
+
+                    N = len(pick)
+                    threshold = 1.0 / min(N, 3)
+                    heuristics_fired = any(s != 1.0 for s in scores.values())
+
+                    if heuristics_fired:
+                        kept = {c: ns for c, ns in norm_scores.items() if ns >= threshold}
+                        if not kept:
+                            sorted_c = sorted(norm_scores.items(), key=lambda x: x[1], reverse=True)
+                            kept = dict(sorted_c[: min(N, 3)])
+
+                        ambiguous = len(kept) > 1
+                        for c, conf in kept.items():
+                            g.add_edge(
+                                sid,
+                                c,
+                                "CALLS",
+                                count=count,
+                                confidence=round(conf, 3),
+                                **({"ambiguous": True} if ambiguous else {}),
+                            )
+                    else:
+                        limit = min(N, 3)
+                        limit = min(limit, max_call_candidates)
+                        if limit > 0:
+                            # keep up to limit
+                            for c in pick[:limit]:
+                                g.add_edge(
+                                    sid,
+                                    c,
+                                    "CALLS",
+                                    count=count,
+                                    confidence=round(1.0 / min(N, 3), 3),
+                                    ambiguous=True,
+                                )
+                        else:
+                            g.stats["ambiguous_calls"] += 1
             for base in sym.bases:
                 base = base.split("[")[0].split("<")[0].split(".")[-1].strip()
-                for c in by_name.get(base, [])[:MAX_CALL_CANDIDATES]:
+                for c in by_name.get(base, [])[:max_call_candidates]:
                     g.add_edge(sid, c, "INHERITS")
 
     if git_history:
@@ -500,11 +747,14 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
     mark_entrypoints(g)
     g.stats["nodes"] = len(g.nodes)
     g.stats["edges"] = len(g.edges)
+    g.stats["parse_errors_summary"] = (
+        f"Files with parse errors: {g.stats.get('files_with_parse_errors', 0)}  ({g.stats.get('cpp_fallback_files', 0)} C/C++ files used cpp fallback)"  # type: ignore[assignment]
+    )
     return g
 
 
 ENTRY_KINDS = ("function", "method")
-SCORED_ENTRYPOINTS = 200   # exact reach is a BFS each, so only rank the busiest
+SCORED_ENTRYPOINTS = 200  # exact reach is a BFS each, so only rank the busiest
 
 
 def mark_entrypoints(g: Graph):
@@ -522,11 +772,19 @@ def mark_entrypoints(g: Graph):
         if e["type"] == "CALLS":
             called.add(e["dst"])
             out[e["src"]].append(e["dst"])
-    nested = {e["dst"] for e in g.edges if e["type"] == "DEFINES"
-              and g.nodes.get(e["src"], {}).get("kind") in ENTRY_KINDS}
-    roots = [nid for nid, n in g.nodes.items()
-             if n["type"] == "symbol" and n.get("kind") in ENTRY_KINDS
-             and nid not in called and nid not in nested]
+    nested = {
+        e["dst"]
+        for e in g.edges
+        if e["type"] == "DEFINES" and g.nodes.get(e["src"], {}).get("kind") in ENTRY_KINDS
+    }
+    roots = [
+        nid
+        for nid, n in g.nodes.items()
+        if n["type"] == "symbol"
+        and n.get("kind") in ENTRY_KINDS
+        and nid not in called
+        and nid not in nested
+    ]
     for nid in roots:
         g.nodes[nid]["entrypoint"] = True
     roots.sort(key=lambda nid: (-len(out.get(nid, ())), nid))
@@ -561,19 +819,48 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
         # leaves stdin inherited, and a git that blocks on the MCP server's
         # JSON-RPC pipe stalls until the timeout and can eat client frames.
         out = subprocess.run(
-            ["git", "-c", "core.quotepath=false", "-C", str(root), "log",
-             f"-n{commits}", "--name-only", "--pretty=format:%H", "--no-merges"],
-            capture_output=True, stdin=subprocess.DEVNULL, timeout=120)
+            [
+                "git",
+                "-c",
+                "core.quotepath=false",
+                "-C",
+                str(root),
+                "log",
+                f"-n{commits}",
+                "--name-only",
+                "--pretty=format:%H",
+                "--no-merges",
+            ],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=120,
+        )
         if out.returncode != 0:
             return
     except (OSError, subprocess.SubprocessError):
         return
+    stdout = out.stdout
+    # ISS-82: MAX_COCHANGE_COMMITS bounds how many commits are requested, not
+    # how many bytes a single pathological commit's file list can still emit
+    # within that count. Bound what gets decoded and processed independently
+    # of the commit count, and record it -- same "cap and record when we did"
+    # idiom as MAX_COCHANGE_COMMITS above.
+    if len(stdout) > MAX_COCHANGE_BYTES:
+        g.stats["cochange_output_capped"] = len(stdout)
+        # Drop the trailing partial commit: git log delimits commits with a blank
+        # line ("\n\n" or "\r\n\r\n"). Truncating at an arbitrary byte count cuts into the oldest
+        # commit block, and flushing whatever is in current at end-of-input can turn
+        # a >25 file noise commit into a small (<25) co-change signal.
+        m = None
+        for m in re.finditer(rb"(\r?\n){2}", stdout[:MAX_COCHANGE_BYTES]):
+            pass
+        stdout = stdout[: m.end()] if m else b""
     pairs: Counter = Counter()
     current: list[str] = []
     # split("\n"), not splitlines(): with core.quotepath=false git emits paths
     # containing U+2028/U+2029/U+0085 raw, and splitlines() would cut such a path
     # in two so it never matches file_index (same bug class as ISS-22).
-    for line in out.stdout.decode("utf8", "surrogateescape").split("\n") + [""]:
+    for line in stdout.decode("utf8", "surrogateescape").split("\n") + [""]:
         line = line.rstrip("\r")
         if not line:
             if 1 < len(current) <= 25:

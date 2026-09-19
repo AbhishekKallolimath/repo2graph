@@ -4,6 +4,7 @@ Every test names the acceptance criterion (or criteria) it encodes, e.g. `# AC-1
 Ablation and expansion assertions are set-membership only: no score value, rank
 number or float comparison is ever asserted (they drift).
 """
+
 import argparse
 import ast
 import io
@@ -58,10 +59,14 @@ def normalize_provider(name):
 
 # 30 repetitions of the exact identifier, in prose, in a chunk that is NOT the
 # symbol. BM25 alone ranks this first; the exact-identifier boost must not.
-PKG_DECOY = '"""' + "\n".join(
-    f"Line {i}: normalize_provider is discussed here, see normalize_provider."
-    for i in range(15)
-) + '\n"""\n'
+PKG_DECOY = (
+    '"""'
+    + "\n".join(
+        f"Line {i}: normalize_provider is discussed here, see normalize_provider."
+        for i in range(15)
+    )
+    + '\n"""\n'
+)
 
 PKG_SESSION = '''
 from .config import normalize_provider
@@ -81,7 +86,7 @@ def verify_token(opaque):
 '''
 
 # Two same-named methods force a 2-candidate CALLS fan-out at confidence 0.5.
-PKG_AMBIG = '''
+PKG_AMBIG = """
 class AlphaHandler:
     def handle(self, payload):
         return payload
@@ -94,7 +99,7 @@ class BetaHandler:
 
 def dispatch(payload):
     return handle(payload)
-'''
+"""
 
 # INHERITS carries no `confidence` key -- it must survive min_confidence=1.0.
 PKG_BASE = '''
@@ -228,8 +233,7 @@ def bare_out(rag_repo, tmp_path):
 
 # ---------- helpers ----------
 
-CITE_RE = re.compile(
-    r"^### \[cite: (?P<path>[^\]]+):(?P<start>\d+)-(?P<end>\d+)\] (?P<rest>.*)$")
+CITE_RE = re.compile(r"^### \[cite: (?P<path>[^\]]+):(?P<start>\d+)-(?P<end>\d+)\] (?P<rest>.*)$")
 WHY_RE = re.compile(r"\(([^()]*)\)\s*$")
 
 
@@ -244,8 +248,13 @@ def split_pack(markdown: str):
     for ln in lines:
         m = CITE_RE.match(ln)
         if m:
-            cur = {"path": m.group("path"), "start": int(m.group("start")),
-                   "end": int(m.group("end")), "rest": m.group("rest"), "body": []}
+            cur = {
+                "path": m.group("path"),
+                "start": int(m.group("start")),
+                "end": int(m.group("end")),
+                "rest": m.group("rest"),
+                "body": [],
+            }
             blocks.append(cur)
         elif cur is None:
             head.append(ln)
@@ -289,6 +298,7 @@ def compressed_form(text: str) -> tuple[list[str], list[str]]:
 # Adjacency / init  (AC-1 .. AC-3)
 # ==========================================================================
 
+
 def test_ac1_adjacency_entries_are_four_tuples_with_edge_records(rag_index):
     """AC-1: adj entries are (dst, type, direction, edge) and confidence reads."""
     entries = rag_index.adj[SYM_DISPATCH]
@@ -303,7 +313,12 @@ def test_ac1_adjacency_entries_are_four_tuples_with_edge_records(rag_index):
 
 def test_ac2_overview_is_loaded_and_absence_is_graceful(rag_out, bare_out):
     """AC-2: Index.overview mirrors agent/overview.md; missing file -> ""."""
-    with open(artifact_path(rag_out, "overview.md"), encoding="utf8", newline="\n") as fh:
+    # human/overview.md and agent/overview.md now carry different content (the
+    # human copy is the structured table view, the agent copy is the prose
+    # GraphRAG's protocol is built around) -- read the agent copy explicitly,
+    # matching what Index.overview is documented to mirror.
+    agent_overview = artifact_paths(rag_out, "overview.md")[1]
+    with open(agent_overview, encoding="utf8", newline="\n") as fh:
         on_disk = fh.read()
     assert Index(rag_out).overview.strip() == on_disk.strip()
     assert not artifact_path(bare_out, "overview.md").exists()
@@ -328,13 +343,15 @@ def test_ac3_manifest_is_loaded_and_unparseable_degrades(rag_out):
 # Expansion / confidence  (AC-4 .. AC-7)
 # ==========================================================================
 
+
 def test_ac4_min_confidence_prunes_ambiguous_calls(rag_index):
     """AC-4: no CALLS tuple whose edge record has confidence < 1.0 survives."""
     got = rag_index.expand([SYM_DISPATCH], min_confidence=1.0)
     for dst, etype, _direction, src in got:
         if etype == "CALLS":
             e = edge_record(rag_index, src, dst, "CALLS") or edge_record(
-                rag_index, dst, src, "CALLS")
+                rag_index, dst, src, "CALLS"
+            )
             assert e is not None, (src, dst)
             assert e.get("confidence", 1.0) >= 1.0, e
     assert SYM_ALPHA_HANDLE not in dsts(got)
@@ -377,6 +394,7 @@ def test_ac7_default_edge_directions(rag_index):
 # Scoring  (AC-8 .. AC-11)
 # ==========================================================================
 
+
 def test_ac8_exact_identifier_boost_beats_a_lexical_decoy(rag_index):
     """AC-8: the symbol chunk outranks the decoy chunk for a pinpoint query."""
     scored = rag_index.score("normalize_provider")
@@ -410,8 +428,9 @@ def test_ac10_importing_query_pulls_in_no_optional_dependency():
         "assert hasattr(q.Index, 'score_rrf'), 'score_rrf missing'; "
         "print('numpy' in sys.modules, 'sentence_transformers' in sys.modules)"
     )
-    proc = subprocess.run([sys.executable, "-c", code], cwd=str(REPO_ROOT),
-                          capture_output=True, timeout=120)
+    proc = subprocess.run(
+        [sys.executable, "-c", code], cwd=str(REPO_ROOT), capture_output=True, timeout=120
+    )
     out = proc.stdout.decode("utf8", "replace").strip()
     err = proc.stderr.decode("utf8", "replace").strip()
     assert proc.returncode == 0, err
@@ -447,6 +466,7 @@ def test_ac11_score_rrf_with_a_stub_embedder(rag_index):
 # Backward compatibility  (AC-12, AC-13)
 # ==========================================================================
 
+
 def test_ac12_retrieve_still_finds_seeds_and_graph_neighbours(rag_out):
     """AC-12: retrieve() keeps returning lexical seeds plus expanded neighbours."""
     hits = Index(rag_out).retrieve(ABLATION_QUERY, k=3, hops=1)
@@ -463,8 +483,11 @@ def test_ac13_retrieve_signature_and_cmd_query_output_are_unchanged(rag_out, cap
 
     params = list(inspect.signature(Index.retrieve).parameters)
     assert params[:5] == ["self", "query", "k", "hops", "budget_chars"], params
-    kw_only = [p for p in inspect.signature(Index.retrieve).parameters.values()
-               if p.kind is inspect.Parameter.KEYWORD_ONLY]
+    kw_only = [
+        p
+        for p in inspect.signature(Index.retrieve).parameters.values()
+        if p.kind is inspect.Parameter.KEYWORD_ONLY
+    ]
     assert all(p.default is not inspect.Parameter.empty for p in kw_only)
 
     idx = Index(rag_out)
@@ -474,8 +497,11 @@ def test_ac13_retrieve_signature_and_cmd_query_output_are_unchanged(rag_out, cap
 
     main(["query", ABLATION_QUERY, "-o", str(rag_out), "-k", "3"])
     printed = capsys.readouterr().out
-    assert printed == format_pack(
-        Index(rag_out).retrieve(ABLATION_QUERY, k=3, hops=1, budget_chars=24000)) + "\n"
+    assert (
+        printed
+        == format_pack(Index(rag_out).retrieve(ABLATION_QUERY, k=3, hops=1, budget_chars=24000))
+        + "\n"
+    )
 
 
 def test_ac13_retrieve_keeps_every_edge_direction(dirs_out):
@@ -514,6 +540,7 @@ def test_ac13_retrieve_keeps_every_edge_direction(dirs_out):
 # ==========================================================================
 # pack_context  (AC-14 .. AC-21)
 # ==========================================================================
+
 
 @pytest.mark.parametrize("budget", [200, 1000, 4000, 24000])
 def test_ac14_whole_markdown_respects_the_budget(rag_index, budget):
@@ -564,7 +591,8 @@ def test_ac18_map_entrypoints_come_from_the_manifest(rag_index):
     entry = rag_index.manifest["entrypoints"]
     assert entry, "fixture produced no entrypoints"
     map_text, _blocks = split_pack(
-        rag_index.pack_context(ABLATION_QUERY, budget_chars=0)["markdown"])
+        rag_index.pack_context(ABLATION_QUERY, budget_chars=0)["markdown"]
+    )
     positions = {e["qualname"]: map_text.find(e["qualname"]) for e in entry[:10]}
     assert positions[entry[0]["qualname"]] >= 0, map_text
     present = {q: p for q, p in positions.items() if p >= 0}
@@ -582,8 +610,7 @@ def test_ac19_seeds_are_prioritised_over_neighbours(rag_index):
 
 def test_ac19_a_squeezed_neighbour_is_compressed_not_truncated(rag_index):
     """AC-19 (b): the compressed form is header lines + the signature line."""
-    full = {c["id"]: c for c in rag_index.pack_context(
-        ABLATION_QUERY, budget_chars=0)["chunks"]}
+    full = {c["id"]: c for c in rag_index.pack_context(ABLATION_QUERY, budget_chars=0)["chunks"]}
     for budget in range(400, 8000, 100):
         res = rag_index.pack_context(ABLATION_QUERY, budget_chars=budget)
         _map_text, blocks = split_pack(res["markdown"])
@@ -595,7 +622,7 @@ def test_ac19_a_squeezed_neighbour_is_compressed_not_truncated(rag_index):
             source = full.get(c["id"], c)
             kept, dropped = compressed_form(source["text"] or "")
             if not dropped or source["text"].strip() in b["text"]:
-                continue          # this neighbour fitted in full
+                continue  # this neighbour fitted in full
             assert kept[-1].strip() in b["text"], (budget, b["text"], kept[-1])
             for line in dropped:
                 assert line not in b["text"], (budget, line, b["text"])
@@ -614,20 +641,26 @@ def test_ac20_expand_graph_false_is_seeds_only(rag_index):
 
 def test_ac21_ablation_graph_expansion_finds_what_lexical_misses(rag_index):
     """AC-21: set membership only -- no score, no rank, no ordering asserted."""
-    lexical = {c["node_id"] for c in rag_index.pack_context(
-        ABLATION_QUERY, budget_chars=0, expand_graph=False)["chunks"]}
-    graphrag = {c["node_id"] for c in rag_index.pack_context(
-        ABLATION_QUERY, budget_chars=0)["chunks"]}
+    lexical = {
+        c["node_id"]
+        for c in rag_index.pack_context(ABLATION_QUERY, budget_chars=0, expand_graph=False)[
+            "chunks"
+        ]
+    }
+    graphrag = {
+        c["node_id"] for c in rag_index.pack_context(ABLATION_QUERY, budget_chars=0)["chunks"]
+    }
 
-    assert SYM_AUTHENTICATE in lexical, lexical          # the lexical seed
-    assert SYM_VERIFY not in lexical, lexical            # shares no vocabulary
-    assert lexical < graphrag, (lexical, graphrag)       # strict superset
-    assert SYM_VERIFY in graphrag, graphrag              # reached over CALLS out
+    assert SYM_AUTHENTICATE in lexical, lexical  # the lexical seed
+    assert SYM_VERIFY not in lexical, lexical  # shares no vocabulary
+    assert lexical < graphrag, (lexical, graphrag)  # strict superset
+    assert SYM_VERIFY in graphrag, graphrag  # reached over CALLS out
 
 
 # ==========================================================================
 # CLI  (AC-22 .. AC-27)
 # ==========================================================================
+
 
 def test_ac22_rag_with_one_positional_is_the_query(rag_out, capsys):
     """AC-22: `rag -o IDX "question"` -- one positional, prints markdown."""
@@ -713,13 +746,25 @@ def test_ac26_rag_defaults(rag_out, monkeypatch, capsys):
     """AC-26 (b): -k 8, --hops 1, --budget 24000, --min-conf 1.0."""
     seen = {}
 
-    def recorder(self, query, k=None, hops=None, budget_chars=None,
-                 min_confidence=None, **kw):
-        seen.update(query=query, k=k, hops=hops, budget_chars=budget_chars,
-                    min_confidence=min_confidence, **kw)
-        return {"markdown": "# stub", "chunks": [], "seeds": [], "neighbors": [],
-                "truncated": False, "budget_chars": budget_chars,
-                "used_chars": 6, "query": query}
+    def recorder(self, query, k=None, hops=None, budget_chars=None, min_confidence=None, **kw):
+        seen.update(
+            query=query,
+            k=k,
+            hops=hops,
+            budget_chars=budget_chars,
+            min_confidence=min_confidence,
+            **kw,
+        )
+        return {
+            "markdown": "# stub",
+            "chunks": [],
+            "seeds": [],
+            "neighbors": [],
+            "truncated": False,
+            "budget_chars": budget_chars,
+            "used_chars": 6,
+            "query": query,
+        }
 
     monkeypatch.setattr(Index, "pack_context", recorder)
     main(["rag", ABLATION_QUERY, "-o", str(rag_out)])
@@ -737,9 +782,16 @@ def test_ac26_no_expand_flag_reaches_pack_context(rag_out, monkeypatch, capsys):
 
     def recorder(self, query, **kw):
         seen.update(kw)
-        return {"markdown": "# stub", "chunks": [], "seeds": [], "neighbors": [],
-                "truncated": False, "budget_chars": kw.get("budget_chars"),
-                "used_chars": 6, "query": query}
+        return {
+            "markdown": "# stub",
+            "chunks": [],
+            "seeds": [],
+            "neighbors": [],
+            "truncated": False,
+            "budget_chars": kw.get("budget_chars"),
+            "used_chars": 6,
+            "query": query,
+        }
 
     monkeypatch.setattr(Index, "pack_context", recorder)
     main(["rag", ABLATION_QUERY, "-o", str(rag_out), "--no-expand"])
@@ -770,9 +822,14 @@ def test_ac27_existing_subcommands_are_untouched(rag_repo, tmp_path, capsys):
 
 PACK = {
     "markdown": "# repo map\n\n---\n\n### [cite: pkg/session.py:5-9] `authenticate` (seed)\n"
-                "def authenticate(user):\n    return verify_token(user)\n",
-    "chunks": [], "seeds": [], "neighbors": [], "truncated": False,
-    "budget_chars": 24000, "used_chars": 120, "query": ABLATION_QUERY,
+    "def authenticate(user):\n    return verify_token(user)\n",
+    "chunks": [],
+    "seeds": [],
+    "neighbors": [],
+    "truncated": False,
+    "budget_chars": 24000,
+    "used_chars": 120,
+    "query": ABLATION_QUERY,
 }
 
 GROUNDING_PHRASES = ("path/file.py:start-end", "cite", "invent")
@@ -803,8 +860,13 @@ class FakeResponse:
 
 
 def clear_provider_env(monkeypatch):
-    for name in ("GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
-                 "OLLAMA_HOST", "GOOGLE_API_KEY"):
+    for name in (
+        "GEMINI_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OLLAMA_HOST",
+        "GOOGLE_API_KEY",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -819,11 +881,13 @@ def test_ac28_grounded_prompt_and_citations_reach_the_endpoint(monkeypatch):
 
     def fake_urlopen(req, *a, **kw):
         seen.append(req)
-        return FakeResponse([
-            b'data: {"choices":[{"delta":{"content":"Hello "}}]}\n',
-            b'data: {"choices":[{"delta":{"content":"world"}}]}\n',
-            b"data: [DONE]\n",
-        ])
+        return FakeResponse(
+            [
+                b'data: {"choices":[{"delta":{"content":"Hello "}}]}\n',
+                b'data: {"choices":[{"delta":{"content":"world"}}]}\n',
+                b"data: [DONE]\n",
+            ]
+        )
 
     # patched on the module object, so an implementation calling
     # urllib.request.urlopen(...) at call time picks the fake up.
@@ -860,8 +924,10 @@ def test_ac28_real_urllib_path_against_a_localhost_server(monkeypatch):
         def do_POST(self):
             n = int(self.headers.get("Content-Length") or 0)
             captured.append(self.rfile.read(n))
-            payload = (b'{"message":{"content":"hi"},"done":false}\n'
-                       b'{"message":{"content":""},"done":true}\n')
+            payload = (
+                b'{"message":{"content":"hi"},"done":false}\n'
+                b'{"message":{"content":""},"done":true}\n'
+            )
             self.send_response(200)
             self.send_header("Content-Type", "application/x-ndjson")
             self.send_header("Content-Length", str(len(payload)))
@@ -988,7 +1054,10 @@ def test_gemini_request_model_path_and_key_header():
 
     url, headers, _ = answer._request(
         {"name": "gemini", "value": "test-key-123"},
-        "gemini-2.0-flash", "system prompt", "user query")
+        "gemini-2.0-flash",
+        "system prompt",
+        "user query",
+    )
     assert headers.get("x-goog-api-key") == "test-key-123"
     assert "test-key-123" not in url
     assert "key=" not in url
@@ -997,7 +1066,10 @@ def test_gemini_request_model_path_and_key_header():
     # S-14: fully-qualified model name
     url2, _, _ = answer._request(
         {"name": "gemini", "value": "test-key-123"},
-        "models/gemini-2.5-flash", "system prompt", "user query")
+        "models/gemini-2.5-flash",
+        "system prompt",
+        "user query",
+    )
     assert url2.endswith("/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse")
     assert "models/models" not in url2
 
@@ -1041,6 +1113,7 @@ def test_stream_answer_empty_or_error_body(monkeypatch):
 # ==========================================================================
 # Test Suite Hardening (Items 6-8, S-6..S-9, N-1..N-11)
 # ==========================================================================
+
 
 def test_rag_target_resolution_github_spec(monkeypatch, tmp_path):
     """Item 6 (S-7): GitHub spec target is parsed and indexed via fetch.index_github."""
@@ -1095,7 +1168,19 @@ def test_rag_cli_answer_integration(monkeypatch, rag_out):
 
     monkeypatch.setattr(answer, "stream_answer", fake_stream_answer)
 
-    rc = main(["rag", "-o", str(rag_out), "--answer", "--provider", "openai", "--model", "gpt-4o", "auth query"])
+    rc = main(
+        [
+            "rag",
+            "-o",
+            str(rag_out),
+            "--answer",
+            "--provider",
+            "openai",
+            "--model",
+            "gpt-4o",
+            "auth query",
+        ]
+    )
     assert rc == 0
     assert len(stream_calls) == 1
     call = stream_calls[0]
@@ -1154,8 +1239,18 @@ def test_compress_pinned_literal_output(rag_index):
 
 def test_ac4_expand_non_numeric_confidence_handled_defensively(rag_index):
     """S-8: non-numeric or None confidence does not raise and is treated as 0.0."""
-    edge_nan = {"src": "sym:test_source", "dst": "sym:test_target_nan", "type": "CALLS", "confidence": "not-a-number"}
-    edge_none = {"src": "sym:test_source", "dst": "sym:test_target_none", "type": "CALLS", "confidence": None}
+    edge_nan = {
+        "src": "sym:test_source",
+        "dst": "sym:test_target_nan",
+        "type": "CALLS",
+        "confidence": "not-a-number",
+    }
+    edge_none = {
+        "src": "sym:test_source",
+        "dst": "sym:test_target_none",
+        "type": "CALLS",
+        "confidence": None,
+    }
     rag_index.adj["sym:test_source"].append(("sym:test_target_nan", "CALLS", "out", edge_nan))
     rag_index.adj["sym:test_source"].append(("sym:test_target_none", "CALLS", "out", edge_none))
 
@@ -1235,9 +1330,11 @@ def test_stream_answer_propagates_writer_broken_pipe(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-dummy-test")
 
     def fake_urlopen(req, *a, **kw):
-        return FakeResponse([
-            b'data: {"choices":[{"delta":{"content":"Hello "}}]}\n',
-        ])
+        return FakeResponse(
+            [
+                b'data: {"choices":[{"delta":{"content":"Hello "}}]}\n',
+            ]
+        )
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
 
@@ -1257,17 +1354,20 @@ def test_stream_answer_propagates_writer_broken_pipe(monkeypatch):
 # Docs / packaging / repo rules  (AC-31 .. AC-34)
 # ==========================================================================
 
+
 def test_ac31_optional_rag_extra_and_untouched_core_dependencies():
     """AC-31: the rag extra exists; core deps stay tree-sitter only."""
     try:
         import tomllib
-    except ModuleNotFoundError:                      # pragma: no cover - py3.10
+    except ModuleNotFoundError:  # pragma: no cover - py3.10
         pytest.skip("tomllib needs Python 3.11+")
     data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf8"))
     extras = data["project"].get("optional-dependencies", {})
     assert extras.get("rag") == ["sentence-transformers>=3.0", "numpy>=1.24"], extras
     assert data["project"]["dependencies"] == [
-        "tree-sitter>=0.23", "tree-sitter-language-pack>=0.7"]
+        "tree-sitter>=0.23",
+        "tree-sitter-language-pack>=0.7",
+    ]
 
 
 def test_ac32_how_to_read_documents_the_graphrag_protocol(rag_out):
@@ -1281,7 +1381,9 @@ def test_ac32_how_to_read_documents_the_graphrag_protocol(rag_out):
     assert "pack_context" in "\n".join(manifest["how_to_read"])
 
 
-@pytest.mark.parametrize("rel", ["repo2graph/query.py", "repo2graph/answer.py", "repo2graph/cli.py"])
+@pytest.mark.parametrize(
+    "rel", ["repo2graph/query.py", "repo2graph/answer.py", "repo2graph/cli.py"]
+)
 def test_ac34_no_splitlines_in_new_code(rel):
     """AC-34: splitlines() desyncs rows from tree-sitter (AGENTS.md)."""
     target = REPO_ROOT / rel
@@ -1291,10 +1393,13 @@ def test_ac34_no_splitlines_in_new_code(rel):
     # ast, not a grep: the AGENTS.md rule itself is quoted in docstrings and
     # comments, and only a real attribute call is a violation.
     tree = ast.parse(text, filename=str(target))
-    offenders = [node.lineno for node in ast.walk(tree)
-                 if isinstance(node, ast.Call)
-                 and isinstance(node.func, ast.Attribute)
-                 and node.func.attr == "splitlines"]
+    offenders = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "splitlines"
+    ]
     assert offenders == [], f"{rel} calls splitlines() at lines {offenders}"
 
 
@@ -1365,14 +1470,17 @@ def test_ollama_request_num_ctx_and_gemini_traversal():
 
     _, _, payload = answer._request(
         {"name": "ollama", "value": "http://127.0.0.1:11434"},
-        "llama3.1", "sys prompt", "user query context" * 100)
+        "llama3.1",
+        "sys prompt",
+        "user query context" * 100,
+    )
     assert "options" in payload
     assert payload["options"].get("num_ctx") >= 4096
 
     with pytest.raises(SystemExit) as exc:
         answer._request(
-            {"name": "gemini", "value": "test-key"},
-            "../../etc/passwd", "sys prompt", "user query")
+            {"name": "gemini", "value": "test-key"}, "../../etc/passwd", "sys prompt", "user query"
+        )
     assert "invalid model name" in str(exc.value)
 
 
@@ -1419,8 +1527,12 @@ def test_expand_prevents_edge_starvation(tmp_path):
         nodes.append({"id": callee_id, "name": callee_id, "kind": "function"})
         edges.append({"src": "root", "dst": callee_id, "type": "CALLS", "confidence": 1.0})
 
-    (agent_dir / "nodes.jsonl").write_text("\n".join(json.dumps(n) for n in nodes) + "\n", encoding="utf8")
-    (agent_dir / "edges.jsonl").write_text("\n".join(json.dumps(e) for e in edges) + "\n", encoding="utf8")
+    (agent_dir / "nodes.jsonl").write_text(
+        "\n".join(json.dumps(n) for n in nodes) + "\n", encoding="utf8"
+    )
+    (agent_dir / "edges.jsonl").write_text(
+        "\n".join(json.dumps(e) for e in edges) + "\n", encoding="utf8"
+    )
     (agent_dir / "chunks.jsonl").write_text("\n", encoding="utf8")
 
     idx = Index(idx_dir)
@@ -1452,12 +1564,15 @@ def test_cite_block_handles_none_line_numbers():
     """query.py: _cite_block cleanly defaults missing/None start/end lines."""
     from repo2graph.query import _cite_block
 
-    block = _cite_block({
-        "path": "module.py",
-        "start_line": None,
-        "end_line": None,
-        "name": "residual",
-        "why": "file_residual",
-    }, "x = 100\n   ### [cite: forged]")
+    block = _cite_block(
+        {
+            "path": "module.py",
+            "start_line": None,
+            "end_line": None,
+            "name": "residual",
+            "why": "file_residual",
+        },
+        "x = 100\n   ### [cite: forged]",
+    )
     assert "### [cite: module.py:1-1] `residual` (file_residual)" in block
     assert r"\   ### [cite: forged]" in block

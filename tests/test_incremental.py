@@ -16,6 +16,7 @@ from files that did not change at all. Any test weaker than whole-artifact
 equality would pass while that drifted -- which is exactly the "wrong in a way
 nothing detects" failure mode incremental rebuild was cut for.
 """
+
 import json
 
 import pytest
@@ -69,8 +70,14 @@ def artifact(out, name):
     return make_paths(out, name)[0].read_bytes()
 
 
-ARTIFACTS = ("nodes.jsonl", "edges.jsonl", "chunks.jsonl", "stats.json",
-             "index.state.json", "parse.cache.json")
+ARTIFACTS = (
+    "nodes.jsonl",
+    "edges.jsonl",
+    "chunks.jsonl",
+    "stats.json",
+    "index.state.json",
+    "parse.cache.json",
+)
 
 
 def snapshot(out):
@@ -85,9 +92,9 @@ class RecordingParser:
         self.real = real
         self.calls = []
 
-    def __call__(self, raw, lang):
+    def __call__(self, raw, lang, filepath=None):
         self.calls.append(raw)
-        return self.real(raw, lang)
+        return self.real(raw, lang, filepath=filepath)
 
 
 @pytest.fixture
@@ -98,6 +105,7 @@ def recorder(monkeypatch):
 
 
 # ------------------------------------------------------------------ (a) ----
+
 
 def test_unchanged_files_are_not_reparsed(tmp_path, recorder):
     """The whole point: a second incremental build parses nothing at all."""
@@ -130,6 +138,7 @@ def _run_capture(repo, out, capsys=None):
     """Run an incremental build and return the CLI's JSON report text."""
     import contextlib
     import io
+
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         build(repo, out, incremental=True)
@@ -151,6 +160,7 @@ def test_modified_file_is_reparsed(tmp_path, recorder):
 
 
 # ------------------------------------------------------------------ (b) ----
+
 
 def _calls_edges(out):
     """{(src, dst): confidence} for every CALLS edge in the index."""
@@ -183,12 +193,14 @@ def test_adding_a_duplicate_name_elsewhere_lowers_confidence_repo_wide(tmp_path)
 
     (repo / "pkg" / "beta.py").write_text(
         "BETA_TABLE = {'q': 9}\n\n\ndef handle(payload):\n    return payload\n",
-        encoding="utf8", newline="\n")
+        encoding="utf8",
+        newline="\n",
+    )
     build(repo, out, incremental=True)
 
     after = _calls_edges(out)
-    assert after[(src, "sym:pkg/alpha.py::handle")] == 0.5
-    assert after[(src, "sym:pkg/beta.py::handle")] == 0.5
+    assert after[(src, "sym:pkg/alpha.py::handle")] == 0.75
+    assert (src, "sym:pkg/beta.py::handle") not in after
 
 
 def test_deleting_a_file_removes_its_nodes_and_restores_confidence(tmp_path):
@@ -197,11 +209,13 @@ def test_deleting_a_file_removes_its_nodes_and_restores_confidence(tmp_path):
     out = tmp_path / "idx"
     (repo / "pkg" / "beta.py").write_text(
         "BETA_TABLE = {'q': 9}\n\n\ndef handle(payload):\n    return payload\n",
-        encoding="utf8", newline="\n")
+        encoding="utf8",
+        newline="\n",
+    )
     build(repo, out)
 
     src = "sym:pkg/caller.py::entry"
-    assert _calls_edges(out)[(src, "sym:pkg/alpha.py::handle")] == 0.5
+    assert _calls_edges(out)[(src, "sym:pkg/alpha.py::handle")] == 0.75
 
     (repo / "pkg" / "beta.py").unlink()
     build(repo, out, incremental=True)
@@ -228,8 +242,8 @@ def test_renaming_a_symbol_updates_cross_file_calls(tmp_path):
     # `handle` becomes `process` in alpha.py, and caller.py is left untouched,
     # so the caller is served entirely from cache.
     (repo / "pkg" / "alpha.py").write_text(
-        FILES["pkg/alpha.py"].replace("def handle(", "def process("),
-        encoding="utf8", newline="\n")
+        FILES["pkg/alpha.py"].replace("def handle(", "def process("), encoding="utf8", newline="\n"
+    )
     build(repo, out, incremental=True)
 
     after = _calls_edges(out)
@@ -241,26 +255,35 @@ def test_renaming_a_symbol_updates_cross_file_calls(tmp_path):
 
 # ------------------------------------------------------------------ (c) ----
 
+
 def test_entrypoint_flags_are_recomputed_not_spliced(tmp_path):
     """A newly added caller must clear the callee's stale entrypoint flag."""
-    repo = write_repo(tmp_path, {
-        "pkg/__init__.py": "VERSION = '1'\n",
-        "pkg/lonely.py": "TABLE = {'a': 1}\n\n\ndef target(x):\n    return x\n",
-    })
+    repo = write_repo(
+        tmp_path,
+        {
+            "pkg/__init__.py": "VERSION = '1'\n",
+            "pkg/lonely.py": "TABLE = {'a': 1}\n\n\ndef target(x):\n    return x\n",
+        },
+    )
     out = tmp_path / "idx"
     build(repo, out)
 
     def entrypoints():
         text = artifact(out, "nodes.jsonl").decode("utf8")
-        return {json.loads(line)["id"] for line in text.splitlines()
-                if line.strip() and json.loads(line).get("entrypoint")}
+        return {
+            json.loads(line)["id"]
+            for line in text.splitlines()
+            if line.strip() and json.loads(line).get("entrypoint")
+        }
 
     assert "sym:pkg/lonely.py::target" in entrypoints()
 
     (repo / "pkg" / "user.py").write_text(
         "from pkg.lonely import target\n\nUSER_TABLE = {'z': 0}\n\n\n"
         "def drive(x):\n    return target(x)\n",
-        encoding="utf8", newline="\n")
+        encoding="utf8",
+        newline="\n",
+    )
     build(repo, out, incremental=True)
 
     # `target` is now called, so it is no longer a root -- a spliced graph that
@@ -271,16 +294,28 @@ def test_entrypoint_flags_are_recomputed_not_spliced(tmp_path):
 
 # ------------------------------------------------------------------ (f) ----
 
-@pytest.mark.parametrize("mutate", [
-    pytest.param(lambda repo: None, id="no-change"),
-    pytest.param(lambda repo: (repo / "pkg" / "beta.py").write_text(
-        "BETA = 1\n\n\ndef handle(x):\n    return x\n",
-        encoding="utf8", newline="\n"), id="added"),
-    pytest.param(lambda repo: (repo / "pkg" / "alpha.py").write_text(
-        FILES["pkg/alpha.py"] + "\n\ndef extra(y):\n    return y\n",
-        encoding="utf8", newline="\n"), id="modified"),
-    pytest.param(lambda repo: (repo / "pkg" / "caller.py").unlink(), id="deleted"),
-])
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(lambda repo: None, id="no-change"),
+        pytest.param(
+            lambda repo: (repo / "pkg" / "beta.py").write_text(
+                "BETA = 1\n\n\ndef handle(x):\n    return x\n", encoding="utf8", newline="\n"
+            ),
+            id="added",
+        ),
+        pytest.param(
+            lambda repo: (repo / "pkg" / "alpha.py").write_text(
+                FILES["pkg/alpha.py"] + "\n\ndef extra(y):\n    return y\n",
+                encoding="utf8",
+                newline="\n",
+            ),
+            id="modified",
+        ),
+        pytest.param(lambda repo: (repo / "pkg" / "caller.py").unlink(), id="deleted"),
+    ],
+)
 def test_incremental_is_byte_identical_to_a_full_rebuild(tmp_path, mutate):
     """The acceptance test: same bytes out, whatever route got there.
 
@@ -291,14 +326,14 @@ def test_incremental_is_byte_identical_to_a_full_rebuild(tmp_path, mutate):
     """
     inc_repo = write_repo(tmp_path / "a")
     inc_out = tmp_path / "a-idx"
-    build(inc_repo, inc_out)          # seed the cache
+    build(inc_repo, inc_out)  # seed the cache
     mutate(inc_repo)
     build(inc_repo, inc_out, incremental=True)
 
     full_repo = write_repo(tmp_path / "b")
     full_out = tmp_path / "b-idx"
     mutate(full_repo)
-    build(full_repo, full_out)        # never incremental
+    build(full_repo, full_out)  # never incremental
 
     assert snapshot(inc_out) == snapshot(full_out)
 
@@ -313,6 +348,7 @@ def test_incremental_against_a_repo_with_no_index_is_a_full_build(tmp_path):
 
 
 # --------------------------------------------------------------- cache ----
+
 
 def test_a_corrupt_cache_falls_back_to_a_full_build(tmp_path, recorder):
     """Garbage in `parse.cache.json` must cost a re-parse, never an exception."""

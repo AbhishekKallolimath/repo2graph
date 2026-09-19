@@ -36,7 +36,20 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--jobs` | `0` (auto) | Parallel workers. Auto means one per core, up to 8. |
 | `--viz-nodes` | `300` | Node cap in `graph.html`. `0` draws an empty graph; `all` draws every node. |
 | `--no-chunks` | off | Skip the retrieval chunks entirely. |
+| `--max-file-mb` | `1.5` | Files larger than this are skipped (or chunked). Minimum is 0.1 MB. |
+| `--include-vendor` | off | Index files inside `vendor/` directories (skipped by default). |
+| `--exclude-dir` | none | Additional directory name to skip. Repeatable (e.g. `--exclude-dir generated --exclude-dir tmp`). |
+| `--chunk-large-files` | off | Instead of skipping, split files larger than `--max-file-mb` into parseable chunks. |
 | `--incremental` | off | Reuse parse results for files whose content hash is unchanged. |
+
+**Examples:**
+```bash
+# Include vendor directories and parse huge files in chunks (useful for monorepos)
+repo2graph build /path/to/project --include-vendor --chunk-large-files
+
+# Skip 'generated' and 'tmp' directories, and adjust file limit to 5 MB
+repo2graph build /path/to/project --exclude-dir generated --exclude-dir tmp --max-file-mb 5.0
+```
 
 Output files are written atomically through sibling temp files (`os.replace`), so
 a crash or a full disk never leaves a half-written index behind.

@@ -5,6 +5,7 @@ The `mcp` SDK is an optional extra and is deliberately never imported here:
 AC-26..AC-31 need no SDK at all, and AC-33 blocks the import on purpose to
 assert the error message a user without the extra actually sees.
 """
+
 import json
 import subprocess
 import sys
@@ -22,6 +23,7 @@ def _has_mcp():
     try:
         import mcp  # noqa: F401
         from mcp.server import Server
+
         return hasattr(Server, "list_tools") and hasattr(Server, "call_tool")
     except Exception:
         return False
@@ -32,17 +34,20 @@ HAS_REAL_MCP = _has_mcp()
 
 def mcp_module():
     from repo2graph import mcp as mcp_mod
+
     return mcp_mod
 
 
 def tokens(text: str) -> int:
     from repo2graph.query import count_tokens
+
     return count_tokens(text)
 
 
 # ==========================================================================
 # AC-26 -- repo_map
 # ==========================================================================
+
 
 def test_ac26_repo_map_is_exactly_map_prepend(mini_index):
     """AC-26: no reformatting, no truncation, no query argument."""
@@ -56,8 +61,8 @@ def test_ac26_repo_map_is_exactly_map_prepend(mini_index):
 # AC-27 / AC-28 -- repo_search and its hard budget ceiling
 # ==========================================================================
 
-def test_ac27_repo_search_returns_cited_markdown_within_the_default_budget(
-        big_index):
+
+def test_ac27_repo_search_returns_cited_markdown_within_the_default_budget(big_index):
     """AC-27: at least one `### [cite: path:start-end]` header, and the result
     measures no more than MCP_BUDGET_TOKENS.
 
@@ -75,7 +80,8 @@ def test_ac27_repo_search_returns_cited_markdown_within_the_default_budget(
 
     unbounded = idx.pack_context(MINI_QUERY, budget_chars=0)
     assert tokens(unbounded["markdown"]) > mcp.MCP_BUDGET_TOKENS, (
-        "the fixture no longer exceeds the default budget")
+        "the fixture no longer exceeds the default budget"
+    )
 
 
 @pytest.mark.parametrize("budget", [10**9, 10**6, 100000])
@@ -88,12 +94,12 @@ def test_ac28_an_absurd_budget_is_clamped_to_the_ceiling(big_index, budget):
 
     unbounded = idx.pack_context(MINI_QUERY, k=20, budget_chars=0)
     assert tokens(unbounded["markdown"]) > mcp.MCP_MAX_BUDGET_TOKENS, (
-        "the fixture no longer exceeds the ceiling")
+        "the fixture no longer exceeds the ceiling"
+    )
 
 
-@pytest.mark.parametrize("budget", [0, -5, -10**9])
-def test_ac28_a_zero_or_negative_budget_is_clamped_to_the_floor(big_index,
-                                                                budget):
+@pytest.mark.parametrize("budget", [0, -5, -(10**9)])
+def test_ac28_a_zero_or_negative_budget_is_clamped_to_the_floor(big_index, budget):
     """AC-28: no crash, no traceback, and still a bounded string."""
     mcp = mcp_module()
     idx = Index(big_index)
@@ -114,7 +120,7 @@ def test_ac28_truncation_happens_on_a_line_boundary(big_index):
     idx = Index(big_index)
     out = mcp.tool_repo_search(idx, MINI_QUERY, k=20, budget_tokens=10**9)
     full = idx.pack_context(MINI_QUERY, k=20, budget_chars=0)["markdown"]
-    full_lines = set(full.split("\n"))    # never splitlines(): see AGENTS.md
+    full_lines = set(full.split("\n"))  # never splitlines(): see AGENTS.md
     body = out.split("\n")
     for line in body[:-1]:
         assert line in full_lines, line[:120]
@@ -123,6 +129,7 @@ def test_ac28_truncation_happens_on_a_line_boundary(big_index):
 # ==========================================================================
 # AC-29 -- secrets never leave through an agent tool
 # ==========================================================================
+
 
 def test_ac29_repo_search_never_returns_a_secret_chunk(mini_index):
     """AC-29: the fixture's `.env` chunk is BM25 rank 1 for SECRET_QUERY and
@@ -151,8 +158,7 @@ def test_ac29_repo_map_and_neighbours_also_exclude_secrets(mini_index):
     """AC-29 (b): the other two tools must not become the leak instead."""
     mcp = mcp_module()
     idx = Index(mini_index)
-    for text in (mcp.tool_repo_map(idx),
-                 mcp.tool_repo_neighbours(idx, "file:.env")):
+    for text in (mcp.tool_repo_map(idx), mcp.tool_repo_neighbours(idx, "file:.env")):
         assert "abc123deadbeef" not in text
         assert "zzz999notreal" not in text
 
@@ -161,15 +167,16 @@ def test_ac29_repo_map_and_neighbours_also_exclude_secrets(mini_index):
 # AC-30 -- repo_neighbours
 # ==========================================================================
 
-def test_ac30_neighbours_names_a_reachable_node_its_edge_and_direction(
-        mini_index):
+
+def test_ac30_neighbours_names_a_reachable_node_its_edge_and_direction(mini_index):
     """AC-30: route_request -> audit_event over CALLS out is in the fixture
     graph, so it must be named, with its edge type and its direction."""
     mcp = mcp_module()
     idx = Index(mini_index)
 
-    expected = {(dst, etype, direction)
-                for dst, etype, direction, _src in idx.expand([SYM_ROUTE], hops=1)}
+    expected = {
+        (dst, etype, direction) for dst, etype, direction, _src in idx.expand([SYM_ROUTE], hops=1)
+    }
     assert (SYM_AUDIT, "CALLS", "out") in expected, expected
 
     out = mcp.tool_repo_neighbours(idx, SYM_ROUTE)
@@ -202,6 +209,7 @@ def test_ac30_neighbours_respects_its_limit(mini_index):
 # AC-31 -- tool descriptions are context an agent pays for every session
 # ==========================================================================
 
+
 def test_ac31_tool_descriptions_stay_under_budget():
     """AC-31: the published tool set, capped under 2500 characters (~500 tokens).
 
@@ -212,9 +220,13 @@ def test_ac31_tool_descriptions_stay_under_budget():
     and safety disclosures.
     """
     mcp = mcp_module()
-    assert set(mcp.TOOL_DESCRIPTIONS) == {"repo_map", "repo_search",
-                                          "repo_neighbours", "repo_cache_stats",
-                                          "repo_build_status"}
+    assert set(mcp.TOOL_DESCRIPTIONS) == {
+        "repo_map",
+        "repo_search",
+        "repo_neighbours",
+        "repo_cache_stats",
+        "repo_build_status",
+    }
     for name, text in mcp.TOOL_DESCRIPTIONS.items():
         assert isinstance(text, str) and text.strip(), name
         assert 100 <= len(text) <= 800, (
@@ -301,7 +313,9 @@ def test_tool_schemas_have_informative_parameter_descriptions():
         for param_name, param_meta in properties.items():
             assert "type" in param_meta, f"{name}.{param_name} missing 'type'"
             desc = param_meta.get("description", "")
-            assert isinstance(desc, str) and desc.strip(), f"{name}.{param_name} missing description"
+            assert isinstance(desc, str) and desc.strip(), (
+                f"{name}.{param_name} missing description"
+            )
             assert len(desc) >= 20, (
                 f"{name}.{param_name} description too short ({len(desc)} chars): {desc!r}"
             )
@@ -336,7 +350,9 @@ def test_list_tools_returns_quality_annotations():
         assert tool.name in mcp.TOOL_DESCRIPTIONS
         assert tool.description == mcp.TOOL_DESCRIPTIONS[tool.name]
         assert tool.inputSchema == mcp.TOOL_SCHEMAS[tool.name]
-        assert getattr(tool, "annotations", None) is not None, f"Tool {tool.name} missing annotations"
+        assert getattr(tool, "annotations", None) is not None, (
+            f"Tool {tool.name} missing annotations"
+        )
         ann = tool.annotations
         read_only = getattr(ann, "readOnlyHint", None) or (
             ann.get("readOnlyHint") if isinstance(ann, dict) else None
@@ -348,13 +364,14 @@ def test_list_tools_returns_quality_annotations():
 # AC-32 / AC-33 -- packaging and the console entry point
 # ==========================================================================
 
+
 def load_pyproject() -> dict:
     # tomllib is stdlib from 3.11; requires-python is >=3.10 and CI runs 3.10,
     # so guard it the way tests/test_rag.py already does rather than taking a
     # dependency on tomli just to read our own metadata.
     try:
         import tomllib
-    except ModuleNotFoundError:                      # pragma: no cover - py3.10
+    except ModuleNotFoundError:  # pragma: no cover - py3.10
         pytest.skip("tomllib needs Python 3.11+")
     with open(PYPROJECT, "rb") as fh:
         return tomllib.load(fh)
@@ -385,11 +402,12 @@ def test_ac32_runtime_dependencies_are_still_only_tree_sitter():
     """AC-32: a bare `pip install repo2graph` brings in nothing new."""
     data = load_pyproject()
     assert requirement_names(data["project"]["dependencies"]) == {
-        "tree-sitter", "tree-sitter-language-pack"}
+        "tree-sitter",
+        "tree-sitter-language-pack",
+    }
 
 
-def test_ac33_entry_point_without_the_sdk_explains_the_extra(mini_index,
-                                                             monkeypatch):
+def test_ac33_entry_point_without_the_sdk_explains_the_extra(mini_index, monkeypatch):
     """AC-33: a user without the extra gets an actionable message and a
     non-zero exit, never an ImportError traceback."""
     mcp = mcp_module()
@@ -401,8 +419,7 @@ def test_ac33_entry_point_without_the_sdk_explains_the_extra(mini_index,
     assert exc.value.code not in (0, None)
 
 
-def test_ac33_serve_without_the_sdk_raises_the_same_systemexit(mini_index,
-                                                               monkeypatch):
+def test_ac33_serve_without_the_sdk_raises_the_same_systemexit(mini_index, monkeypatch):
     """AC-33 (b): the guard lives at the import site, not only in main()."""
     mcp = mcp_module()
     monkeypatch.setitem(sys.modules, "mcp", None)
@@ -424,6 +441,7 @@ def test_ac33_open_index_caches_one_index_per_directory(mini_index):
 # AC-34 -- live stdio server round-trip
 # ==========================================================================
 
+
 @pytest.mark.skipif(not HAS_REAL_MCP, reason="needs repo2graph[mcp] with 1.x Server API")
 def test_ac34_stdio_server_roundtrip(mini_index):
     """AC-34: automated round-trip against the live stdio server."""
@@ -442,16 +460,18 @@ def test_ac34_stdio_server_roundtrip(mini_index):
         return json.loads(proc.stdout.readline())
 
     try:
-        init_resp = send({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "clientInfo": {"name": "test", "version": "1.0"},
-                "capabilities": {},
-            },
-        })
+        init_resp = send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "clientInfo": {"name": "test", "version": "1.0"},
+                    "capabilities": {},
+                },
+            }
+        )
         assert "result" in init_resp
         assert init_resp["result"]["serverInfo"]["name"] == "repo2graph"
 
@@ -460,54 +480,62 @@ def test_ac34_stdio_server_roundtrip(mini_index):
         )
         proc.stdin.flush()
 
-        tools_resp = send({
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/list",
-            "params": {},
-        })
+        tools_resp = send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list",
+                "params": {},
+            }
+        )
         assert "result" in tools_resp
         tool_names = {t["name"] for t in tools_resp["result"]["tools"]}
         assert "repo_map" in tool_names
         assert "repo_search" in tool_names
         assert "repo_neighbours" in tool_names
 
-        map_resp = send({
-            "jsonrpc": "2.0",
-            "id": 3,
-            "method": "tools/call",
-            "params": {
-                "name": "repo_map",
-                "arguments": {},
-            },
-        })
+        map_resp = send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "repo_map",
+                    "arguments": {},
+                },
+            }
+        )
         assert "result" in map_resp
         map_text = map_resp["result"]["content"][0]["text"]
         assert map_text.strip()
         assert "# Repo map:" in map_text
 
-        search_resp = send({
-            "jsonrpc": "2.0",
-            "id": 4,
-            "method": "tools/call",
-            "params": {
-                "name": "repo_search",
-                "arguments": {"query": MINI_QUERY},
-            },
-        })
+        search_resp = send(
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {
+                    "name": "repo_search",
+                    "arguments": {"query": MINI_QUERY},
+                },
+            }
+        )
         assert "result" in search_resp
         search_text = search_resp["result"]["content"][0]["text"]
         assert "[cite:" in search_text
 
-        neigh_resp = send({
-            "jsonrpc": "2.0",
-            "id": 5,
-            "method": "tools/call",
-            "params": {
-                "name": "repo_neighbours",
-                "arguments": {"node_id": SYM_ROUTE},
-            },
-        })
+        neigh_resp = send(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {
+                    "name": "repo_neighbours",
+                    "arguments": {"node_id": SYM_ROUTE},
+                },
+            }
+        )
         assert "result" in neigh_resp
         neigh_text = neigh_resp["result"]["content"][0]["text"]
         assert "audit_event" in neigh_text
@@ -527,6 +555,7 @@ def test_ac34_stdio_server_roundtrip(mini_index):
 # time was not. These assert the value that reaches the engine, not the value
 # that comes back, because a clamp that only trims the answer is not a clamp.
 
+
 @pytest.mark.parametrize("hops", [10**9, 10**12, 5, "99999", None, -3])
 def test_r5_neighbours_hops_never_exceeds_the_ceiling(mini_index, hops):
     """R-5 (a): whatever a model writes into `hops`, expand() sees 0..MAX."""
@@ -534,8 +563,7 @@ def test_r5_neighbours_hops_never_exceeds_the_ceiling(mini_index, hops):
     idx = Index(mini_index)
     seen = []
     real = idx.expand
-    idx.expand = lambda seeds, **kw: (seen.append(kw.get("hops")),
-                                      real(seeds, **kw))[1]
+    idx.expand = lambda seeds, **kw: (seen.append(kw.get("hops")), real(seeds, **kw))[1]
 
     out = mcp.tool_repo_neighbours(idx, SYM_ROUTE, hops=hops)
     assert isinstance(out, str) and out.strip()
@@ -573,8 +601,7 @@ def test_r5_dispatch_clamps_too(mini_index):
         return real(query, **kw)
 
     idx.pack_context = spy
-    mcp.dispatch(idx, "repo_search",
-                 {"query": MINI_QUERY, "k": 10**6, "hops": 10**6})
+    mcp.dispatch(idx, "repo_search", {"query": MINI_QUERY, "k": 10**6, "hops": 10**6})
     assert seen["k"] == mcp.MCP_MAX_K
     assert seen["hops"] == mcp.MCP_MAX_HOPS
 
@@ -608,10 +635,12 @@ def test_r5_sane_arguments_are_left_alone(mini_index):
 # synthetic frontier: a clamp asserted against four real neighbours would pass
 # with no clamp at all.
 
+
 def _flood(idx, n=5000):
     """Make expand() yield more neighbours than any ceiling allows."""
     idx.expand = lambda seeds, **kw: [
-        (f"sym:pkg/flood.py::n{i}", "CALLS", "out", seeds[0]) for i in range(n)]
+        (f"sym:pkg/flood.py::n{i}", "CALLS", "out", seeds[0]) for i in range(n)
+    ]
 
 
 def _rows(text):
@@ -643,8 +672,7 @@ def test_r7_dispatch_inherits_the_limit_clamp(mini_index):
     mcp = mcp_module()
     idx = Index(mini_index)
     _flood(idx)
-    out = mcp.dispatch(idx, "repo_neighbours",
-                       {"node_id": SYM_ROUTE, "limit": 10**6})
+    out = mcp.dispatch(idx, "repo_neighbours", {"node_id": SYM_ROUTE, "limit": 10**6})
     assert len(_rows(out)) <= mcp.MCP_MAX_NEIGHBOURS, len(_rows(out))
 
 
@@ -671,8 +699,8 @@ def test_r7_a_sane_limit_is_left_alone(mini_index):
 # package. The fake SDK below is what makes this testable without installing
 # any SDK at all: the suite still never imports the real `mcp`.
 
-def _fake_sdk(monkeypatch, *, decorators: bool, version="2.2.0",
-              with_server_module=True):
+
+def _fake_sdk(monkeypatch, *, decorators: bool, version="2.2.0", with_server_module=True):
     """Install a minimal stand-in for the `mcp` package in sys.modules.
 
     `decorators=False` reproduces the 2.x shape: importable, with a `Server`
@@ -686,6 +714,7 @@ def _fake_sdk(monkeypatch, *, decorators: bool, version="2.2.0",
     def _noop_decorator(self):
         def register(fn):
             return fn
+
         return register
 
     class Server:
@@ -712,9 +741,11 @@ def _fake_sdk(monkeypatch, *, decorators: bool, version="2.2.0",
         server_mod.Server = Server
         stdio_mod = _types.ModuleType("mcp.server.stdio")
         stdio_mod.stdio_server = None
+
         class FakeTool:
-            def __init__(self, name=None, description=None, inputSchema=None,
-                         annotations=None, **kw):
+            def __init__(
+                self, name=None, description=None, inputSchema=None, annotations=None, **kw
+            ):
                 self.name = name
                 self.description = description
                 self.inputSchema = inputSchema
@@ -727,9 +758,9 @@ def _fake_sdk(monkeypatch, *, decorators: bool, version="2.2.0",
         mcp_pkg.server = server_mod
         server_mod.stdio = stdio_mod
         mcp_pkg.types = types_mod
-        modules.update({"mcp.server": server_mod,
-                        "mcp.server.stdio": stdio_mod,
-                        "mcp.types": types_mod})
+        modules.update(
+            {"mcp.server": server_mod, "mcp.server.stdio": stdio_mod, "mcp.types": types_mod}
+        )
     else:
         monkeypatch.setitem(sys.modules, "mcp.server", None)
     for name, module in modules.items():
@@ -737,39 +768,14 @@ def _fake_sdk(monkeypatch, *, decorators: bool, version="2.2.0",
     return mcp_pkg
 
 
-def test_r8_an_sdk_without_the_decorator_api_is_an_instruction(mini_index,
-                                                               monkeypatch):
-    """R-8 (a): the exact shape that shipped broken -- serve() must refuse,
-    naming the installed version and what to install, not raise
-    AttributeError from inside the SDK wiring."""
-    mcp = mcp_module()
-    _fake_sdk(monkeypatch, decorators=False, version="2.2.0")
-    with pytest.raises(SystemExit) as exc:
-        mcp.serve(Path(mini_index))
-    message = str(exc.value)
-    assert "2.2.0" in message, message
-    assert "mcp>=1.0,<2" in message, message
-    assert exc.value.code not in (0, None)
-
-
-def test_r8_the_entry_point_refuses_the_same_way(mini_index, monkeypatch):
-    """R-8 (b): via the console script, which is how a user meets it."""
-    mcp = mcp_module()
-    _fake_sdk(monkeypatch, decorators=False, version="2.2.0")
-    with pytest.raises(SystemExit) as exc:
-        mcp.main(["--out", str(mini_index)])
-    assert "mcp>=1.0,<2" in str(exc.value), str(exc.value)
-
-
-def test_r8_a_broken_server_module_is_also_an_instruction(mini_index,
-                                                          monkeypatch):
+def test_r8_a_broken_server_module_is_also_an_instruction(mini_index, monkeypatch):
     """R-8 (c): the other way a future SDK can move -- `mcp` imports but
     `mcp.server` does not."""
     mcp = mcp_module()
     _fake_sdk(monkeypatch, decorators=False, with_server_module=False)
     with pytest.raises(SystemExit) as exc:
         mcp._require_sdk()
-    assert "mcp>=1.0,<2" in str(exc.value), str(exc.value)
+    assert "mcp>=1.0,<3.0" in str(exc.value), str(exc.value)
 
 
 def test_r8_a_supported_sdk_passes_the_guard(monkeypatch):
@@ -780,8 +786,7 @@ def test_r8_a_supported_sdk_passes_the_guard(monkeypatch):
     assert mcp._require_sdk() is fake
 
 
-def test_r8_the_missing_sdk_message_is_still_the_missing_sdk_message(
-        mini_index, monkeypatch):
+def test_r8_the_missing_sdk_message_is_still_the_missing_sdk_message(mini_index, monkeypatch):
     """R-8 (e): absent and unusable are different problems with different
     instructions; the new branch must not swallow AC-33's."""
     mcp = mcp_module()
@@ -793,19 +798,19 @@ def test_r8_the_missing_sdk_message_is_still_the_missing_sdk_message(
 
 
 def test_r8_the_extra_is_bounded_below_the_unsupported_major():
-    """R-8 (f): the declared extra and the guard's advice are one string. An
-    unbounded `mcp>=1.0` resolves to 2.x and is what caused this."""
+    """R-8 (f): the declared extra and the guard's advice are one string."""
     mcp = mcp_module()
     spec = load_pyproject()["project"]["optional-dependencies"]["mcp"]
     assert spec == [mcp.SDK_SPEC], (spec, mcp.SDK_SPEC)
-    assert "<2" in mcp.SDK_SPEC
+    assert "<3.0" in mcp.SDK_SPEC
 
 
 # ==========================================================================
 # R-10 -- a floor-clamped budget must not hand an agent an empty string
 # ==========================================================================
 
-@pytest.mark.parametrize("budget", [0, -5, -10**9, 1])
+
+@pytest.mark.parametrize("budget", [0, -5, -(10**9), 1])
 def test_r10_a_floor_clamped_budget_explains_itself(big_index, budget):
     """R-10 (a): AC-28 only requires "no crash"; an empty tool result reads to
     an agent exactly like "no such code", so say which it was."""
@@ -832,14 +837,14 @@ def test_r10_dispatch_inherits_the_note(big_index):
     """R-10 (c): the note lives in the handler, so the JSON route gets it too."""
     mcp = mcp_module()
     idx = Index(big_index)
-    out = mcp.dispatch(idx, "repo_search",
-                       {"query": MINI_QUERY, "budget_tokens": -5})
+    out = mcp.dispatch(idx, "repo_search", {"query": MINI_QUERY, "budget_tokens": -5})
     assert out.strip() and "budget_tokens" in out
 
 
 # ==========================================================================
 # Index preflight and neighbours truncation
 # ==========================================================================
+
 
 def test_open_index_missing_directory_raises_clean_systemexit(tmp_path):
     mcp = mcp_module()
@@ -887,10 +892,10 @@ def test_neighbours_no_truncation_when_within_limit(mini_index):
     assert "truncated" not in out
 
 
-
 # ==========================================================================
 # Auto-build: a server pointed at a repo indexes it rather than erroring out
 # ==========================================================================
+
 
 def test_auto_build_indexes_a_repo_that_has_no_index_yet(mini_repo, tmp_path):
     """The onboarding fix: point it at a repo, get a working Index, no error."""
@@ -946,8 +951,7 @@ def test_an_existing_index_is_never_rebuilt(mini_index, mini_repo, monkeypatch):
     assert mcp.open_index(mini_index, repo=mini_repo).nodes
 
 
-def test_serve_does_not_build_during_the_handshake(mini_repo, tmp_path,
-                                                   monkeypatch):
+def test_serve_does_not_build_during_the_handshake(mini_repo, tmp_path, monkeypatch):
     """The build belongs on the first tool call, not before `initialize`.
 
     Blocking the handshake for the minute a large repo takes to parse is what
@@ -959,12 +963,13 @@ def test_serve_does_not_build_during_the_handshake(mini_repo, tmp_path,
     mcp = mcp_module()
     mcp._INDEXES.clear()
     _fake_sdk(monkeypatch, decorators=True, version="1.9.0")
-    monkeypatch.setattr(mcp, "_build_index",
-                        lambda *a, **k: pytest.fail("built during the handshake"))
+    monkeypatch.setattr(
+        mcp, "_build_index", lambda *a, **k: pytest.fail("built during the handshake")
+    )
     monkeypatch.setattr(asyncio, "run", lambda coro: coro.close())
 
     out = tmp_path / "deferred_idx"
-    mcp.serve(out, repo=mini_repo)      # must not raise, must not build
+    mcp.serve(out, repo=mini_repo)  # must not raise, must not build
     assert not out.exists()
 
 
@@ -979,6 +984,7 @@ def test_serve_without_a_repo_still_preflights(monkeypatch, tmp_path):
 
 
 # ----------------------------------------------------------- resolve_paths --
+
 
 def test_resolve_paths_positional_repo_defaults_the_index_inside_it(tmp_path):
     mcp = mcp_module()
@@ -1005,8 +1011,7 @@ def test_resolve_paths_refuses_to_guess_from_an_unconventional_out(tmp_path):
     assert repo is None, "an out path that is not named .r2g is not a repo hint"
 
 
-def test_resolve_paths_an_explicit_repo_that_is_not_a_directory_is_an_error(
-        tmp_path):
+def test_resolve_paths_an_explicit_repo_that_is_not_a_directory_is_an_error(tmp_path):
     mcp = mcp_module()
     with pytest.raises(SystemExit) as exc:
         mcp.resolve_paths(repo=tmp_path / "not-there")
@@ -1024,9 +1029,9 @@ def test_no_auto_build_flag_turns_the_repo_off(mini_repo, monkeypatch):
     """--no-auto-build must reach serve() as repo=None."""
     mcp = mcp_module()
     seen = {}
-    monkeypatch.setattr(mcp, "serve",
-                        lambda out, repo=None, **kw: seen.update(
-                            out=out, repo=repo, **kw))
+    monkeypatch.setattr(
+        mcp, "serve", lambda out, repo=None, **kw: seen.update(out=out, repo=repo, **kw)
+    )
 
     mcp.main([str(mini_repo), "--no-auto-build"])
     assert seen["repo"] is None
@@ -1046,8 +1051,11 @@ def test_stdio_roundtrip_against_a_repo_with_no_index(mini_repo):
     """
     proc = subprocess.Popen(
         [sys.executable, "-m", "repo2graph.mcp", str(mini_repo)],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, encoding="utf8",
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf8",
     )
 
     def send(req):
@@ -1056,24 +1064,34 @@ def test_stdio_roundtrip_against_a_repo_with_no_index(mini_repo):
         return json.loads(proc.stdout.readline())
 
     try:
-        init_resp = send({
-            "jsonrpc": "2.0", "id": 1, "method": "initialize",
-            "params": {"protocolVersion": "2024-11-05",
-                       "clientInfo": {"name": "test", "version": "1.0"},
-                       "capabilities": {}},
-        })
+        init_resp = send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "clientInfo": {"name": "test", "version": "1.0"},
+                    "capabilities": {},
+                },
+            }
+        )
         assert "result" in init_resp, init_resp
-        assert not (mini_repo / ".r2g").exists(), \
-            "the handshake must not have waited on a build"
+        assert not (mini_repo / ".r2g").exists(), "the handshake must not have waited on a build"
 
-        proc.stdin.write(json.dumps(
-            {"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
+        proc.stdin.write(
+            json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n"
+        )
         proc.stdin.flush()
 
-        search_resp = send({
-            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-            "params": {"name": "repo_search", "arguments": {"query": MINI_QUERY}},
-        })
+        search_resp = send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "repo_search", "arguments": {"query": MINI_QUERY}},
+            }
+        )
         assert "result" in search_resp, search_resp
         assert "[cite:" in search_resp["result"]["content"][0]["text"]
 
@@ -1097,6 +1115,7 @@ def test_stdio_roundtrip_against_a_repo_with_no_index(mini_repo):
 # These assert the redirect at both call sites, because the symptom is a
 # silent stall on one platform rather than a failure anywhere.
 
+
 @pytest.mark.parametrize("call", ["ls_files", "log"])
 def test_git_subprocesses_never_inherit_stdin(monkeypatch, tmp_path, call):
     import subprocess as sp
@@ -1110,16 +1129,18 @@ def test_git_subprocesses_never_inherit_stdin(monkeypatch, tmp_path, call):
 
     if call == "ls_files":
         from repo2graph import parse as mod
+
         target, run = mod, lambda: mod._git_files(tmp_path)
     else:
         from repo2graph import graph as mod
-        target, run = mod, lambda: mod.add_cochange(mod.Graph(tmp_path, "t"),
-                                                    tmp_path, 10, set())
+
+        target, run = mod, lambda: mod.add_cochange(mod.Graph(tmp_path, "t"), tmp_path, 10, set())
     monkeypatch.setattr(target.subprocess, "run", spy)
-    run()   # the OSError is caught by the caller; we only want the kwargs
+    run()  # the OSError is caught by the caller; we only want the kwargs
 
     assert seen["kwargs"].get("stdin") is sp.DEVNULL, (
-        f"{call} would inherit the MCP transport on stdin: {seen['kwargs']}")
+        f"{call} would inherit the MCP transport on stdin: {seen['kwargs']}"
+    )
 
 
 def test_auto_build_never_spawns_a_process_pool(monkeypatch, tmp_path):
@@ -1144,13 +1165,13 @@ def test_auto_build_never_spawns_a_process_pool(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError):
         mcp._build_index(tmp_path, tmp_path / "idx")
 
-    assert seen.get("jobs") == 1, (
-        f"auto-build must stay single-process inside the server: {seen}")
+    assert seen.get("jobs") == 1, f"auto-build must stay single-process inside the server: {seen}"
 
 
 # ==========================================================================
 # serverInfo -- what the server says it is
 # ==========================================================================
+
 
 def test_serve_reports_its_own_version_not_the_sdks(mini_index, monkeypatch):
     """`Server(name)` without `version=` makes the SDK report *its* version.
@@ -1176,7 +1197,8 @@ def test_serve_reports_its_own_version_not_the_sdks(mini_index, monkeypatch):
     assert Server.last["name"] == "repo2graph"
     assert Server.last["version"] == __version__, Server.last
     assert Server.last["version"] != "99.99.99", (
-        "serverInfo is reporting the SDK's version as the server's")
+        "serverInfo is reporting the SDK's version as the server's"
+    )
 
 
 def test_both_transports_agree_on_the_version():
@@ -1185,3 +1207,74 @@ def test_both_transports_agree_on_the_version():
     from repo2graph.http_server import server_metadata
 
     assert server_metadata(None, False, ["none"])["version"] == __version__
+
+
+# ==========================================================================
+# R-9: string arguments (query, node_id, task_id) had no length ceiling.
+# Every numeric MCP argument was clamped in the handler, but a model can hand
+# this dispatcher an arbitrarily long string and nothing bounded it -- the
+# string-typed half of "every MCP tool argument is caller-hostile".
+# ==========================================================================
+
+
+def test_r9_an_absurdly_long_query_is_capped_before_it_reaches_the_index(mini_index):
+    mcp = mcp_module()
+    idx = Index(mini_index)
+    seen = {}
+    real = idx.pack_context
+
+    def spy(query, **kw):
+        seen["query"] = query
+        return real(query, **kw)
+
+    idx.pack_context = spy
+    huge = "x" * 10_000_000
+    out = mcp.tool_repo_search(idx, huge)
+    assert isinstance(out, str)
+    assert len(seen["query"]) <= mcp.MCP_MAX_QUERY_CHARS, len(seen["query"])
+
+
+def test_r9_dispatch_caps_query_too(mini_index):
+    mcp = mcp_module()
+    idx = Index(mini_index)
+    seen = {}
+    real = idx.pack_context
+
+    def spy(query, **kw):
+        seen["query"] = query
+        return real(query, **kw)
+
+    idx.pack_context = spy
+    mcp.dispatch(idx, "repo_search", {"query": "y" * 10_000_000})
+    assert len(seen["query"]) <= mcp.MCP_MAX_QUERY_CHARS
+
+
+def test_r9_an_absurdly_long_node_id_does_not_raise(mini_index):
+    mcp = mcp_module()
+    idx = Index(mini_index)
+    huge = "sym:" + "z" * 10_000_000
+    out = mcp.dispatch(idx, "repo_neighbours", {"node_id": huge})
+    assert isinstance(out, str) and "node not found" in out
+
+
+def test_r9_an_absurdly_long_task_id_does_not_raise():
+    mcp = mcp_module()
+    huge = "t" * 10_000_000
+    out = mcp.dispatch(None, "repo_build_status", {"task_id": huge})
+    assert isinstance(out, str)
+
+
+def test_r9_sane_string_arguments_are_left_alone(mini_index):
+    """The ceiling must not quietly rewrite ordinary calls."""
+    mcp = mcp_module()
+    idx = Index(mini_index)
+    seen = {}
+    real = idx.pack_context
+
+    def spy(query, **kw):
+        seen["query"] = query
+        return real(query, **kw)
+
+    idx.pack_context = spy
+    mcp.tool_repo_search(idx, MINI_QUERY)
+    assert seen["query"] == MINI_QUERY

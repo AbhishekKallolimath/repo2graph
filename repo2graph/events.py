@@ -18,6 +18,7 @@ redirected Windows stdout is a cp1252 TextIOWrapper, and Git Bash hands a piped
 one `errors='surrogateescape'` -- which still raises on any character cp1252
 lacks. Both are handled here rather than at each call site.
 """
+
 import json
 import sys
 from datetime import datetime, timezone
@@ -27,8 +28,7 @@ from typing import Any, TextIO
 # substitute. "surrogateescape"/"surrogatepass" are absent on purpose -- they
 # round-trip lone surrogates but still raise on, say, U+2192 under cp1252, which
 # is exactly the piped-Git-Bash case this guard exists for.
-SAFE_ERRORS = frozenset({"replace", "backslashreplace", "xmlcharrefreplace",
-                         "namereplace"})
+SAFE_ERRORS = frozenset({"replace", "backslashreplace", "xmlcharrefreplace", "namereplace"})
 
 
 def encodable(text: str, stream: Any) -> str:
@@ -117,8 +117,9 @@ def timestamp() -> str:
     return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
 
 
-def emit(event: str, level: str = "warning", stream: TextIO | None = None,
-         **fields: Any) -> dict[str, Any]:
+def emit(
+    event: str, level: str = "warning", stream: TextIO | None = None, **fields: Any
+) -> dict[str, Any]:
     """Write one structured event as a single JSON line on stderr.
 
     Args:
@@ -131,14 +132,19 @@ def emit(event: str, level: str = "warning", stream: TextIO | None = None,
         The record that was emitted, so callers and tests can assert on it
         without re-parsing stderr.
     """
-    record: dict[str, Any] = {"ts": timestamp(), "level": level,
-                              "event": event}
+    record: dict[str, Any] = {"ts": timestamp(), "level": level, "event": event}
     record.update(fields)
     try:
         line = json.dumps(record, ensure_ascii=False, default=str)
     except (TypeError, ValueError):
         # A field that will not serialise must not lose the whole event.
-        line = json.dumps({"ts": record["ts"], "level": level, "event": event,
-                           "error": "unserialisable event fields"})
+        line = json.dumps(
+            {
+                "ts": record["ts"],
+                "level": level,
+                "event": event,
+                "error": "unserialisable event fields",
+            }
+        )
     write_safe(sys.stderr if stream is None else stream, line)
     return record

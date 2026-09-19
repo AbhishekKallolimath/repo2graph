@@ -1,8 +1,10 @@
 """Serialize the graph: JSONL, GraphML, Cypher, overview, HTML map."""
+
 import json
 import math
 import os
 import random
+import subprocess
 import threading
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
@@ -40,6 +42,7 @@ def atomic_write(path: Path, mode: str = "w", **open_kw):
 
 SECTIONS: dict[str, tuple[str, ...]] = {
     "overview.md": (HUMAN_DIR, AGENT_DIR),
+    "CHANGELOG.md": (HUMAN_DIR,),
     "graph.html": (HUMAN_DIR,),
     "graph.graphml": (HUMAN_DIR,),
     "nodes.jsonl": (AGENT_DIR,),
@@ -93,8 +96,9 @@ SCALAR = (str, int, float, bool)
 
 
 def _flat(d: dict) -> dict:
-    return {k: (v if isinstance(v, SCALAR) else json.dumps(v))
-            for k, v in d.items() if v is not None}
+    return {
+        k: (v if isinstance(v, SCALAR) else json.dumps(v)) for k, v in d.items() if v is not None
+    }
 
 
 def write_jsonl(path: Path, rows) -> int:
@@ -137,10 +141,9 @@ def _grid_pairs(pos, cell):
     for nid, (x, y) in pos.items():
         cells[(int(x // cell), int(y // cell))].append(nid)
     for (cx, cy), members in cells.items():
-        near = [b for dx, dy in _NEIGHBOR_CELLS
-                for b in cells.get((cx + dx, cy + dy), ())]
+        near = [b for dx, dy in _NEIGHBOR_CELLS for b in cells.get((cx + dx, cy + dy), ())]
         for i, a in enumerate(members):
-            for b in members[i + 1:]:
+            for b in members[i + 1 :]:
                 yield a, b
             for b in near:
                 yield a, b
@@ -170,7 +173,7 @@ def _spring(nodes, adjacency, iterations):
             if dist2 < 1e-9:
                 dx, dy = rng.uniform(-1e-3, 1e-3), rng.uniform(-1e-3, 1e-3)
                 dist2 = dx * dx + dy * dy
-            force = k2 / dist2             # repulsion, 1/d scaled by 1/d
+            force = k2 / dist2  # repulsion, 1/d scaled by 1/d
             disp[a][0] += dx * force
             disp[a][1] += dy * force
             disp[b][0] -= dx * force
@@ -178,7 +181,7 @@ def _spring(nodes, adjacency, iterations):
         for a, b in adjacency:
             dx, dy = pos[a][0] - pos[b][0], pos[a][1] - pos[b][1]
             dist = math.hypot(dx, dy) or 1e-6
-            force = dist * dist / k            # attraction along the edge
+            force = dist * dist / k  # attraction along the edge
             ux, uy = dx / dist * force, dy / dist * force
             disp[a][0] -= ux
             disp[a][1] -= uy
@@ -201,8 +204,7 @@ def _shelf(nodes, sizes, pad: float = 24.0):
     defines, and boxes cannot overlap, so no separation pass is needed.
     """
     area = sum((sizes[nid][0] + pad) * (sizes[nid][1] + pad) for nid in nodes)
-    row_width = max(math.sqrt(area * 1.6),
-                    max(sizes[nid][0] for nid in nodes) + pad)
+    row_width = max(math.sqrt(area * 1.6), max(sizes[nid][0] for nid in nodes) + pad)
     pos = {}
     x = y = row_height = 0.0
     for nid in nodes:
@@ -242,13 +244,15 @@ def _layout(g, sizes):
                 adjacency.append((u, v))
     pos = _spring(nodes, adjacency, 120 if n <= 400 else 50)
     # Scale the unit layout so the median node box fits between neighbours.
-    span = max(sum(w for w, _ in sizes.values()) / n * 2.0, 160.0) * (n ** 0.5)
+    span = max(sum(w for w, _ in sizes.values()) / n * 2.0, 160.0) * (n**0.5)
     xs = [p[0] for p in pos.values()]
     ys = [p[1] for p in pos.values()]
     width = (max(xs) - min(xs)) or 1.0
     height = (max(ys) - min(ys)) or 1.0
-    pos = {nid: ((x - min(xs)) / width * span, (y - min(ys)) / height * span)
-           for nid, (x, y) in pos.items()}
+    pos = {
+        nid: ((x - min(xs)) / width * span, (y - min(ys)) / height * span)
+        for nid, (x, y) in pos.items()
+    }
     return _separate(pos, sizes, 200 if n <= 400 else 60 if n <= 800 else 25)
 
 
@@ -308,7 +312,8 @@ def _xml_safe(text: str) -> str:
     surrogate block, up to 0x10FFFF, excluding 0xFFFE/0xFFFF.
     """
     return "".join(
-        c for c in text
+        c
+        for c in text
         if c in "\t\n\r"
         or 0x20 <= ord(c) <= 0xD7FF
         or 0xE000 <= ord(c) <= 0xFFFD
@@ -334,23 +339,35 @@ def write_graphml(g, path: Path):
         if ident is None:
             ident = f"d{len(keys)}"
             keys[(scope, name)] = ident
-            kind = ("boolean" if isinstance(value, bool) else
-                    "long" if isinstance(value, int) else
-                    "double" if isinstance(value, float) else "string")
-            ET.SubElement(root, f"{{{GRAPHML_NS}}}key", {
-                "id": ident, "for": scope, "attr.name": name, "attr.type": kind})
+            kind = (
+                "boolean"
+                if isinstance(value, bool)
+                else "long"
+                if isinstance(value, int)
+                else "double"
+                if isinstance(value, float)
+                else "string"
+            )
+            ET.SubElement(
+                root,
+                f"{{{GRAPHML_NS}}}key",
+                {"id": ident, "for": scope, "attr.name": name, "attr.type": kind},
+            )
         return ident
 
     # SH-4: apply _xml_safe to graph, node and edge id/source/target attributes
-    graph = ET.Element(f"{{{GRAPHML_NS}}}graph",
-                       {"id": _xml_safe(str(g.name)), "edgedefault": "directed"})
+    graph = ET.Element(
+        f"{{{GRAPHML_NS}}}graph", {"id": _xml_safe(str(g.name)), "edgedefault": "directed"}
+    )
 
     def add_data(parent, scope: str, attrs: dict):
         for name, value in attrs.items():
-            data = ET.SubElement(parent, f"{{{GRAPHML_NS}}}data",
-                                 {"key": key_for(scope, name, value)})
-            data.text = ("true" if value is True else "false" if value is False
-                         else _xml_safe(str(value)))
+            data = ET.SubElement(
+                parent, f"{{{GRAPHML_NS}}}data", {"key": key_for(scope, name, value)}
+            )
+            data.text = (
+                "true" if value is True else "false" if value is False else _xml_safe(str(value))
+            )
 
     for nid, n in g.nodes.items():
         attrs = _flat(n)
@@ -359,37 +376,58 @@ def write_graphml(g, path: Path):
         label = labels[nid]
         x, y = pos.get(nid, (0.0, 0.0))
         width, height = sizes[nid]
-        gfx = ET.SubElement(node, f"{{{GRAPHML_NS}}}data",
-                            {"key": key_for("node", "nodegraphics", "")})
+        gfx = ET.SubElement(
+            node, f"{{{GRAPHML_NS}}}data", {"key": key_for("node", "nodegraphics", "")}
+        )
         shape = ET.SubElement(gfx, f"{{{Y_NS}}}ShapeNode")
-        ET.SubElement(shape, f"{{{Y_NS}}}Geometry", {
-            "x": f"{x - width / 2:.2f}", "y": f"{y - height / 2:.2f}",
-            "width": f"{width:.2f}", "height": f"{height:.2f}"})
-        ET.SubElement(shape, f"{{{Y_NS}}}Fill", {
-            "color": NODE_COLORS.get(attrs.get("type"), OTHER_COLOR),
-            "transparent": "false"})
-        ET.SubElement(shape, f"{{{Y_NS}}}BorderStyle",
-                      {"color": "#4a4f57", "type": "line", "width": "1.0"})
-        text = ET.SubElement(shape, f"{{{Y_NS}}}NodeLabel", {
-            "alignment": "center", "fontSize": "11", "textColor": "#1c2330",
-            "visible": "true"})
+        ET.SubElement(
+            shape,
+            f"{{{Y_NS}}}Geometry",
+            {
+                "x": f"{x - width / 2:.2f}",
+                "y": f"{y - height / 2:.2f}",
+                "width": f"{width:.2f}",
+                "height": f"{height:.2f}",
+            },
+        )
+        ET.SubElement(
+            shape,
+            f"{{{Y_NS}}}Fill",
+            {
+                "color": NODE_COLORS.get(attrs.get("type") or "", OTHER_COLOR),
+                "transparent": "false",
+            },
+        )
+        ET.SubElement(
+            shape, f"{{{Y_NS}}}BorderStyle", {"color": "#4a4f57", "type": "line", "width": "1.0"}
+        )
+        text = ET.SubElement(
+            shape,
+            f"{{{Y_NS}}}NodeLabel",
+            {"alignment": "center", "fontSize": "11", "textColor": "#1c2330", "visible": "true"},
+        )
         text.text = _xml_safe(label)
-        ET.SubElement(shape, f"{{{Y_NS}}}Shape", {
-            "type": "ellipse" if attrs.get("type") == "symbol" else "roundrectangle"})
+        ET.SubElement(
+            shape,
+            f"{{{Y_NS}}}Shape",
+            {"type": "ellipse" if attrs.get("type") == "symbol" else "roundrectangle"},
+        )
 
     for e in g.edges:
         src, dst = e["src"], e["dst"]
         attrs = _flat({k: v for k, v in e.items() if k not in ("src", "dst")})
-        edge = ET.SubElement(graph, f"{{{GRAPHML_NS}}}edge",
-                             {"source": _xml_safe(src), "target": _xml_safe(dst)})
+        edge = ET.SubElement(
+            graph, f"{{{GRAPHML_NS}}}edge", {"source": _xml_safe(src), "target": _xml_safe(dst)}
+        )
         add_data(edge, "edge", attrs)
-        gfx = ET.SubElement(edge, f"{{{GRAPHML_NS}}}data",
-                            {"key": key_for("edge", "edgegraphics", "")})
+        gfx = ET.SubElement(
+            edge, f"{{{GRAPHML_NS}}}data", {"key": key_for("edge", "edgegraphics", "")}
+        )
         poly = ET.SubElement(gfx, f"{{{Y_NS}}}PolyLineEdge")
-        ET.SubElement(poly, f"{{{Y_NS}}}LineStyle",
-                      {"color": "#a5adba", "type": "line", "width": "1.0"})
-        ET.SubElement(poly, f"{{{Y_NS}}}Arrows",
-                      {"source": "none", "target": "standard"})
+        ET.SubElement(
+            poly, f"{{{Y_NS}}}LineStyle", {"color": "#a5adba", "type": "line", "width": "1.0"}
+        )
+        ET.SubElement(poly, f"{{{Y_NS}}}Arrows", {"source": "none", "target": "standard"})
         ET.SubElement(poly, f"{{{Y_NS}}}BendStyle", {"smoothed": "false"})
 
     # yFiles keys carry graphics, not data, and take yfiles.type instead of
@@ -413,18 +451,22 @@ def _cy(v):
 
 
 def write_cypher(g, path: Path):
-    lines = ["CREATE CONSTRAINT r2g_id IF NOT EXISTS "
-             "FOR (n:R2G) REQUIRE n.id IS UNIQUE;"]
+    lines = ["CREATE CONSTRAINT r2g_id IF NOT EXISTS FOR (n:R2G) REQUIRE n.id IS UNIQUE;"]
     for nid, n in g.nodes.items():
         lab = n["type"].capitalize()
         props = ", ".join(f"{k}: {_cy(v)}" for k, v in n.items() if k != "type")
         lines.append(f"MERGE (n:R2G:{lab} {{id: {_cy(nid)}}}) SET n += {{{props}}};")
     for e in g.edges:
-        props = {k: v for k, v in e.items() if k not in ("src", "dst", "type")}
-        pstr = (" {" + ", ".join(f"{k}: {_cy(v)}" for k, v in props.items()) + "}") if props else ""
+        edge_props = {k: v for k, v in e.items() if k not in ("src", "dst", "type")}
+        pstr = (
+            (" {" + ", ".join(f"{k}: {_cy(v)}" for k, v in edge_props.items()) + "}")
+            if edge_props
+            else ""
+        )
         lines.append(
             f"MATCH (a:R2G {{id: {_cy(e['src'])}}}), (b:R2G {{id: {_cy(e['dst'])}}}) "
-            f"MERGE (a)-[:{e['type']}{pstr}]->(b);")
+            f"MERGE (a)-[:{e['type']}{pstr}]->(b);"
+        )
     # newline="\n" on every artifact writer (ISS-28): a Windows rebuild must
     # produce the same bytes as a Linux CI run, or the commit-branch push is all
     # CRLF churn. atomic_write: no half-written file for a reader.
@@ -434,27 +476,177 @@ def write_cypher(g, path: Path):
 
 def write_overview(g, path: Path, top: int = 25):
     """Human/LLM-readable repo map: top directories, hub files, entry points."""
-    indeg, outdeg = Counter(), Counter()
+    indeg: Counter[str] = Counter()
+    outdeg: Counter[str] = Counter()
     for e in g.edges:
         if e["type"] in ("IMPORTS", "CALLS"):
             indeg[e["dst"]] += 1
             outdeg[e["src"]] += 1
     files = [n for n in g.nodes.values() if n["type"] == "file"]
     langs = Counter(n.get("lang") for n in files)
-    hubs = sorted((n for n in g.nodes.values() if n["type"] == "file"),
-                  key=lambda n: -indeg[n["id"]])[:top]
-    key_syms = sorted((n for n in g.nodes.values() if n["type"] == "symbol"),
-                      key=lambda n: -indeg[n["id"]])[:top]
-    out = [f"# Repo map: {g.name}", "",
-           f"files: {len(files)}  nodes: {len(g.nodes)}  edges: {len(g.edges)}",
-           "languages: " + ", ".join(f"{k}={v}" for k, v in langs.most_common(12) if k), "",
-           "## Most depended-on files"]
+    hubs = sorted(
+        (n for n in g.nodes.values() if n["type"] == "file"), key=lambda n: -indeg[n["id"]]
+    )[:top]
+    key_syms = sorted(
+        (n for n in g.nodes.values() if n["type"] == "symbol"), key=lambda n: -indeg[n["id"]]
+    )[:top]
+    out = [
+        f"# Repo map: {g.name}",
+        "",
+        f"files: {len(files)}  nodes: {len(g.nodes)}  edges: {len(g.edges)}",
+        "languages: " + ", ".join(f"{k}={v}" for k, v in langs.most_common(12) if k),
+        "",
+        "## Most depended-on files",
+    ]
     out += [f"- {n['path']} (in={indeg[n['id']]})" for n in hubs if indeg[n["id"]]]
     out += ["", "## Most called symbols"]
-    out += [f"- {n['path']}::{n['qualname']} ({n['kind']}, in={indeg[n['id']]})"
-            for n in key_syms if indeg[n["id"]]]
+    out += [
+        f"- {n['path']}::{n['qualname']} ({n['kind']}, in={indeg[n['id']]})"
+        for n in key_syms
+        if indeg[n["id"]]
+    ]
     with atomic_write(path, "w", encoding="utf8", newline="\n") as fh:
         fh.write("\n".join(out))
+
+
+def _git_short_sha(root) -> str | None:
+    """The short commit `root` was built at, or None outside a git repo.
+
+    Same subprocess pattern as graph.add_cochange / walker._git_files (see
+    AGENTS.md): quotepath=false, bytes decoded with surrogateescape (never
+    text=True -- a Windows cp1252 locale raises UnicodeDecodeError on any
+    non-ASCII byte), stdin closed, bounded timeout. Any failure -- not a repo,
+    no git on PATH, a slow filesystem -- just omits the "Built at" row.
+    """
+    try:
+        out = subprocess.run(
+            [
+                "git",
+                "-c",
+                "core.quotepath=false",
+                "-C",
+                str(root),
+                "rev-parse",
+                "--short",
+                "HEAD",
+            ],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    sha = out.stdout.decode("utf8", "surrogateescape").split("\n")[0].strip()
+    return sha or None
+
+
+_SKIP_STAT_LABELS = (
+    ("skipped_binary", "binary files"),
+    ("skipped_too_large", "files over 1.5 MB"),
+    ("skipped_vendor", "vendor/build folders"),
+    ("skipped_dotfile", "dotfiles"),
+    ("skipped_gitignore", ".gitignore entries"),
+)
+
+
+def write_overview_human(g, path: Path, top: int = 25):
+    """Structured, scannable repo map for `human/overview.md`.
+
+    Unlike `write_overview` (still the agent/overview.md prose, unchanged),
+    this reads edge-type and symbol-kind counts straight out of `g.stats`
+    rather than rescanning `g.nodes`/`g.edges`, per the repo convention that
+    `g.stats` is the single source of truth for those counts.
+    """
+    files = [n for n in g.nodes.values() if n["type"] == "file"]
+    langs = Counter(n.get("lang") for n in files)
+
+    indeg: Counter[str] = Counter()
+    dominant: dict[str, Counter[str]] = defaultdict(Counter)
+    for e in g.edges:
+        dst = e["dst"]
+        if g.nodes.get(dst, {}).get("type") == "file":
+            indeg[dst] += 1
+            dominant[dst][e["type"]] += 1
+
+    out = [f"# Repo overview: {g.name}", ""]
+
+    out += ["## At a glance", "", "| Metric | Value |", "| --- | --- |"]
+    out.append(f"| Files indexed | {len(files)} |")
+    out.append(f"| Functions | {g.stats.get('symbol:function', 0)} |")
+    out.append(f"| Classes | {g.stats.get('symbol:class', 0)} |")
+    out.append(f"| Total edges | {g.stats.get('edges', len(g.edges))} |")
+    lang_str = ", ".join(f"{k}={v}" for k, v in langs.most_common(12) if k) or "none detected"
+    out.append(f"| Languages | {lang_str} |")
+    sha = _git_short_sha(g.root)
+    if sha:
+        out.append(f"| Built at | {sha} |")
+    out.append("")
+
+    out.append("## Top 10 most-connected files (by in-degree)")
+    out.append("")
+    hubs = sorted((n for n in files if indeg[n["id"]]), key=lambda n: -indeg[n["id"]])[:10]
+    if hubs:
+        out += ["| Rank | File | In-degree | Dominant edge type |", "| --- | --- | --- | --- |"]
+        for i, n in enumerate(hubs, 1):
+            dom_type, _ = dominant[n["id"]].most_common(1)[0]
+            out.append(f"| {i} | {n['path']} | {indeg[n['id']]} | {dom_type} |")
+    else:
+        out.append("No file has an incoming edge yet.")
+    out.append("")
+
+    cochange = [e for e in g.edges if e["type"] == "CO_CHANGE"]
+    if cochange:
+        out.append("## CO_CHANGE hotspots")
+        out.append("")
+        out.append(
+            "These files are frequently edited together — treat as implicit "
+            "dependencies even if no CALLS edge exists."
+        )
+        out.append("")
+        out += ["| File A | File B | Co-change count |", "| --- | --- | --- |"]
+        for e in sorted(cochange, key=lambda e: -e.get("count", 0))[:5]:
+            a = g.nodes.get(e["src"], {}).get("path", e["src"])
+            b = g.nodes.get(e["dst"], {}).get("path", e["dst"])
+            out.append(f"| {a} | {b} | {e.get('count', 0)} |")
+        out.append("")
+
+    out.append("## Edge type breakdown")
+    out.append("")
+    edge_counts = sorted(
+        ((k[len("edge:") :], v) for k, v in g.stats.items() if k.startswith("edge:")),
+        key=lambda kv: -kv[1],
+    )
+    total_edges = sum(v for _, v in edge_counts)
+    if edge_counts:
+        out += ["| Edge type | Count | % of total |", "| --- | --- | --- |"]
+        for etype, count in edge_counts:
+            pct = (count / total_edges * 100) if total_edges else 0.0
+            out.append(f"| {etype} | {count} | {pct:.1f}% |")
+    else:
+        out.append("No edges were recorded.")
+    out.append("")
+
+    skip_bullets = [
+        f"- {label}: {g.stats[key]}" for key, label in _SKIP_STAT_LABELS if g.stats.get(key)
+    ]
+    if skip_bullets:
+        out.append("## What was skipped")
+        out.append("")
+        out += skip_bullets
+        out.append("")
+
+    out.append("## How to explore")
+    out.append("")
+    out.append("```")
+    out.append("open .r2g/human/graph.html        # interactive picture")
+    out.append('repo2graph query -o .r2g "your question here"   # ask a question')
+    out.append("repo2graph stats -o .r2g          # full stats")
+    out.append("```")
+
+    with atomic_write(path, "w", encoding="utf8", newline="\n") as fh:
+        fh.write("\n".join(out) + "\n")
 
 
 NODE_TYPES = {
@@ -510,14 +702,56 @@ HOW_TO_READ = [
     "Chunk `callees` holds in-repo targets as path::qualname; `callees_external` holds bare stdlib and third-party names that were never resolved.",
     "CALLS resolution is name-based, not type-based: an overloaded or shadowed name emits up to 5 candidate edges, each with confidence 1/n. Filter on confidence == 1.0 when a wrong edge would be costly.",
     "GraphRAG retrieval protocol: score chunks.jsonl for the question, then expand one hop from each seed over CALLS out (callees), CALLS in (callers), DEFINES in (the defining file) and INHERITS out (base classes), keeping only CALLS edges whose confidence >= 1.0; pack the seeds first and the neighbours after, under a character budget, and cite every chunk as path:start-end from its start_line/end_line.",
-    "repo2graph.query.Index.pack_context implements that protocol and returns the packed markdown; `repo2graph rag \"<question>\" -o <outdir>` is the same thing from the command line (--min-conf sets the confidence filter, --no-expand turns the graph hop off).",
+    'repo2graph.query.Index.pack_context implements that protocol and returns the packed markdown; `repo2graph rag "<question>" -o <outdir>` is the same thing from the command line (--min-conf sets the confidence filter, --no-expand turns the graph hop off).',
 ]
+
+
+# Static orientation copy for manifest.json's usage_hints. Kept separate from
+# HOW_TO_READ (prose, read top to bottom) as a keyed lookup an agent can index
+# into directly by tool name or question ("what does confidence 0.5 mean?").
+TOOL_DECISION_TREE = {
+    "orient_first": (
+        "Call repo_map once to get languages, hub files and entry points before any other tool."
+    ),
+    "search_by_question": (
+        "Use repo_search for natural-language questions; it returns cited "
+        "chunks plus graph neighbours."
+    ),
+    "trace_relationships": (
+        "Use repo_neighbours with a node_id to hop through callers, callees, "
+        "base classes and defining files."
+    ),
+    "node_id_format": (
+        "sym:pkg/relative/path.py::function_name -- read the 'id' field off "
+        "nodes.jsonl or a chunk's node_id directly; or take a chunk's "
+        "caller_edges/callee_edges/base_edges target (which is a bare "
+        "path::qualname) and prefix 'sym:' to construct one."
+    ),
+}
+
+CONFIDENCE_SEMANTICS = {
+    "1.0": "Certain: the call name resolved to exactly one definition.",
+    "lt_1.0": (
+        "Ambiguous: the name matched multiple candidates, fanned out to up "
+        "to 5 CALLS edges at 1/n confidence each. Filter to confidence == 1.0 "
+        "when correctness matters more than recall. IMPORTS, DEFINES and "
+        "INHERITS edges carry no confidence key -- they are never ambiguous."
+    ),
+}
+
+DYNAMIC_CALLS_NOTE = (
+    "No CALLS edge does not prove no call happens at runtime. Dynamic "
+    "dispatch, reflection and generated code are invisible to a parser -- "
+    "hedge answers about them accordingly."
+)
 
 
 def write_manifest(g, path: Path, written: list[str]):
     """Describe the agent-facing output so a reader needs no other docs."""
-    entry = sorted((n for n in g.nodes.values() if n.get("entrypoint")),
-                   key=lambda n: (-n.get("reach", 0), n["path"], n["qualname"]))
+    entry = sorted(
+        (n for n in g.nodes.values() if n.get("entrypoint")),
+        key=lambda n: (-n.get("reach", 0), n["path"], n["qualname"]),
+    )
     manifest = {
         "format": "repo2graph/1",
         "repo": g.name,
@@ -526,32 +760,147 @@ def write_manifest(g, path: Path, written: list[str]):
             HUMAN_DIR: "for people: prose map and drawings",
             AGENT_DIR: "for programs: the graph, the chunks, this manifest",
         },
-        "files": {name: FILE_NOTES[name] for name in sorted(
-            {w.split("/", 1)[1] for w in written} & set(FILE_NOTES))},
+        "files": {
+            name: FILE_NOTES[name]
+            for name in sorted({w.split("/", 1)[1] for w in written} & set(FILE_NOTES))
+        },
         "node_types": NODE_TYPES,
         "edge_types": EDGE_TYPES,
         "id_grammar": ID_GRAMMAR,
-        "chunk_fields": ["id", "node_id", "type", "kind", "path", "lang", "name",
-                         "qualname", "start_line", "end_line", "entrypoint",
-                         "callers", "callees", "callees_external", "text"],
+        "chunk_fields": [
+            "id",
+            "node_id",
+            "type",
+            "kind",
+            "path",
+            "lang",
+            "name",
+            "qualname",
+            "start_line",
+            "end_line",
+            "entrypoint",
+            "callers",
+            "callees",
+            "callees_external",
+            "caller_edges",
+            "callee_edges",
+            "base_edges",
+            "text",
+        ],
         "counts": dict(g.stats),
-        "entrypoints": [{"id": n["id"], "path": n["path"], "qualname": n["qualname"],
-                         "kind": n["kind"], "reach": n.get("reach")}
-                        for n in entry[:25]],
-        "entrypoint_rule": ("a function or method that no CALLS edge points at and that is "
-                            "not nested inside another function"),
+        "entrypoints": [
+            {
+                "id": n["id"],
+                "path": n["path"],
+                "qualname": n["qualname"],
+                "kind": n["kind"],
+                "reach": n.get("reach"),
+            }
+            for n in entry[:25]
+        ],
+        "entrypoint_rule": (
+            "a function or method that no CALLS edge points at and that is "
+            "not nested inside another function"
+        ),
         "how_to_read": HOW_TO_READ,
         "approximations": [
             "Call resolution is name-based; ambiguous names fan out to up to 5 edges at 1/n confidence.",
             "Dynamic dispatch, reflection and generated code are invisible to a parser.",
             "Absence of an edge is not proof of absence of a call.",
         ],
+        "usage_hints": {
+            "tool_decision_tree": TOOL_DECISION_TREE,
+            "confidence_semantics": CONFIDENCE_SEMANTICS,
+            # Same EDGE_TYPES dict manifest.json's top-level "edge_types" key
+            # already carries -- one authored copy, not a second one to drift.
+            "edge_type_meanings": EDGE_TYPES,
+            # Same labels write_overview_human's "## What was skipped" section
+            # counts against (_SKIP_STAT_LABELS) -- what's excluded by policy,
+            # not just what this particular build happened to skip.
+            "what_is_not_indexed": [label for _, label in _SKIP_STAT_LABELS]
+            + ["dynamic dispatch -- code that decides at runtime which function to call"],
+            "dynamic_calls_note": DYNAMIC_CALLS_NOTE,
+        },
     }
     with atomic_write(path, "w", encoding="utf8", newline="\n") as fh:
         fh.write(json.dumps(manifest, indent=2) + "\n")
 
 
 STATE_FORMAT = "repo2graph/state-1"
+
+INDEX_SCHEMA_VERSION = "1"
+
+
+def _stats_extra(g) -> dict:
+    """Additive stats.json fields, computed live from `g` at write time.
+
+    Never re-read from nodes.jsonl/edges.jsonl -- dump_all always has the
+    Graph in memory here, and re-deriving from the files it is about to write
+    would be a circular dependency for no reason.
+    """
+    indeg: Counter[str] = Counter()
+    for e in g.edges:
+        if e["type"] in ("IMPORTS", "CALLS"):
+            indeg[e["dst"]] += 1
+    hubs = sorted(
+        (n for n in g.nodes.values() if n["type"] in ("file", "symbol") and indeg[n["id"]]),
+        key=lambda n: -indeg[n["id"]],
+    )[:10]
+    extra: dict = {
+        "top_hub_nodes": [
+            {
+                "node_id": n["id"],
+                "label": n.get("qualname") or n.get("path") or n.get("name") or n["id"],
+                "in_degree": indeg[n["id"]],
+            }
+            for n in hubs
+        ],
+        "languages": dict(
+            Counter(
+                n.get("lang") for n in g.nodes.values() if n["type"] == "file" and n.get("lang")
+            ).most_common()
+        ),
+        # Flipped to True by _mark_has_vectors once `embed` (a separate,
+        # later command) writes vectors.npy -- false is correct at build time.
+        "has_vectors": False,
+        "index_schema_version": INDEX_SCHEMA_VERSION,
+    }
+    sha = _git_short_sha(g.root)
+    if sha:
+        extra["built_at_commit"] = sha
+    cochange = sorted(
+        (e for e in g.edges if e["type"] == "CO_CHANGE"), key=lambda e: -e.get("count", 0)
+    )[:5]
+    if cochange:
+        extra["co_change_hotspots"] = [
+            {
+                "file_a": g.nodes.get(e["src"], {}).get("path", e["src"]),
+                "file_b": g.nodes.get(e["dst"], {}).get("path", e["dst"]),
+                "weight": e.get("count", 0),
+            }
+            for e in cochange
+        ]
+    return extra
+
+
+def _mark_has_vectors(outdir) -> None:
+    """Flip stats.json's has_vectors to True after `embed` writes vectors.npy.
+
+    Best-effort, same as register_written: a missing or unreadable stats.json
+    (e.g. a fixture built with --formats that never writes one) is not
+    embed's problem to fix, so any failure here is silently skipped.
+    """
+    target = path(outdir, "stats.json")
+    try:
+        with open(target, encoding="utf8", newline="\n") as fh:
+            stats = json.load(fh)
+    except (OSError, UnicodeDecodeError, ValueError):
+        return
+    if not isinstance(stats, dict):
+        return
+    stats["has_vectors"] = True
+    with atomic_write(target, "w", encoding="utf8", newline="\n") as fh:
+        fh.write(json.dumps(stats, indent=2) + "\n")
 
 
 def register_written(outdir, names) -> bool:
@@ -562,6 +911,7 @@ def register_written(outdir, names) -> bool:
     counts, entrypoints, how_to_read -- is left exactly as it was. Returns
     False when there is no readable manifest to append to.
     """
+    names = list(names)
     target = path(outdir, "manifest.json")
     try:
         with open(target, encoding="utf8", newline="\n") as fh:
@@ -582,6 +932,8 @@ def register_written(outdir, names) -> bool:
     manifest["files"] = files
     with atomic_write(target, "w", encoding="utf8", newline="\n") as fh:
         fh.write(json.dumps(manifest, indent=2) + "\n")
+    if any(name.split("/", 1)[-1] == "vectors.npy" for name in names):
+        _mark_has_vectors(outdir)
     return True
 
 
@@ -604,6 +956,7 @@ def write_parse_cache(g, path: Path):
         path: Destination for `parse.cache.json`.
     """
     from .graph import PARSE_CACHE_FORMAT
+
     payload = {
         "format": STATE_FORMAT,
         "cache_format": PARSE_CACHE_FORMAT,
@@ -629,6 +982,7 @@ def load_parse_cache(outdir: Path) -> dict:
         `{relpath: entry}`, or an empty dict when no usable cache is present.
     """
     from .graph import PARSE_CACHE_FORMAT
+
     try:
         path = make_paths(Path(outdir), "parse.cache.json")[0]
         data = json.loads(path.read_text(encoding="utf8"))
@@ -665,16 +1019,18 @@ def dump_all(g, chunks, outdir: Path, formats: set[str], viz_nodes: int = MAX_NO
     if "cypher" in formats:
         write_cypher(g, out("graph.cypher")[0])
     if "overview" in formats:
-        first, *copies = out("overview.md")
-        write_overview(g, first)
-        text = first.read_text(encoding="utf8")
-        for extra in copies:   # the same map, one per section
-            with atomic_write(extra, "w", encoding="utf8", newline="\n") as fh:
-                fh.write(text)
+        # SECTIONS["overview.md"] = (HUMAN_DIR, AGENT_DIR): human/ gets the
+        # structured, scannable map for a person; agent/ keeps the terse prose
+        # write_overview has always produced -- GraphRAG's repo-map protocol
+        # (query.Index.overview / pack_context) reads the agent copy and must
+        # not see the new tables.
+        human, agent = out("overview.md")
+        write_overview_human(g, human)
+        write_overview(g, agent)
     if "html" in formats:
         write_html(g, out("graph.html")[0], viz_nodes)
     with atomic_write(out("stats.json")[0], "w", encoding="utf8", newline="\n") as fh:
-        fh.write(json.dumps(dict(g.stats), indent=2) + "\n")
+        fh.write(json.dumps({**dict(g.stats), **_stats_extra(g)}, indent=2) + "\n")
     write_state(g, out("index.state.json")[0], n_chunks)
     write_parse_cache(g, out("parse.cache.json")[0])
     write_manifest(g, out("manifest.json")[0], written)

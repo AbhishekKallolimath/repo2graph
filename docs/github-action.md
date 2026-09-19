@@ -19,8 +19,26 @@ rather upgrade by hand.
 The action never calls an LLM: `--answer` is deliberately not exposed. It packs
 the context and leaves the answering to whatever reads the pack afterwards.
 
-It also writes the first 40 lines of `overview.md` into the job summary page, so
-the map shows up in the run without downloading anything.
+It also writes a structured summary into the job summary page, so the shape of
+the map shows up in the run without downloading anything. The summary is built
+by a small stdlib-only script (`.github/scripts/summary.py`) straight from the
+build's own artifacts — it never truncates a large repo the way printing the
+first N lines of a file would. It has:
+
+- an at-a-glance table: files indexed, functions, classes, total edges,
+  languages found, chunks, and the short commit SHA the build ran at (omitted
+  if the checkout isn't a git repo);
+- a "Top 5 hub files" table, ranked by in-degree across every edge type;
+- a "CO_CHANGE hotspots" table of the most frequently co-changed file pairs
+  (omitted when `git-history` is `0` or no pair crosses the co-change
+  threshold);
+- a "Graph delta" section condensed from `human/CHANGELOG.md` when a previous
+  build's CHANGELOG is present next to this one — just the new/removed node
+  and edge counts and the new-hotspot lines, not the full item lists.
+
+Any piece it can't compute (a missing field, a non-git checkout, no
+CHANGELOG.md) degrades to "N/A" or an omitted row/section rather than failing
+the step.
 
 ## Inputs
 
