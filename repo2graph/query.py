@@ -500,6 +500,9 @@ class Index:
                     [],
                     ("no query vector: neither the vectors mapping nor an embedder supplied one"),
                 )
+            reason = _dim_mismatch_reason(qvec, cvecs)
+            if reason:
+                return None, [], reason
             return qvec, cvecs, ""
         texts = [self.chunks[i].get("text") or "" for i in candidates]
         encoded = embedder.encode([query] + texts)
@@ -510,7 +513,11 @@ class Index:
                 [],
                 (f"embedder returned {len(encoded)} vectors for {len(texts) + 1} texts"),
             )
-        return encoded[0], encoded[1:], ""
+        qvec, cvecs = encoded[0], encoded[1:]
+        reason = _dim_mismatch_reason(qvec, cvecs)
+        if reason:
+            return None, [], reason
+        return qvec, cvecs, ""
 
     def expand(
         self, seed_nodes, hops=1, edge_types=None, per_hop=6, min_confidence=1.0, edge_dirs=None
@@ -816,10 +823,40 @@ def _has_vector(vectors, i) -> bool:
         return False
 
 
+def _dim_mismatch_reason(qvec, cvecs) -> str:
+    """Empty when every candidate vector matches `qvec`'s width, else a reason.
+
+    `zip()` truncates to the shorter operand, so a width mismatch (e.g. 768 vs
+    1536 from two different embedding models) would otherwise pass straight
+    into `_cosine()` and compute a plausible-looking but meaningless score
+    instead of raising. Catching it here keeps the promise the rest of
+    `_vectors_for` makes: a bad vector turns fusion off and falls back to
+    BM25, it never raises out to the caller.
+    """
+    qdim = len(qvec)
+    bad = sum(1 for v in cvecs if len(v) != qdim)
+    if not bad:
+        return ""
+    return (
+        f"{bad} of {len(cvecs)} candidate vectors do not match the query "
+        f"vector's dimension ({qdim}); vectors.npy likely mixes more than one "
+        f"embedding model -- re-run `repo2graph embed` to rebuild it"
+    )
+
+
 def _cosine(a, b) -> float:
-    """Cosine similarity over any two sequences of floats (no numpy needed)."""
+    """Cosine similarity over any two sequences of floats (no numpy needed).
+
+    Raises `ValueError` on mismatched lengths rather than letting `zip()`
+    silently truncate to the shorter vector and compute a meaningless score.
+    Callers that accept caller-supplied vectors (`score_rrf` via
+    `_vectors_for`) must validate widths themselves and never let this
+    exception reach their own caller -- see `_dim_mismatch_reason`.
+    """
+    if len(a) != len(b):
+        raise ValueError(f"cosine similarity: mismatched vector lengths {len(a)} vs {len(b)}")
     num = na = nb = 0.0
-    for x, y in zip(a, b, strict=False):
+    for x, y in zip(a, b, strict=True):
         num += x * y
         na += x * x
         nb += y * y
