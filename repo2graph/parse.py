@@ -528,10 +528,18 @@ def _callee_name(src: bytes, node) -> str | None:
     # Strip wrapping parens for function-pointer / expression invocations e.g. (*fn)(arg) or (cb)(arg)
     while txt.startswith("(") and txt.endswith(")") and len(txt) >= 2:
         txt = txt[1:-1].strip()
-    txt = txt.split("(")[0].split("<")[0]
+    # ISS-159: resolve the rightmost member-access segment *before* stripping
+    # "(" / "<" noise. A chained call's `function` field text is the whole
+    # member expression, e.g. `obj.get_user().save` for `obj.get_user().save()`
+    # — the "(" that closes the inner `get_user()` call sits in the middle of
+    # that string. Splitting on "(" first (old order) chopped everything from
+    # that "(" onward, including the outer ".save", and left "obj.get_user".
+    # Splitting on the separator first isolates "save" so the parens/generic
+    # stripping below only ever runs on the final, already-resolved segment.
     for sep in ("::", ".", "->"):
         if sep in txt:
             txt = txt.split(sep)[-1]
+    txt = txt.split("(")[0].split("<")[0]
     # ISS-05: Strip only leading pointer/deref and trailing macro !
     txt = txt.strip().lstrip("*& \t\n").removesuffix("!").strip()
     return txt or None
@@ -629,6 +637,29 @@ _BASE_WORDS = {
 }
 
 
+def _split_bases(text: str) -> list[str]:
+    """Split a base-class list on top-level commas only.
+
+    A generic's type arguments (`Generic[T, U]`, `Handler<Request, Response>`)
+    contain commas that must not split the base list itself, so track bracket
+    depth and only split where it is zero.
+    """
+    opens, closes = "([<", ")]>"
+    parts = []
+    depth = 0
+    start = 0
+    for i, ch in enumerate(text):
+        if ch in opens:
+            depth += 1
+        elif ch in closes:
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            parts.append(text[start:i])
+            start = i + 1
+    parts.append(text[start:])
+    return parts
+
+
 def _clean_base(text: str) -> str:
     """'public B', 'extends B', '< B' -> 'B'."""
     words = [
@@ -660,10 +691,10 @@ def _bases(src: bytes, node, lang: str) -> list[str]:
     for fname in ("superclasses", "bases", "trait"):
         n = node.child_by_field_name(fname)
         if n is not None:
-            out += [t.strip() for t in _text(src, n).strip("(): ").split(",") if t.strip()]
+            out += [t.strip() for t in _split_bases(_text(src, n).strip("(): ")) if t.strip()]
     for clause in _base_clauses(node):
         raw = _text(src, clause).replace(" with ", ",")
-        out += [c for c in (_clean_base(t) for t in raw.split(",")) if c]
+        out += [c for c in (_clean_base(t) for t in _split_bases(raw)) if c]
     seen, uniq = set(), []
     for b in out:
         if b not in seen:
@@ -700,11 +731,14 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                     out = subprocess.run(
                         ["cpp", "-w", "-P", "-undef", str(filepath)],
                         capture_output=True,
-                        text=True,
                         timeout=10,
                     )
                     if out.returncode == 0:
-                        cpp_bytes = out.stdout.encode("utf8", "replace")
+                        # Never pass text=True to a subprocess reading git/cpp output on
+                        # Windows -- it decodes with the cp1252 locale and raises
+                        # UnicodeDecodeError on UTF-8 source. Capture raw bytes instead;
+                        # tree-sitter's parser.parse() wants bytes anyway (AGENTS.md).
+                        cpp_bytes = out.stdout
                         if len(cpp_bytes) <= 2 * len(source):
                             cpp_tree = parser.parse(cpp_bytes)
                             cpp_errors = _count_errors(cpp_tree.root_node)

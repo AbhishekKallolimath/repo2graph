@@ -35,6 +35,7 @@ Security properties this module is responsible for, none of them optional:
 import hashlib
 import hmac
 import json
+import math
 import threading
 import time
 import urllib.error
@@ -145,10 +146,20 @@ def rsa_verify(n: int, e: int, signature: bytes, message: bytes, hash_name: str)
     prefix = DIGEST_INFO_PREFIX.get(hash_name)
     if prefix is None:
         return False
+    # A malformed or hostile JWK can hand us a zero, negative, or otherwise
+    # degenerate modulus/exponent. `pow(sig, e, n)` raises ValueError for
+    # n == 0, and a negative n makes `pow(...).to_bytes(...)` raise
+    # OverflowError (the result carries n's sign). Both must fail closed as a
+    # plain verification failure, never propagate as an unhandled exception.
+    if n <= 0 or e <= 0:
+        return False
     k = (n.bit_length() + 7) // 8
     if len(signature) != k:
         return False
-    decoded = pow(int.from_bytes(signature, "big"), e, n).to_bytes(k, "big")
+    try:
+        decoded = pow(int.from_bytes(signature, "big"), e, n).to_bytes(k, "big")
+    except (ValueError, OverflowError):
+        return False
 
     digest = hashlib.new(hash_name, message).digest()
     tail = prefix + digest
@@ -353,18 +364,20 @@ def _check_claims(claims: dict[str, Any], issuer: str, audience: str | None) -> 
     if exp is None:
         raise AuthError("token has no exp claim")
     try:
-        if float(exp) + CLOCK_SKEW < now:
-            raise AuthError("token has expired")
+        exp_f = float(exp)
     except (TypeError, ValueError):
         raise AuthError("token exp claim is not a number") from None
+    if not math.isfinite(exp_f) or exp_f + CLOCK_SKEW < now:
+        raise AuthError("token has expired")
 
     nbf = claims.get("nbf")
     if nbf is not None:
         try:
-            if float(nbf) - CLOCK_SKEW > now:
-                raise AuthError("token is not valid yet")
+            nbf_f = float(nbf)
         except (TypeError, ValueError):
             raise AuthError("token nbf claim is not a number") from None
+        if not math.isfinite(nbf_f) or nbf_f - CLOCK_SKEW > now:
+            raise AuthError("token is not valid yet")
 
     if audience is not None:
         aud = claims.get("aud")

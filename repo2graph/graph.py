@@ -101,7 +101,11 @@ class Graph:
 
 # ---------- import parsing ----------
 _IMPORT_RE = {
-    "python": re.compile(r"^(?:from\s+([\w\.]+)\s+import|import\s+([\w\.,\s]+))"),
+    # `from` branch splits module (group 1) from the imported-names list (group
+    # 2): a dots-only module ("from . import X") has no name of its own, so
+    # import_targets() below appends each imported name to the dots instead of
+    # discarding it (#160). The bare `import a, b` form is group 3, unchanged.
+    "python": re.compile(r"^(?:from\s+(\.*[\w.]*)\s+import\s+([\w\s,*()]+)|import\s+([\w\.,\s]+))"),
     "js": re.compile(r"""['"]([^'"]+)['"]"""),
     "go": re.compile(r"""['"]([^'"]+)['"]"""),
     "rust": re.compile(r"use\s+([\w:]+)"),
@@ -119,9 +123,27 @@ def import_targets(raw: str, lang: str) -> list[str]:
         m = _IMPORT_RE["python"].match(raw.strip())
         if not m:
             return []
-        if m.group(1):
-            return [m.group(1)]
-        return [p.strip().split(" as ")[0].strip() for p in m.group(2).split(",") if p.strip()]
+        module = m.group(1)
+        if module is not None:
+            names = [
+                p.strip().split(" as ")[0].strip()
+                for p in m.group(2).replace("(", " ").replace(")", " ").split(",")
+            ]
+            names = [n for n in names if n and n != "*" and re.fullmatch(r"\w+", n)]
+            if module and set(module) <= {"."}:
+                # "from . import X" / "from .. import X, Y": no module name after
+                # the dots, so the imported names ARE the submodule targets (#160).
+                return [module + n for n in names] or [module]
+            if module.startswith("."):
+                # "from .mod import x": the dotted module already names a file;
+                # neither #160 nor #161 changes this form.
+                return [module]
+            # "from pkg import a, b as c" -- capture the imported names so
+            # resolve_import() can prefer pkg/a.py over pkg/__init__.py (#161).
+            if names:
+                return [f"{module}.{n}" for n in names]
+            return [module]
+        return [p.strip().split(" as ")[0].strip() for p in m.group(3).split(",") if p.strip()]
     # Kotlin/Swift/Scala all import with `import a.b.C`, like Java; C# uses
     # `using`, PHP uses `use A\B` — both need their own pattern, not Java's.
     key = {
@@ -181,6 +203,15 @@ def resolve_import(
             cands += [f"src/{c}" for c in [f"{base}.py", f"{base}/__init__.py"]]
             tail = base.split("/")[-1]
             cands += [p for p in by_name.get(f"{tail}.py", []) if "/" in p][:1]
+            # `from pkg import name` (#161): if `name` isn't a submodule file
+            # (or package), it's a symbol defined directly in `pkg` -- either
+            # `pkg.py` (pkg is itself a module, e.g. `from pkg.alpha import
+            # handle`) or `pkg/__init__.py` (pkg is a package). Try both last,
+            # only after every submodule-file candidate above.
+            if "/" in base:
+                parent = base.rsplit("/", 1)[0]
+                cands.append(f"{parent}.py")
+                cands.append(f"{parent}/__init__.py")
     elif lang in ("javascript", "typescript", "tsx"):
         if target.startswith("."):
             base = Path(src_dir, target).as_posix()
