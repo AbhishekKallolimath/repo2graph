@@ -221,6 +221,29 @@ def test_resolve_import_relative_and_absolute():
     assert resolve_import("os", "pkg/main.py", "python", files, ctx) is None
 
 
+def test_import_targets_python_from_import_captures_symbol():
+    """ISS-161: `from pkg import name` must carry `name`, not just `pkg`."""
+    assert import_targets("from mypkg import mymod", "python") == ["mypkg.mymod"]
+    assert import_targets("from mypkg import mymod, other as o", "python") == [
+        "mypkg.mymod",
+        "mypkg.other",
+    ]
+
+
+def test_resolve_import_prefers_submodule_file_over_init():
+    """ISS-161: `mypkg/mymod.py` exists, so `from mypkg import mymod` must resolve to it."""
+    files = {"mypkg/__init__.py", "mypkg/mymod.py"}
+    ctx = path_index(files)
+    assert resolve_import("mypkg.mymod", "consumer.py", "python", files, ctx) == "mypkg/mymod.py"
+
+
+def test_resolve_import_falls_back_to_init_when_no_submodule_file():
+    """ISS-161: no `mypkg/thing.py` on disk -- `thing` must be a name in __init__.py."""
+    files = {"mypkg/__init__.py"}
+    ctx = path_index(files)
+    assert resolve_import("mypkg.thing", "consumer.py", "python", files, ctx) == "mypkg/__init__.py"
+
+
 def test_resolve_import_keeps_dot_directories():
     """A leading '.' in a real directory name must not be stripped."""
     files = {".github/scripts/deploy.py", "app.py"}
@@ -288,6 +311,28 @@ def test_iss160_build_edges_bare_dot_relative_import(tmp_path):
     edges = edges_of(g, "IMPORTS")
     assert ("file:pkg/main.py", "file:pkg/utils.py") in edges
     assert ("file:pkg/main.py", "file:pkg/__init__.py") not in edges
+
+# ---------- ISS-161: `from pkg import submodule` must resolve to the submodule ----------
+
+PKG3_INIT = "ANSWER = 42\n\n\nclass Thing:\n    pass\n"
+PKG3_MYMOD = "VALUE = 1\n\n\ndef foo():\n    return VALUE\n"
+PKG3_CONSUMER = "from pkg3 import mymod\n\nCONSUMER_TAG = 'c'\n\n\ndef use():\n    return mymod.foo()\n"
+
+
+@pytest.fixture
+def submodule_import_repo(tmp_path):
+    pkg = tmp_path / "pkg3"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text(PKG3_INIT)
+    (pkg / "mymod.py").write_text(PKG3_MYMOD)
+    (tmp_path / "consumer.py").write_text(PKG3_CONSUMER)
+    return tmp_path
+
+
+def test_iss161_from_import_resolves_to_submodule_not_init(submodule_import_repo):
+    g = build(submodule_import_repo)
+    assert ("file:consumer.py", "file:pkg3/mymod.py") in edges_of(g, "IMPORTS")
+    assert ("file:consumer.py", "file:pkg3/__init__.py") not in edges_of(g, "IMPORTS")
 
 
 def test_build_file_types_and_stats(sample_graph):
