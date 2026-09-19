@@ -1973,6 +1973,29 @@ def test_iss23_graphml_node_and_edge_ids_xml_safe(tmp_path):
     assert "\x0c" not in out.read_text(encoding="utf-8")
 
 
+def test_iss154_write_cypher_backtick_escapes_property_keys(tmp_path):
+    """Issue 154: write_cypher backtick-quotes property keys so a Cypher reserved
+    word (e.g. `order`) doesn't break the generated statement, an embedded
+    backtick is escaped by doubling (no breaking out of the quoting), and a
+    normal bare-identifier-safe key stays exactly as before."""
+    from repo2graph.export import write_cypher
+    from repo2graph.graph import Graph
+
+    g = Graph(tmp_path, "test")
+    g.add_node("n1", type="symbol", **{"order": 1, "name": "foo", "back`tick": "v"})
+
+    out = tmp_path / "graph.cypher"
+    write_cypher(g, out)
+    content = out.read_text(encoding="utf-8")
+
+    expected = (
+        "CREATE CONSTRAINT r2g_id IF NOT EXISTS FOR (n:R2G) REQUIRE n.id IS UNIQUE;\n"
+        'MERGE (n:R2G:Symbol {id: "n1"}) SET n += '
+        '{`id`: "n1", `order`: 1, `name`: "foo", `back``tick`: "v"};\n'
+    )
+    assert content == expected
+
+
 def test_iss24_write_html_handles_placeholder_in_title(tmp_path):
     """Issue 24 (ISS-33): repo name containing __R2G_DATA__ is not replaced by JSON blob in title."""
     from repo2graph.graph import Graph
