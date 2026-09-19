@@ -450,16 +450,24 @@ def _cy(v):
     return json.dumps(v if isinstance(v, SCALAR) else json.dumps(v))
 
 
+def _cy_key(k: str) -> str:
+    # Always backtick-quote: covers Cypher reserved words (order, match, where,
+    # distinct, ...) and any other non-bare-identifier-safe key. Doubling an
+    # embedded backtick is Cypher's own escape for it inside a quoted
+    # identifier, so a key containing one can't break out of the quoting.
+    return "`" + k.replace("`", "``") + "`"
+
+
 def write_cypher(g, path: Path):
     lines = ["CREATE CONSTRAINT r2g_id IF NOT EXISTS FOR (n:R2G) REQUIRE n.id IS UNIQUE;"]
     for nid, n in g.nodes.items():
         lab = n["type"].capitalize()
-        props = ", ".join(f"{k}: {_cy(v)}" for k, v in n.items() if k != "type")
+        props = ", ".join(f"{_cy_key(k)}: {_cy(v)}" for k, v in n.items() if k != "type")
         lines.append(f"MERGE (n:R2G:{lab} {{id: {_cy(nid)}}}) SET n += {{{props}}};")
     for e in g.edges:
         edge_props = {k: v for k, v in e.items() if k not in ("src", "dst", "type")}
         pstr = (
-            (" {" + ", ".join(f"{k}: {_cy(v)}" for k, v in edge_props.items()) + "}")
+            (" {" + ", ".join(f"{_cy_key(k)}: {_cy(v)}" for k, v in edge_props.items()) + "}")
             if edge_props
             else ""
         )

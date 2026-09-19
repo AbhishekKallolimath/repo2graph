@@ -402,7 +402,29 @@ def test_split_respects_size_and_overlaps():
 
 
 def test_split_terminates_on_one_huge_line():
-    assert _split("x" * 10_000 + "\ny\n", max_chars=100)
+    parts = _split("x" * 10_000 + "\ny\n", max_chars=100)
+    assert parts
+    # ISS-153: a single oversized line must not be emitted as one unbounded
+    # chunk -- every piece stays within the requested budget.
+    assert all(len(p) <= 100 for p in parts)
+    assert "".join(parts).replace("\n", "") == "x" * 10_000 + "y"  # no text lost
+
+
+def test_iss153_split_breaks_a_line_longer_than_max_chars():
+    """Hand-built fixture pinning literal chunk boundaries (AGENTS.md: assert
+    literal values, not a property the old, buggy code also happened to hold).
+
+    text = "AAAAAAAAAA\nBB\n" (a 10-char line the packer alone can't shrink,
+    plus a short second line), max_chars=5. Before the fix, _split returned a
+    single 14-char chunk (the whole first line plus every line the packer
+    could still fit) because the inner loop always appended at least the
+    first line regardless of its own length -- an unbounded chunk.
+    """
+    text = "A" * 10 + "\n" + "BB" + "\n"
+    parts = _split(text, max_chars=5)
+    assert parts == ["AAAAA", "AAAAA", "\nBB\n"]
+    assert all(len(p) <= 5 for p in parts)
+    assert "".join(parts) == text
 
 
 def test_iter_chunks_streams_without_materialising(sample_graph):
@@ -1641,6 +1663,28 @@ def test_iss26_auth_env_terminal_prompt_and_config_count(monkeypatch):
     assert "basic" in env_with_token.get("GIT_CONFIG_VALUE_2", "")
 
 
+def test_iss148_git_version_failure_not_cached(monkeypatch):
+    """Issue 148: a transient `git --version` failure must not be permanently
+    cached. First call fails -> fallback (2, 40, 0); second call, with the
+    transient condition cleared, must probe again and return the real version."""
+    from repo2graph import fetch
+
+    monkeypatch.setattr(fetch, "_git_version_cache", None)
+
+    def _raise(*a, **k):
+        raise OSError("transient failure: fork failed")
+
+    monkeypatch.setattr(fetch.subprocess, "run", _raise)
+    assert fetch._git_version() == (2, 40, 0)
+
+    class _Ok:
+        returncode = 0
+        stdout = "git version 2.45.1"
+
+    monkeypatch.setattr(fetch.subprocess, "run", lambda *a, **k: _Ok())
+    assert fetch._git_version() == (2, 45, 1)
+
+
 def test_iss26_clone_redacts_base64_and_token(tmp_path, monkeypatch):
     """Issue 26 (SH-3): clone failure error message redacts both raw token and basic credential."""
     import base64
@@ -1927,6 +1971,29 @@ def test_iss23_graphml_node_and_edge_ids_xml_safe(tmp_path):
     ET.parse(out)
     # Confirm no \x0c character remains in XML
     assert "\x0c" not in out.read_text(encoding="utf-8")
+
+
+def test_iss154_write_cypher_backtick_escapes_property_keys(tmp_path):
+    """Issue 154: write_cypher backtick-quotes property keys so a Cypher reserved
+    word (e.g. `order`) doesn't break the generated statement, an embedded
+    backtick is escaped by doubling (no breaking out of the quoting), and a
+    normal bare-identifier-safe key stays exactly as before."""
+    from repo2graph.export import write_cypher
+    from repo2graph.graph import Graph
+
+    g = Graph(tmp_path, "test")
+    g.add_node("n1", type="symbol", **{"order": 1, "name": "foo", "back`tick": "v"})
+
+    out = tmp_path / "graph.cypher"
+    write_cypher(g, out)
+    content = out.read_text(encoding="utf-8")
+
+    expected = (
+        "CREATE CONSTRAINT r2g_id IF NOT EXISTS FOR (n:R2G) REQUIRE n.id IS UNIQUE;\n"
+        'MERGE (n:R2G:Symbol {id: "n1"}) SET n += '
+        '{`id`: "n1", `order`: 1, `name`: "foo", `back``tick`: "v"};\n'
+    )
+    assert content == expected
 
 
 def test_iss24_write_html_handles_placeholder_in_title(tmp_path):
