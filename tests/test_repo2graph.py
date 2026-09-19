@@ -1641,6 +1641,28 @@ def test_iss26_auth_env_terminal_prompt_and_config_count(monkeypatch):
     assert "basic" in env_with_token.get("GIT_CONFIG_VALUE_2", "")
 
 
+def test_iss148_git_version_failure_not_cached(monkeypatch):
+    """Issue 148: a transient `git --version` failure must not be permanently
+    cached. First call fails -> fallback (2, 40, 0); second call, with the
+    transient condition cleared, must probe again and return the real version."""
+    from repo2graph import fetch
+
+    monkeypatch.setattr(fetch, "_git_version_cache", None)
+
+    def _raise(*a, **k):
+        raise OSError("transient failure: fork failed")
+
+    monkeypatch.setattr(fetch.subprocess, "run", _raise)
+    assert fetch._git_version() == (2, 40, 0)
+
+    class _Ok:
+        returncode = 0
+        stdout = "git version 2.45.1"
+
+    monkeypatch.setattr(fetch.subprocess, "run", lambda *a, **k: _Ok())
+    assert fetch._git_version() == (2, 45, 1)
+
+
 def test_iss26_clone_redacts_base64_and_token(tmp_path, monkeypatch):
     """Issue 26 (SH-3): clone failure error message redacts both raw token and basic credential."""
     import base64

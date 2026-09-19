@@ -10,7 +10,6 @@ import subprocess
 import sys
 import tempfile
 import urllib.parse
-from functools import lru_cache
 from pathlib import Path
 
 CLONE_TIMEOUT = 900
@@ -48,8 +47,20 @@ GITHUB_SPEC = re.compile(
 )
 
 
-@lru_cache(maxsize=1)
+_git_version_cache: tuple[int, ...] | None = None
+
+
 def _git_version() -> tuple[int, ...]:
+    """Probe `git --version`, memoizing only a successful result.
+
+    A transient failure (fd exhaustion, fork failure, ...) must not be cached
+    forever: that would permanently mask the version-gated security check in
+    _auth_env for the rest of the process's life. Only a successful probe is
+    memoized; a failed probe is retried on the next call.
+    """
+    global _git_version_cache
+    if _git_version_cache is not None:
+        return _git_version_cache
     try:
         out = subprocess.run(
             ["git", "--version"], capture_output=True, encoding="utf8", errors="replace", timeout=10
@@ -57,7 +68,8 @@ def _git_version() -> tuple[int, ...]:
         if out.returncode == 0 and out.stdout:
             m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", out.stdout)
             if m:
-                return tuple(int(x) for x in m.groups() if x is not None)
+                _git_version_cache = tuple(int(x) for x in m.groups() if x is not None)
+                return _git_version_cache
     except (OSError, subprocess.SubprocessError):
         pass
     return (2, 40, 0)  # assume a conservative baseline when `git --version` won't answer
