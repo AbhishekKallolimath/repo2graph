@@ -23,6 +23,7 @@ and then keeps going is worse than one that admits it is guessing.
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -35,6 +36,12 @@ MAX_REPORTED_PROGRESS = 99
 # A build that has produced no estimate yet still reports something non-zero,
 # so a client can tell "starting" from "stuck".
 MIN_REPORTED_PROGRESS = 1
+# Upper bound on how many tasks TaskManager._by_id retains (ISS-150). Beyond
+# this, the oldest *finished* tasks are evicted first; a task still BUILDING
+# is never evicted, so an in-flight build always stays pollable. A caller
+# that polls an evicted id gets the same clean "unknown task" answer as one
+# that polls a garbage id.
+MAX_TRACKED_TASKS = 1000
 
 BUILDING = "building"
 READY = "ready"
@@ -118,7 +125,10 @@ class TaskManager:
         self._estimator = estimator or _default_estimator
         self._lock = threading.Lock()
         self._by_dir: dict[str, BuildTask] = {}
-        self._by_id: dict[str, BuildTask] = {}
+        # OrderedDict so eviction can walk oldest-first; insertion order is
+        # preserved because `start()` only ever adds a new id, never re-inserts
+        # one (a joined in-flight build returns the existing task early).
+        self._by_id: "OrderedDict[str, BuildTask]" = OrderedDict()
 
     def start(self, repo: Any, out: Any) -> BuildTask:
         """Begin (or join) a background build for `out`.
@@ -138,6 +148,7 @@ class TaskManager:
             task = BuildTask(estimated_s=self._estimate(repo))
             self._by_dir[key] = task
             self._by_id[task.task_id] = task
+            self._evict_locked()
 
         thread = threading.Thread(
             target=self._run,
@@ -147,6 +158,24 @@ class TaskManager:
         )
         thread.start()
         return task
+
+    def _evict_locked(self) -> None:
+        """Drop the oldest finished tasks once `_by_id` exceeds
+        MAX_TRACKED_TASKS (ISS-150). Caller must hold self._lock.
+
+        A task still BUILDING is skipped rather than evicted -- an in-flight
+        build must always remain pollable -- so if enough builds are running
+        concurrently, `_by_id` can briefly stay above the cap; it shrinks back
+        as soon as those tasks finish and a new one triggers eviction again.
+        """
+        if len(self._by_id) <= MAX_TRACKED_TASKS:
+            return
+        for task_id, task in list(self._by_id.items()):
+            if len(self._by_id) <= MAX_TRACKED_TASKS:
+                break
+            if task.status == BUILDING:
+                continue
+            del self._by_id[task_id]
 
     def _estimate(self, repo: Any) -> float:
         try:

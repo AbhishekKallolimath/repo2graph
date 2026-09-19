@@ -165,6 +165,24 @@ def test_parse_bases_are_names_not_keywords():
         assert sym.bases == expected, (lang, sym.bases)
 
 
+def test_parse_multi_param_generic_bases_iss162():
+    """ISS-162: commas inside a generic's type args must not split the base list.
+
+    `class Repo(Generic[T, U], BaseRepo)` used to split on every raw comma,
+    yielding the malformed tokens ['Generic[T', 'U]', 'BaseRepo'] instead of
+    the two real bases. Same bug for `<...>` template/generic args in
+    TS/Java/C++.
+    """
+    for lang, src, expected in [
+        ("python", b"class A(Generic[T, U], BaseRepo):\n    pass\n", ["Generic[T, U]", "BaseRepo"]),
+        ("typescript", b"class A extends Handler<Request, Response> {}\n", ["Handler"]),
+        ("java", b"class A extends B<C, D> {}\n", ["B"]),
+        ("cpp", b"class A : public B<C, D> {};\n", ["B"]),
+    ]:
+        sym = next(s for s in parse_source(src, lang).symbols if s.name == "A")
+        assert sym.bases == expected, (lang, sym.bases)
+
+
 def test_inherits_edges_for_non_python(tmp_path):
     (tmp_path / "A.java").write_text("class A extends B {}\n")
     (tmp_path / "B.java").write_text("class B {}\n")
@@ -199,12 +217,49 @@ def test_import_targets_python():
     assert import_targets("import os, sys as system", "python") == ["os", "sys"]
 
 
+def test_iss160_import_targets_relative_bare_dot():
+    """`from . import X` / `from .. import X, Y`: the dots have no module name of
+    their own, so the imported names ARE the submodule targets (#160). Before the
+    fix, import_targets() returned ["."]/[".."] and dropped the names entirely."""
+    assert import_targets("from . import utils", "python") == [".utils"]
+    assert import_targets("from .. import utils, foo", "python") == ["..utils", "..foo"]
+
+
+def test_iss160_resolve_import_relative_bare_dot():
+    files = {"pkg/__init__.py", "pkg/utils.py", "pkg/main.py"}
+    ctx = path_index(files)
+    assert resolve_import(".utils", "pkg/main.py", "python", files, ctx) == "pkg/utils.py"
+
+
 def test_resolve_import_relative_and_absolute():
     files = {"pkg/__init__.py", "pkg/util.py", "pkg/main.py"}
     ctx = path_index(files)
     assert resolve_import(".util", "pkg/main.py", "python", files, ctx) == "pkg/util.py"
     assert resolve_import("pkg.util", "pkg/main.py", "python", files, ctx) == "pkg/util.py"
     assert resolve_import("os", "pkg/main.py", "python", files, ctx) is None
+
+
+def test_import_targets_python_from_import_captures_symbol():
+    """ISS-161: `from pkg import name` must carry `name`, not just `pkg`."""
+    assert import_targets("from mypkg import mymod", "python") == ["mypkg.mymod"]
+    assert import_targets("from mypkg import mymod, other as o", "python") == [
+        "mypkg.mymod",
+        "mypkg.other",
+    ]
+
+
+def test_resolve_import_prefers_submodule_file_over_init():
+    """ISS-161: `mypkg/mymod.py` exists, so `from mypkg import mymod` must resolve to it."""
+    files = {"mypkg/__init__.py", "mypkg/mymod.py"}
+    ctx = path_index(files)
+    assert resolve_import("mypkg.mymod", "consumer.py", "python", files, ctx) == "mypkg/mymod.py"
+
+
+def test_resolve_import_falls_back_to_init_when_no_submodule_file():
+    """ISS-161: no `mypkg/thing.py` on disk -- `thing` must be a name in __init__.py."""
+    files = {"mypkg/__init__.py"}
+    ctx = path_index(files)
+    assert resolve_import("mypkg.thing", "consumer.py", "python", files, ctx) == "mypkg/__init__.py"
 
 
 def test_resolve_import_keeps_dot_directories():
@@ -262,6 +317,47 @@ def test_build_edges(sample_graph):
     )
 
 
+def test_iss160_build_edges_bare_dot_relative_import(tmp_path):
+    """`from . import utils` must register an IMPORTS edge to the sibling module
+    pkg/utils.py, not to pkg/__init__.py (#160)."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "utils.py").write_text("def helper(value):\n    return value * 2\n")
+    (pkg / "main.py").write_text(
+        "from . import utils\n\n\ndef entry():\n    return utils.helper(3)\n"
+    )
+    g = build(tmp_path)
+    edges = edges_of(g, "IMPORTS")
+    assert ("file:pkg/main.py", "file:pkg/utils.py") in edges
+    assert ("file:pkg/main.py", "file:pkg/__init__.py") not in edges
+
+
+# ---------- ISS-161: `from pkg import submodule` must resolve to the submodule ----------
+
+PKG3_INIT = "ANSWER = 42\n\n\nclass Thing:\n    pass\n"
+PKG3_MYMOD = "VALUE = 1\n\n\ndef foo():\n    return VALUE\n"
+PKG3_CONSUMER = (
+    "from pkg3 import mymod\n\nCONSUMER_TAG = 'c'\n\n\ndef use():\n    return mymod.foo()\n"
+)
+
+
+@pytest.fixture
+def submodule_import_repo(tmp_path):
+    pkg = tmp_path / "pkg3"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text(PKG3_INIT)
+    (pkg / "mymod.py").write_text(PKG3_MYMOD)
+    (tmp_path / "consumer.py").write_text(PKG3_CONSUMER)
+    return tmp_path
+
+
+def test_iss161_from_import_resolves_to_submodule_not_init(submodule_import_repo):
+    g = build(submodule_import_repo)
+    assert ("file:consumer.py", "file:pkg3/mymod.py") in edges_of(g, "IMPORTS")
+    assert ("file:consumer.py", "file:pkg3/__init__.py") not in edges_of(g, "IMPORTS")
+
+
 def test_build_file_types_and_stats(sample_graph):
     assert sample_graph.nodes["file:README.md"]["file_type"] == "doc"
     assert sample_graph.nodes["file:conf.yaml"]["file_type"] == "config"
@@ -306,7 +402,29 @@ def test_split_respects_size_and_overlaps():
 
 
 def test_split_terminates_on_one_huge_line():
-    assert _split("x" * 10_000 + "\ny\n", max_chars=100)
+    parts = _split("x" * 10_000 + "\ny\n", max_chars=100)
+    assert parts
+    # ISS-153: a single oversized line must not be emitted as one unbounded
+    # chunk -- every piece stays within the requested budget.
+    assert all(len(p) <= 100 for p in parts)
+    assert "".join(parts).replace("\n", "") == "x" * 10_000 + "y"  # no text lost
+
+
+def test_iss153_split_breaks_a_line_longer_than_max_chars():
+    """Hand-built fixture pinning literal chunk boundaries (AGENTS.md: assert
+    literal values, not a property the old, buggy code also happened to hold).
+
+    text = "AAAAAAAAAA\nBB\n" (a 10-char line the packer alone can't shrink,
+    plus a short second line), max_chars=5. Before the fix, _split returned a
+    single 14-char chunk (the whole first line plus every line the packer
+    could still fit) because the inner loop always appended at least the
+    first line regardless of its own length -- an unbounded chunk.
+    """
+    text = "A" * 10 + "\n" + "BB" + "\n"
+    parts = _split(text, max_chars=5)
+    assert parts == ["AAAAA", "AAAAA", "\nBB\n"]
+    assert all(len(p) <= 5 for p in parts)
+    assert "".join(parts) == text
 
 
 def test_iter_chunks_streams_without_materialising(sample_graph):
@@ -553,7 +671,15 @@ def test_chunks_separate_in_repo_and_external_calls(tmp_path, sample_repo):
     assert run["callees_external"] == ["getpid"]
     assert "# calls: pkg/util.py::helper" in run["text"]
     assert "# calls (outside the repo): getpid" in run["text"]
-    assert "# entry point:" in run["text"]
+    # ISS-159: `entry()`'s body is `Runner().run(3)` -- a chained call. Now that
+    # the outer `.run(...)` callee resolves correctly (not just the inner
+    # `Runner()` constructor call), `entry` calls `Runner.run` directly, so
+    # `Runner.run` has an in-repo caller and is no longer an entry point.
+    assert "# called by: pkg/main.py::entry" in run["text"]
+    assert "# entry point:" not in run["text"]
+    entry = next(c for c in chunks if c["qualname"] == "entry")
+    assert "# entry point:" in entry["text"]
+    assert "pkg/main.py::Runner.run" in entry["callees"]
 
 
 def test_chunk_neighbours_carry_structured_edge_info(tmp_path):
@@ -895,6 +1021,11 @@ CHAR_TRIPLES = [
     ("sym:pkg/main.py::Runner.run", "external:getpid", "CALLS_EXTERNAL"),
     ("sym:pkg/main.py::Runner.run", "sym:pkg/util.py::helper", "CALLS"),
     ("sym:pkg/main.py::entry", "sym:pkg/main.py::Runner", "CALLS"),
+    # ISS-159: entry()'s body is `Runner().run(3)`, a chained call. Fixing the
+    # outer-callee attribution bug means `.run(3)` now correctly resolves to
+    # `Runner.run` (previously the bug attributed it to the inner `Runner`
+    # constructor call a second time, so this edge was silently dropped).
+    ("sym:pkg/main.py::entry", "sym:pkg/main.py::Runner.run", "CALLS"),
 ]
 
 CHAR_CHUNK_IDS = [
@@ -1532,6 +1663,28 @@ def test_iss26_auth_env_terminal_prompt_and_config_count(monkeypatch):
     assert "basic" in env_with_token.get("GIT_CONFIG_VALUE_2", "")
 
 
+def test_iss148_git_version_failure_not_cached(monkeypatch):
+    """Issue 148: a transient `git --version` failure must not be permanently
+    cached. First call fails -> fallback (2, 40, 0); second call, with the
+    transient condition cleared, must probe again and return the real version."""
+    from repo2graph import fetch
+
+    monkeypatch.setattr(fetch, "_git_version_cache", None)
+
+    def _raise(*a, **k):
+        raise OSError("transient failure: fork failed")
+
+    monkeypatch.setattr(fetch.subprocess, "run", _raise)
+    assert fetch._git_version() == (2, 40, 0)
+
+    class _Ok:
+        returncode = 0
+        stdout = "git version 2.45.1"
+
+    monkeypatch.setattr(fetch.subprocess, "run", lambda *a, **k: _Ok())
+    assert fetch._git_version() == (2, 45, 1)
+
+
 def test_iss26_clone_redacts_base64_and_token(tmp_path, monkeypatch):
     """Issue 26 (SH-3): clone failure error message redacts both raw token and basic credential."""
     import base64
@@ -1818,6 +1971,29 @@ def test_iss23_graphml_node_and_edge_ids_xml_safe(tmp_path):
     ET.parse(out)
     # Confirm no \x0c character remains in XML
     assert "\x0c" not in out.read_text(encoding="utf-8")
+
+
+def test_iss154_write_cypher_backtick_escapes_property_keys(tmp_path):
+    """Issue 154: write_cypher backtick-quotes property keys so a Cypher reserved
+    word (e.g. `order`) doesn't break the generated statement, an embedded
+    backtick is escaped by doubling (no breaking out of the quoting), and a
+    normal bare-identifier-safe key stays exactly as before."""
+    from repo2graph.export import write_cypher
+    from repo2graph.graph import Graph
+
+    g = Graph(tmp_path, "test")
+    g.add_node("n1", type="symbol", **{"order": 1, "name": "foo", "back`tick": "v"})
+
+    out = tmp_path / "graph.cypher"
+    write_cypher(g, out)
+    content = out.read_text(encoding="utf-8")
+
+    expected = (
+        "CREATE CONSTRAINT r2g_id IF NOT EXISTS FOR (n:R2G) REQUIRE n.id IS UNIQUE;\n"
+        'MERGE (n:R2G:Symbol {id: "n1"}) SET n += '
+        '{`id`: "n1", `order`: 1, `name`: "foo", `back``tick`: "v"};\n'
+    )
+    assert content == expected
 
 
 def test_iss24_write_html_handles_placeholder_in_title(tmp_path):
@@ -2355,6 +2531,31 @@ def test_docstring_rust_outer_attributes():
     src = b"/// Important documentation\n#[inline]\nfn calculate() {}\n"
     pf = parse_source(src, "rust")
     assert pf.symbols[0].docstring == "/// Important documentation"
+
+
+def test_iss159_chained_call_attributes_outer_callee():
+    """ISS-159: a chained call `obj.get_user().save()` must record BOTH
+    `save` (the outer call) and `get_user` (the inner call) as callees --
+    not `get_user` twice with `save` silently dropped.
+
+    Before the fix, `_callee_name` stripped everything from the first "("
+    onward in the outer call's `function`-field text
+    ("obj.get_user().save"), which ate the trailing ".save" and left
+    "obj.get_user" -> "get_user". `save()` never registered at all.
+    """
+    src = b"def test():\n    obj.get_user().save()\n"
+    pf = parse_source(src, "python")
+    calls = pf.symbols[0].calls
+    assert calls.count("save") == 1
+    assert calls.count("get_user") == 1
+    assert "save" in calls and "get_user" in calls
+
+    # Same bug class in JS/TS member_expression chains.
+    src_js = b"function test() { a.b().c(); }\n"
+    pf_js = parse_source(src_js, "javascript")
+    calls_js = pf_js.symbols[0].calls
+    assert calls_js.count("c") == 1
+    assert calls_js.count("b") == 1
 
 
 def test_callee_name_macro_and_fn_pointers():

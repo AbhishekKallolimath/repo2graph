@@ -14,6 +14,7 @@ import threading
 import time
 
 from repo2graph import mcp
+from repo2graph import tasks as tasks_module
 from repo2graph.tasks import BUILDING, FAILED, READY, BuildTask, TaskManager
 
 
@@ -135,6 +136,49 @@ def test_a_task_is_retrievable_by_id(tmp_path):
     task = tasks.start(tmp_path / "repo", tmp_path / "out")
     assert tasks.get(task.task_id) is task
     assert tasks.get("not-a-real-id") is None
+
+
+def test_by_id_evicts_oldest_finished_tasks_past_the_cap(tmp_path, monkeypatch):
+    """ISS-150: `_by_id` must not grow without bound. A still-BUILDING task
+    must never be evicted; a caller polling an id that *was* evicted gets a
+    clean None (the "unknown task" answer), not a crash."""
+    monkeypatch.setattr(tasks_module, "MAX_TRACKED_TASKS", 5)
+
+    out0 = tmp_path / "out0"
+    hold = threading.Event()
+
+    def builder(repo, out):
+        if str(out) == str(out0):
+            hold.wait(timeout=10)
+        # else: finishes immediately.
+
+    mgr = TaskManager(builder=builder, estimator=lambda repo: 1.0)
+
+    first = mgr.start(tmp_path / "repo", out0)
+    assert first.status == BUILDING
+
+    tasks_list = [first]
+    for i in range(1, 12):
+        t = mgr.start(tmp_path / "repo", tmp_path / f"out{i}")
+        assert wait_for(lambda t=t: t.status == READY)
+        tasks_list.append(t)
+
+    # 12 tasks were started (1 still building + 11 finished) -- well past
+    # the cap of 5 -- so eviction must actually have run.
+    assert len(tasks_list) == 12
+
+    assert first.status == BUILDING, "the flood must not have touched the running build"
+    assert mgr.get(first.task_id) is first, "a still-building task must never be evicted"
+    assert len(mgr._by_id) == 5, "the cap was not enforced on the literal map size"
+
+    # The oldest finished tasks were evicted first...
+    assert mgr.get(tasks_list[1].task_id) is None
+    # ...while the most recent one survives, and polling an evicted id is a
+    # clean miss rather than an error.
+    assert mgr.get(tasks_list[-1].task_id) is tasks_list[-1]
+
+    hold.set()
+    assert wait_for(lambda: first.status == READY)
 
 
 class RecordingLock:

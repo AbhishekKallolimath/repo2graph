@@ -475,6 +475,30 @@ def test_ac21_a_rigged_embedder_changes_the_top_chunk(big_index):
     assert idx.chunks[fused[0][1]]["id"] != idx.chunks[base[0][1]]["id"]
 
 
+def test_iss157_mismatched_vector_dims_degrade_to_bm25(big_index):
+    """ISS-157 regression: a candidate vector whose width does not match the
+    query vector's must not silently truncate through zip() and produce a
+    meaningless cosine score. It must disable fusion and fall back to BM25,
+    same as any other malformed vector (AC-16) -- never raise out of
+    score_rrf, and never fuse a truncated, meaningless similarity in."""
+    from repo2graph.query import RRF_CANDIDATES
+
+    idx = Index(big_index)
+    base = idx.score(MINI_QUERY)
+    candidates = [i for _s, i in base[:RRF_CANDIDATES]]
+    vectors = rigged_sims(candidates)
+    # sim_vector() is 2-D; give exactly one candidate a 3-D vector so its
+    # width no longer matches the query vector's.
+    mismatched = candidates[0]
+    vectors[mismatched] = vectors[mismatched] + [0.5]
+    vectors["query"] = sim_vector(1.0)
+
+    fused = idx.score_rrf(MINI_QUERY, vectors=vectors)
+
+    assert fused == base, "one bad-width vector must abandon fusion entirely"
+    assert idx.fusion_coverage == (0, len(candidates))
+
+
 def test_ac21_rag_vectors_uses_the_persisted_vectors(mini_index, use_stub_embedder, capsys):
     """AC-21 (c): `rag --vectors` on a matching index succeeds and consults the
     embedder (so the flag is wired through, not silently a no-op)."""
